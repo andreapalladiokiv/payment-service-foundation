@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+         cacheDirectory=".phpunit.cache"
+>
+    <testsuites>
+        <testsuite name="Common">
+            <directory>src/Common/tests</directory>
+        </testsuite>
+        <testsuite name="Domain">
+            <directory>src/Domain/tests</directory>
+        </testsuite>
+        <testsuite name="Gateway">
+            <directory>src/Gateway/tests</directory>
+        </testsuite>
+        <testsuite name="Laravel">
+            <directory>src/Laravel/tests</directory>
+        </testsuite>
+        <testsuite name="Stripe">
+            <directory>src/Stripe/tests</directory>
+        </testsuite>
+        <testsuite name="Paynet">
+            <directory>src/Paynet/tests</directory>
+        </testsuite>
+        <testsuite name="Nuvei">
+            <directory>src/Nuvei/tests</directory>
+        </testsuite>
+        <testsuite name="ConnexPay">
+            <directory>src/ConnexPay/tests</directory>
+        </testsuite>
+        <testsuite name="Conferma">
+            <directory>src/Conferma/tests</directory>
+        </testsuite>
+    </testsuites>
+    <source>
+        <include>
+            <directory>src/Common/src</directory>
+            <directory>src/Domain/src</directory>
+            <directory>src/Gateway/src</directory>
+            <directory>src/Laravel/src</directory>
+            <directory>src/Stripe/src</directory>
+            <directory>src/Paynet/src</directory>
+            <directory>src/Nuvei/src</directory>
+            <directory>src/ConnexPay/src</directory>
+            <directory>src/Conferma/src</directory>
+        </include>
+    </source>
+</phpunit>

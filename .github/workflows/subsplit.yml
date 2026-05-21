@@ -1,0 +1,70 @@
+name: Subsplit
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: 'Packages to split (space-separated, empty = all)'
+        required: false
+        default: ''
+
+concurrency:
+  group: subsplit-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  split:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - Common
+          - Domain
+          - Gateway
+          - Laravel
+          - Stripe
+          - Paynet
+          - Nuvei
+          - ConnexPay
+          - Conferma
+
+    steps:
+      - name: Checkout monorepo (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Skip package when manually scoped out
+        id: gate
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.packages != ''
+        run: |
+          if ! echo " ${{ github.event.inputs.packages }} " | grep -q " ${{ matrix.package }} "; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Rewrite git@github.com URLs to HTTPS-with-token
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          SUBSPLIT_TOKEN: ${{ secrets.SUBSPLIT_TOKEN }}
+        run: |
+          if [ -z "$SUBSPLIT_TOKEN" ]; then
+            echo "::error::SUBSPLIT_TOKEN secret is missing"
+            exit 1
+          fi
+          git config --global \
+            url."https://x-access-token:${SUBSPLIT_TOKEN}@github.com/".insteadOf \
+            "git@github.com:"
+          git config --global user.name  "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Run subtree split
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          BRANCH: ${{ github.ref_type == 'branch' && github.ref_name || 'main' }}
+          TAG:    ${{ github.ref_type == 'tag'    && github.ref_name || '' }}
+        run: bin/split.sh ${{ matrix.package }}

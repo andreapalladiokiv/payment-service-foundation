@@ -1,0 +1,113 @@
+{
+    "name": "techork/payment-service-foundation",
+    "description": "Payment service foundation — single-artifact bundle of techork/payment-service-* packages",
+    "type": "library",
+    "license": "proprietary",
+    "keywords": ["payment", "gateway", "monorepo"],
+    "require": {
+        "php": "^8.4",
+        "eventsauce/eventsauce": "^3.8",
+        "giggsey/libphonenumber-for-php": "^9.0",
+        "guzzlehttp/guzzle": "^7.0",
+        "laravel/framework": "^11.0 || ^12.0 || ^13.0",
+        "moneyphp/money": "^4.0",
+        "nuvei/nuvei-server-php": "^3.2",
+        "nyholm/psr7": "^1.8",
+        "omnipay/common": "^3.5",
+        "php-http/guzzle7-adapter": "^1.1",
+        "php-http/httplug": "^2.4",
+        "psr/log": "^3.0",
+        "ramsey/uuid": "^4.0",
+        "spatie/laravel-package-tools": "^1.16",
+        "spatie/laravel-webhook-client": "^3.5",
+        "stripe/stripe-php": "^20.0",
+        "symfony/http-client": "^7.0 || ^8.0",
+        "symfony/intl": "^7.0 || ^8.0",
+        "symfony/property-access": "^7.0 || ^8.0",
+        "symfony/property-info": "^7.0 || ^8.0",
+        "symfony/psr-http-message-bridge": "^7.0 || ^8.0",
+        "symfony/serializer": "^7.0 || ^8.0"
+    },
+    "replace": {
+        "techork/payment-service-common": "self.version",
+        "techork/payment-service-confermapay": "self.version",
+        "techork/payment-service-connexpay": "self.version",
+        "techork/payment-service-domain": "self.version",
+        "techork/payment-service-gateway": "self.version",
+        "techork/payment-service-laravel-bridge": "self.version",
+        "techork/payment-service-nuvei": "self.version",
+        "techork/payment-service-paynet": "self.version",
+        "techork/payment-service-stripe": "self.version"
+    },
+    "require-dev": {
+        "eventsauce/pest-utilities": "^3.4",
+        "mockery/mockery": "^1.6",
+        "pestphp/pest": "^4.6"
+    },
+    "autoload": {
+        "psr-4": {
+            "Techork\\PaymentService\\Common\\": "src/Common/src/",
+            "Techork\\PaymentService\\Domain\\": "src/Domain/src/",
+            "Techork\\PaymentService\\Gateway\\": "src/Gateway/src/",
+            "Techork\\PaymentService\\Conferma\\": "src/Conferma/src/",
+            "Techork\\PaymentService\\ConnexPay\\": "src/ConnexPay/src/",
+            "Techork\\PaymentService\\Laravel\\": "src/Laravel/src/",
+            "Techork\\PaymentService\\Nuvei\\": "src/Nuvei/src/",
+            "Techork\\PaymentService\\Paynet\\": "src/Paynet/src/",
+            "Techork\\PaymentService\\Stripe\\": "src/Stripe/src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Techork\\PaymentService\\Tests\\": [
+                "src/Common/tests/",
+                "src/Domain/tests/",
+                "src/Gateway/tests/",
+                "src/Conferma/tests/",
+                "src/ConnexPay/tests/",
+                "src/Laravel/tests/",
+                "src/Nuvei/tests/",
+                "src/Paynet/tests/",
+                "src/Stripe/tests/"
+            ]
+        }
+    },
+    "scripts": {
+        "test": "pest",
+        "test:packages": "for d in src/*; do echo \">> $d\"; (cd \"$d\" && [ -f phpunit.xml ] && [ -d vendor ] && vendor/bin/pest); done",
+        "split": "bin/split.sh"
+    },
+    "extra": {
+        "branch-alias": {
+            "dev-main": "1.x-dev"
+        },
+        "laravel": {
+            "providers": [
+                "Techork\\PaymentService\\Laravel\\GatewayServiceProvider",
+                "Techork\\PaymentService\\Laravel\\Webhook\\WebhookServiceProvider"
+            ],
+            "gateway": [
+                "Techork\\PaymentService\\Stripe\\StripeGateway",
+                "Techork\\PaymentService\\Paynet\\PaynetGateway",
+                "Techork\\PaymentService\\Nuvei\\NuveiGateway",
+                "Techork\\PaymentService\\ConnexPay\\ConnexPayGateway",
+                "Techork\\PaymentService\\Conferma\\ConfermaGateway"
+            ],
+            "webhook": [
+                "Techork\\PaymentService\\Stripe\\Webhook\\StripeWebhookSubscriber",
+                "Techork\\PaymentService\\Paynet\\Webhook\\PaynetWebhookSubscriber",
+                "Techork\\PaymentService\\Nuvei\\Webhook\\NuveiWebhookSubscriber",
+                "Techork\\PaymentService\\ConnexPay\\Webhook\\ConnexPayWebhookSubscriber"
+            ]
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true,
+            "php-http/discovery": true
+        }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}

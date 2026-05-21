@@ -1,0 +1,15 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Techork\PaymentService\ConnexPay;
+
+use Techork\PaymentService\Gateway\Contract\CustomerReferenceProvider;
+
+final class CreateCardResponse extends ConnexPayResponse implements CustomerReferenceProvider
+{
+    public function getCustomerReference(): ?string
+    {
+        return $this->data['customerGuid'] ?? null;
+    }
+}

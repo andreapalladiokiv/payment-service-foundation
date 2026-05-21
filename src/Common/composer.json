@@ -1,0 +1,34 @@
+{
+    "name": "techork/payment-service-common",
+    "description": "Shared domain contracts and value objects for payment services",
+    "type": "library",
+    "license": "proprietary",
+    "require": {
+        "php": "^8.4",
+        "giggsey/libphonenumber-for-php": "^9.0",
+        "ramsey/uuid": "^4.0",
+        "symfony/intl": "^7.0 || ^8.0"
+    },
+    "require-dev": {
+        "mockery/mockery": "^1.6",
+        "pestphp/pest": "^3.0 || ^4.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Techork\\PaymentService\\Common\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Techork\\PaymentService\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

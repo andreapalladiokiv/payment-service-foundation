@@ -1,0 +1,18 @@
+/vendor/
+/composer.lock
+/.idea/
+/.claude/
+/.phpunit.cache/
+/.phpunit.result.cache
+
+# per-package artifacts inside src/
+src/*/vendor/
+src/*/composer.lock
+src/*/.idea/
+src/*/.claude/
+src/*/.phpunit.cache/
+src/*/.phpunit.result.cache
+
+# build / split artifacts
+/build/
+/.splits/

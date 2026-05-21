@@ -1,0 +1,50 @@
+{
+    "name": "techork/payment-service-confermapay",
+    "description": "ConfermaPay (virtual card issuing) gateway implementation for payment services",
+    "type": "library",
+    "license": "proprietary",
+    "repositories": [
+        {
+            "type": "vcs",
+            "url": "git@github.com:andreapalladiokiv/payment-service-common.git"
+        },
+        {
+            "type": "vcs",
+            "url": "git@github.com:andreapalladiokiv/payment-service-gateway.git"
+        }
+    ],
+    "require": {
+        "php": "^8.4",
+        "php-http/guzzle7-adapter": "^1.1",
+        "techork/payment-service-common": "@dev",
+        "techork/payment-service-gateway": "@dev"
+    },
+    "require-dev": {
+        "mockery/mockery": "^1.6",
+        "pestphp/pest": "^3.0 || ^4.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Techork\\PaymentService\\Conferma\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Techork\\PaymentService\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "gateway": "Techork\\PaymentService\\Conferma\\ConfermaGateway"
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true,
+            "php-http/discovery": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
