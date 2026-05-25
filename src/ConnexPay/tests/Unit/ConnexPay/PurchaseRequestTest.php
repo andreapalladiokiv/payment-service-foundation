@@ -72,11 +72,12 @@ it('builds purchase data for credit card', function () {
 
     expect($data['DeviceGuid'])->toBe('device-1')
         ->and($data['Amount'])->toBe(100.00)
+        ->and($data['TenderType'])->toBe('Credit')
         ->and($data['Card']['CardNumber'])->toBe('4012000098765439')
         ->and($data['Card']['ExpirationDate'])->toBe('3012')
         ->and($data['Card']['Cvv2'])->toBe('999')
         ->and($data['Card']['CardHolderName'])->toBe('Test User')
-        ->and($data['ConnexPayTransaction']['ExpectedPayments'])->toBe(1);
+        ->and($data['ConnexPayTransaction'])->toBe(['ExpectedPayments' => 1]);
 });
 
 it('builds purchase data for token with Guid', function () {
@@ -102,7 +103,9 @@ it('builds purchase data for token with Guid', function () {
     $data = $request->getData();
 
     expect($data['Card']['Guid'])->toBe('card-guid-abc')
-        ->and($data['Amount'])->toBe(50.00);
+        ->and($data['Amount'])->toBe(50.00)
+        ->and($data['TenderType'])->toBe('Credit')
+        ->and($data['ConnexPayTransaction'])->toBe(['ExpectedPayments' => 1]);
 });
 
 it('builds purchase data for payment method with Guid', function () {
@@ -127,10 +130,14 @@ it('builds purchase data for payment method with Guid', function () {
 
     $data = $request->getData();
 
-    expect($data['Card']['Guid'])->toBe('pm-guid-xyz');
+    expect($data['Card']['Guid'])->toBe('pm-guid-xyz')
+        ->and($data['TenderType'])->toBe('Credit')
+        ->and($data['ConnexPayTransaction'])->toBe(['ExpectedPayments' => 1]);
 });
 
-it('builds purchase data for cash without Card', function () {
+it('builds purchase data for cash with Cash tender, ExpectedPayments=5 and Customer', function () {
+    $billing = new BillingAddress('Test', 'User', '456 Oak', 'LA', new Country('US'), '90001', email: new Email('buyer@test.com'));
+
     $request = new PurchaseRequest(new OmnipayClient, new HttpRequest);
     $request->initialize([
         'money' => new Money(7500, new Currency('USD')),
@@ -138,15 +145,23 @@ it('builds purchase data for cash without Card', function () {
         'gateway' => purchaseCpCredential(),
         'decrypter' => purchaseCpDec(),
         'deviceGuid' => 'device-1',
+        'billingAddress' => $billing,
     ]);
 
     $data = $request->getData();
 
     expect($data)->not->toHaveKey('Card')
+        ->and($data)->not->toHaveKey('RiskData')
+        ->and($data['TenderType'])->toBe('Cash')
+        ->and($data['ConnexPayTransaction'])->toBe(['ExpectedPayments' => 5])
+        ->and($data['Customer']['FirstName'])->toBe('Test')
+        ->and($data['Customer']['LastName'])->toBe('User')
+        ->and($data['Customer']['Address1'])->toBe('456 Oak')
+        ->and($data['Customer']['Email'])->toBe('buyer@test.com')
         ->and($data['Amount'])->toBe(75.00);
 });
 
-it('includes OrderNumber when clientUniqueId set', function () {
+it('omits OrderNumber even when clientUniqueId set', function () {
     $request = new PurchaseRequest(new OmnipayClient, new HttpRequest);
     $request->initialize([
         'money' => new Money(1000, new Currency('USD')),
@@ -159,10 +174,10 @@ it('includes OrderNumber when clientUniqueId set', function () {
 
     $data = $request->getData();
 
-    expect($data['OrderNumber'])->toBe('order-789');
+    expect($data)->not->toHaveKey('OrderNumber');
 });
 
-it('includes billing address as Customer and RiskData', function () {
+it('includes billing address as top-level RiskData', function () {
     $card = new CreditCard(
         Number::fromNumber('4012000098765439', purchaseCpEnc()),
         Expiration::fromMonthAndYear(12, 2030),
@@ -184,10 +199,33 @@ it('includes billing address as Customer and RiskData', function () {
 
     $data = $request->getData();
 
-    expect($data['Card']['Customer']['Address1'])->toBe('456 Oak')
-        ->and($data['Card']['Customer']['City'])->toBe('LA')
-        ->and($data['Card']['Customer']['Email'])->toBe('buyer@test.com')
+    expect($data['Card'])->not->toHaveKey('Customer')
+        ->and($data['RiskData']['Name'])->toBe('Test User')
+        ->and($data['RiskData']['BillingAddress1'])->toBe('456 Oak')
+        ->and($data['RiskData']['BillingPostalCode'])->toBe('90001')
+        ->and($data['RiskData']['BillingCountryCode'])->toBe('US')
         ->and($data['RiskData']['Email'])->toBe('buyer@test.com');
+});
+
+it('includes StatementDescription when set', function () {
+    $card = new CreditCard(
+        Number::fromNumber('4012000098765439', purchaseCpEnc()),
+        Expiration::fromMonthAndYear(12, 2030),
+        new Holder('Test User'),
+        Cvc::fromCvc('999', purchaseCpEnc()),
+    );
+
+    $request = new PurchaseRequest(new OmnipayClient, new HttpRequest);
+    $request->initialize([
+        'money' => new Money(10000, new Currency('USD')),
+        'instrument' => $card,
+        'gateway' => purchaseCpCredential(),
+        'decrypter' => purchaseCpDec(),
+        'deviceGuid' => 'device-1',
+        'statementDescription' => 'ACME Trip 42',
+    ]);
+
+    expect($request->getData()['StatementDescription'])->toBe('ACME Trip 42');
 });
 
 it('includes ThreeDS in Card when threeDS is present', function () {

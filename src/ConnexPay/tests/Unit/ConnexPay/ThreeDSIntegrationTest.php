@@ -106,10 +106,10 @@ it('excludes ThreeDS when threeDS is null', function () {
 });
 
 // ──────────────────────────────────────────────
-//  Cash — no Card, no ThreeDS
+//  Cash — routed to purchase by the gateway; AuthorizeRequest refuses
 // ──────────────────────────────────────────────
 
-it('excludes ThreeDS when instrument is Cash', function () {
+it('refuses Cash with ThreeDS (Cash must go through purchase)', function () {
     $threeDS = new ThreeDSResult(
         ThreeDSStatus::Successful,
         'cavv-ignored',
@@ -129,7 +129,5 @@ it('excludes ThreeDS when instrument is Cash', function () {
         'threeDS' => $threeDS,
     ]);
 
-    $data = $request->getData();
-
-    expect($data)->not->toHaveKey('Card');
-});
+    $request->getData();
+})->throws(RuntimeException::class, 'does not support cash');

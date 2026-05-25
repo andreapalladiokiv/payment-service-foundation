@@ -49,11 +49,12 @@ it('builds authorize data for credit card', function () {
 
     expect($data['DeviceGuid'])->toBe('device-123')
         ->and($data['Amount'])->toBe(50.00)
+        ->and($data['TenderType'])->toBe('Credit')
         ->and($data['Card']['CardNumber'])->toBe('4012000098765439')
         ->and($data['Card']['ExpirationDate'])->toBe('3012')
         ->and($data['Card']['Cvv2'])->toBe('999')
         ->and($data['Card']['CardHolderName'])->toBe('Test User')
-        ->and($data['ConnexPayTransaction']['ExpectedPayments'])->toBe(1);
+        ->and($data)->not->toHaveKey('ConnexPayTransaction');
 });
 
 it('builds authorize data for token with Guid', function () {
@@ -79,7 +80,8 @@ it('builds authorize data for token with Guid', function () {
     $data = $request->getData();
 
     expect($data['Card']['Guid'])->toBe('card-guid-abc')
-        ->and($data['Amount'])->toBe(25.00);
+        ->and($data['Amount'])->toBe(25.00)
+        ->and($data['TenderType'])->toBe('Credit');
 });
 
 it('builds authorize data for payment method with Guid', function () {
@@ -104,10 +106,11 @@ it('builds authorize data for payment method with Guid', function () {
 
     $data = $request->getData();
 
-    expect($data['Card']['Guid'])->toBe('pm-guid-xyz');
+    expect($data['Card']['Guid'])->toBe('pm-guid-xyz')
+        ->and($data['TenderType'])->toBe('Credit');
 });
 
-it('builds authorize data for cash without Card field', function () {
+it('refuses to build authorize data for cash (cash must go through charge)', function () {
     $request = new AuthorizeRequest(new OmnipayClient, new HttpRequest);
     $request->initialize([
         'money' => new Money(3000, new Currency('USD')),
@@ -117,17 +120,21 @@ it('builds authorize data for cash without Card field', function () {
         'deviceGuid' => 'device-123',
     ]);
 
-    $data = $request->getData();
+    $request->getData();
+})->throws(RuntimeException::class, 'does not support cash');
 
-    expect($data)->not->toHaveKey('Card')
-        ->and($data['Amount'])->toBe(30.00);
-});
+it('omits OrderNumber even when clientUniqueId is set', function () {
+    $card = new CreditCard(
+        Number::fromNumber('4012000098765439', cpEncrypter()),
+        Expiration::fromMonthAndYear(12, 2030),
+        new Holder('Test User'),
+        Cvc::fromCvc('999', cpEncrypter()),
+    );
 
-it('includes OrderNumber when clientUniqueId is set', function () {
     $request = new AuthorizeRequest(new OmnipayClient, new HttpRequest);
     $request->initialize([
         'money' => new Money(1000, new Currency('USD')),
-        'instrument' => new Cash,
+        'instrument' => $card,
         'gateway' => cpCredential(),
         'decrypter' => cpDecrypter(),
         'deviceGuid' => 'device-123',
@@ -136,10 +143,10 @@ it('includes OrderNumber when clientUniqueId is set', function () {
 
     $data = $request->getData();
 
-    expect($data['OrderNumber'])->toBe('order-456');
+    expect($data)->not->toHaveKey('OrderNumber');
 });
 
-it('includes billing address as Customer and RiskData', function () {
+it('includes billing address as top-level RiskData', function () {
     $card = new CreditCard(
         Number::fromNumber('4012000098765439', cpEncrypter()),
         Expiration::fromMonthAndYear(12, 2030),
@@ -161,10 +168,54 @@ it('includes billing address as Customer and RiskData', function () {
 
     $data = $request->getData();
 
-    expect($data['Card']['Customer']['Address1'])->toBe('123 Main')
-        ->and($data['Card']['Customer']['City'])->toBe('NYC')
-        ->and($data['Card']['Customer']['Email'])->toBe('test@test.com')
+    expect($data['Card'])->not->toHaveKey('Customer')
+        ->and($data['RiskData']['Name'])->toBe('Test User')
+        ->and($data['RiskData']['BillingAddress1'])->toBe('123 Main')
+        ->and($data['RiskData']['BillingPostalCode'])->toBe('10001')
+        ->and($data['RiskData']['BillingCountryCode'])->toBe('US')
         ->and($data['RiskData']['Email'])->toBe('test@test.com');
+});
+
+it('includes StatementDescription when set', function () {
+    $card = new CreditCard(
+        Number::fromNumber('4012000098765439', cpEncrypter()),
+        Expiration::fromMonthAndYear(12, 2030),
+        new Holder('Test User'),
+        Cvc::fromCvc('999', cpEncrypter()),
+    );
+
+    $request = new AuthorizeRequest(new OmnipayClient, new HttpRequest);
+    $request->initialize([
+        'money' => new Money(5000, new Currency('USD')),
+        'instrument' => $card,
+        'gateway' => cpCredential(),
+        'decrypter' => cpDecrypter(),
+        'deviceGuid' => 'device-123',
+        'statementDescription' => 'ACME Trip 42',
+    ]);
+
+    expect($request->getData()['StatementDescription'])->toBe('ACME Trip 42');
+});
+
+it('omits StatementDescription when null or empty', function () {
+    $card = new CreditCard(
+        Number::fromNumber('4012000098765439', cpEncrypter()),
+        Expiration::fromMonthAndYear(12, 2030),
+        new Holder('Test User'),
+        Cvc::fromCvc('999', cpEncrypter()),
+    );
+
+    $request = new AuthorizeRequest(new OmnipayClient, new HttpRequest);
+    $request->initialize([
+        'money' => new Money(5000, new Currency('USD')),
+        'instrument' => $card,
+        'gateway' => cpCredential(),
+        'decrypter' => cpDecrypter(),
+        'deviceGuid' => 'device-123',
+        'statementDescription' => '',
+    ]);
+
+    expect($request->getData())->not->toHaveKey('StatementDescription');
 });
 
 it('includes ThreeDS in Card when threeDS is present', function () {
@@ -227,27 +278,3 @@ it('excludes ThreeDS when threeDS is null', function () {
     expect($data['Card'])->not->toHaveKey('ThreeDS');
 });
 
-it('excludes ThreeDS when Card is null (cash instrument)', function () {
-    $threeDS = new ThreeDSResult(
-        ThreeDSStatus::Successful,
-        'cavv-ignored',
-        ECICode::VisaSuccessful,
-        'ds-txn-ignored',
-        'acs-txn-ignored',
-        ThreeDSVersion::V220,
-    );
-
-    $request = new AuthorizeRequest(new OmnipayClient, new HttpRequest);
-    $request->initialize([
-        'money' => new Money(3000, new Currency('USD')),
-        'instrument' => new Cash,
-        'gateway' => cpCredential(),
-        'decrypter' => cpDecrypter(),
-        'deviceGuid' => 'device-123',
-        'threeDS' => $threeDS,
-    ]);
-
-    $data = $request->getData();
-
-    expect($data)->not->toHaveKey('Card');
-});

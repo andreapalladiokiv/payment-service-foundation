@@ -52,6 +52,16 @@ trait ConnexPayRequestParameters
         return $this->setParameter('billingAddress', $value);
     }
 
+    public function setStatementDescription(?string $value): self
+    {
+        return $this->setParameter('statementDescription', $value);
+    }
+
+    public function getStatementDescription(): ?string
+    {
+        return $this->getParameter('statementDescription');
+    }
+
     protected function formatMoney(Money $money): string
     {
         return (new DecimalMoneyFormatter(new ISOCurrencies))->format($money);
@@ -62,21 +72,33 @@ trait ConnexPayRequestParameters
         return substr($year, -2).str_pad($month, 2, '0', STR_PAD_LEFT);
     }
 
-    protected function formatBillingAddress(?BillingAddress $address): array
+    protected function formatRiskData(BillingAddress $address): array
     {
-        if ($address === null) {
-            return [];
-        }
+        return [
+            'Name' => $address->firstName.' '.$address->lastName,
+            'BillingPhoneNumber' => $address->phone ? (string) $address->phone : null,
+            'BillingState' => $address->state ? (string) $address->state : null,
+            'BillingCountryCode' => (string) $address->country,
+            'Email' => $address->email ? (string) $address->email : null,
+            'BillingAddress1' => $address->line,
+            'BillingAddress2' => $address->lineExtra,
+            'BillingPostalCode' => $address->postalCode,
+        ];
+    }
 
-        return array_filter([
+    protected function formatCustomer(BillingAddress $address): array
+    {
+        return [
             'FirstName' => $address->firstName,
             'LastName' => $address->lastName,
+            'Phone' => $address->phone ? (string) $address->phone : null,
+            'City' => $address->city,
+            'State' => $address->state ? (string) $address->state : null,
+            'Country' => (string) $address->country,
             'Email' => $address->email ? (string) $address->email : null,
             'Address1' => $address->line,
-            'City' => $address->city,
-            'Country' => (string) $address->country,
+            'Address2' => $address->lineExtra,
             'Zip' => $address->postalCode,
-            'State' => $address->state ? (string) $address->state : null,
-        ], static fn ($v) => $v !== null && $v !== '');
+        ];
     }
 }

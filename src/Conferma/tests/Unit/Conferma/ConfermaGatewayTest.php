@@ -27,7 +27,7 @@ function makeConfermaGateway(): ConfermaGateway
 }
 
 it('has name Conferma', function () {
-    expect(makeConfermaGateway()->getName())->toBe('conferma');
+    expect(makeConfermaGateway()->getName())->toBe('confermapay');
 });
 
 it('initializes parameters', function () {

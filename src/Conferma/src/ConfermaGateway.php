@@ -43,7 +43,7 @@ final class ConfermaGateway extends AbstractGateway implements Gateway
 
     public function getName(): string
     {
-        return 'conferma';
+        return 'confermapay';
     }
 
     public function setCustomerRepository(CustomerRepository $repository): void

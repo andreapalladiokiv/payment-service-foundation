@@ -41,6 +41,7 @@ final class CreateCardRequest extends AbstractRequest implements PaymentInstrume
         $data = [
             'DeviceGuid' => $this->getDeviceGuid(),
             'Card' => [
+                'CardHolderName' => (string) $card->holder,
                 'CardNumber' => $card->number->getNumber($decrypter),
                 'ExpirationDate' => $this->formatExpirationDate(
                     $card->expiration->format('m'),
@@ -54,9 +55,9 @@ final class CreateCardRequest extends AbstractRequest implements PaymentInstrume
             $data['Card']['Cvv2'] = $cvv;
         }
 
-        $name = (string) $card->holder;
-        if ($name !== '') {
-            $data['Card']['CardHolderName'] = $name;
+        $billingAddress = $this->getParameter('billingAddress');
+        if ($billingAddress !== null) {
+            $data['Card']['Customer'] = $this->formatCustomer($billingAddress);
         }
 
         return $data;

@@ -38,42 +38,34 @@ final class AuthorizeRequest extends AbstractRequest implements PaymentInstrumen
 
         /** @var PaymentInstrument $instrument */
         $instrument = $this->getParameter('instrument');
-        $cardData = $instrument->accept($this);
 
         $data = [
             'DeviceGuid' => $this->getDeviceGuid(),
             'Amount' => (float) $this->formatMoney($money),
-            'ConnexPayTransaction' => ['ExpectedPayments' => 1],
         ];
 
-        if ($cardData !== null) {
-            $data['Card'] = $cardData;
+        $statementDescription = $this->getStatementDescription();
+        if ($statementDescription !== null && $statementDescription !== '') {
+            $data['StatementDescription'] = $statementDescription;
         }
 
-        if ($this->getClientUniqueId() !== null) {
-            $data['OrderNumber'] = $this->getClientUniqueId();
+        $data['TenderType'] = 'Credit';
+        $data['Card'] = $instrument->accept($this);
+
+        $threeDS = $this->getThreeDS();
+        if ($threeDS !== null) {
+            $data['Card']['ThreeDS'] = [
+                'Cavv' => $threeDS->authenticationValue,
+                'Version' => $threeDS->version?->value,
+                'DirectoryServerTransactionID' => (string) $threeDS->dsTransactionId,
+                'AcsTransactionId' => (string) $threeDS->acsTransactionId,
+                'ECI' => $threeDS->eci?->value,
+            ];
         }
 
         $billingAddress = $this->getParameter('billingAddress');
         if ($billingAddress !== null) {
-            $customer = $this->formatBillingAddress($billingAddress);
-            if ($customer !== []) {
-                $data['Card']['Customer'] = $customer;
-                $data['RiskData'] = array_filter([
-                    'Email' => $customer['Email'] ?? null,
-                ]);
-            }
-        }
-
-        $threeDS = $this->getThreeDS();
-        if ($threeDS !== null && isset($data['Card'])) {
-            $data['Card']['ThreeDS'] = [
-                'Cavv' => $threeDS->authenticationValue,
-                'Version' => $threeDS->version?->value,
-                'DirectoryServerTransactionID' => $threeDS->dsTransactionId,
-                'AcsTransactionId' => $threeDS->acsTransactionId,
-                'ECI' => $threeDS->eci?->value,
-            ];
+            $data['RiskData'] = $this->formatRiskData($billingAddress);
         }
 
         return $data;
@@ -84,6 +76,7 @@ final class AuthorizeRequest extends AbstractRequest implements PaymentInstrumen
         $decrypter = $this->getDecrypter();
 
         $data = [
+            'CardHolderName' => (string) $card->holder,
             'CardNumber' => $card->number->getNumber($decrypter),
             'ExpirationDate' => $this->formatExpirationDate(
                 $card->expiration->format('m'),
@@ -96,17 +89,12 @@ final class AuthorizeRequest extends AbstractRequest implements PaymentInstrumen
             $data['Cvv2'] = $cvv;
         }
 
-        $name = (string) $card->holder;
-        if ($name !== '') {
-            $data['CardHolderName'] = $name;
-        }
-
         return $data;
     }
 
-    public function visitCash(Cash $cash): null
+    public function visitCash(Cash $cash): never
     {
-        return null;
+        throw new RuntimeException('ConnexPay /authonlys does not support cash; route cash payments through purchase() instead.');
     }
 
     public function visitToken(Token $token): array

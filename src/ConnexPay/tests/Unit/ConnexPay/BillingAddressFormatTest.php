@@ -40,7 +40,7 @@ function billingFormatDecrypter(): DecryptInterface
     return new class implements DecryptInterface { public function decrypt(string $d): string { return $d; } };
 }
 
-it('forwards firstName and lastName from BillingAddress (no N/A hardcode)', function () {
+it('forwards full BillingAddress to top-level RiskData (no N/A hardcode)', function () {
     $card = new CreditCard(
         Number::fromNumber('4012000098765439', billingFormatEncrypter()),
         Expiration::fromMonthAndYear(12, 2030),
@@ -69,19 +69,19 @@ it('forwards firstName and lastName from BillingAddress (no N/A hardcode)', func
         'deviceGuid' => 'device-1',
     ]);
 
-    $customer = $request->getData()['Card']['Customer'];
+    $data = $request->getData();
+    $risk = $data['RiskData'];
 
-    expect($customer['FirstName'])->toBe('Jane')
-        ->and($customer['LastName'])->toBe('Smith')
-        ->and($customer['Email'])->toBe('jane@test.com')
-        ->and($customer['Address1'])->toBe('456 Oak Ave')
-        ->and($customer['City'])->toBe('Tempe')
-        ->and($customer['Country'])->toBe('US')
-        ->and($customer['Zip'])->toBe('85284')
-        ->and($customer['State'])->toBe('AZ');
+    expect($data['Card'])->not->toHaveKey('Customer')
+        ->and($risk['Name'])->toBe('Jane Smith')
+        ->and($risk['Email'])->toBe('jane@test.com')
+        ->and($risk['BillingAddress1'])->toBe('456 Oak Ave')
+        ->and($risk['BillingState'])->toBe('AZ')
+        ->and($risk['BillingCountryCode'])->toBe('US')
+        ->and($risk['BillingPostalCode'])->toBe('85284');
 });
 
-it('omits Email and State when not provided', function () {
+it('keeps all RiskData keys present with nulls when optional fields are missing', function () {
     $card = new CreditCard(
         Number::fromNumber('4012000098765439', billingFormatEncrypter()),
         Expiration::fromMonthAndYear(12, 2030),
@@ -108,10 +108,16 @@ it('omits Email and State when not provided', function () {
         'deviceGuid' => 'device-1',
     ]);
 
-    $customer = $request->getData()['Card']['Customer'];
+    $risk = $request->getData()['RiskData'];
 
-    expect($customer)->not->toHaveKey('Email')
-        ->and($customer)->not->toHaveKey('State')
-        ->and($customer['FirstName'])->toBe('John')
-        ->and($customer['LastName'])->toBe('Doe');
+    expect($risk)->toBe([
+        'Name' => 'John Doe',
+        'BillingPhoneNumber' => null,
+        'BillingState' => null,
+        'BillingCountryCode' => 'US',
+        'Email' => null,
+        'BillingAddress1' => '1 St',
+        'BillingAddress2' => '',
+        'BillingPostalCode' => '10001',
+    ]);
 });

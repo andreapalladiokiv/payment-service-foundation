@@ -6,6 +6,7 @@ namespace Techork\PaymentService\ConnexPay;
 
 use Omnipay\Common\AbstractGateway;
 use Omnipay\Common\Message\AbstractRequest;
+use Techork\PaymentService\Common\ValueObject\Cash;
 use Techork\PaymentService\Gateway\Contract\CustomerRepository;
 use Techork\PaymentService\Gateway\Contract\Gateway;
 
@@ -129,6 +130,13 @@ final class ConnexPayGateway extends AbstractGateway implements Gateway
 
     public function authorize(array $parameters = []): AbstractRequest
     {
+        // ConnexPay's /authonlys endpoint doesn't accept cash; auths against a
+        // cash tender must go through /sales instead. Match the legacy
+        // acquirer's behavior of transparently routing Cash to charge.
+        if (($parameters['instrument'] ?? null) instanceof Cash) {
+            return $this->purchase($parameters);
+        }
+
         return $this->createRequest(AuthorizeRequest::class, $parameters);
     }
 

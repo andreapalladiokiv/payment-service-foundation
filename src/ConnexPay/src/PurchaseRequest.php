@@ -29,6 +29,10 @@ final class PurchaseRequest extends AbstractRequest implements PaymentInstrument
     use ConnexPayRequestParameters;
     use InstrumentParameters;
 
+    private const int EXPECTED_PAYMENTS_CARD = 1;
+
+    private const int EXPECTED_PAYMENTS_CASH = 5;
+
     public function getData(): array
     {
         $this->validate('money', 'instrument', 'gateway');
@@ -38,42 +42,33 @@ final class PurchaseRequest extends AbstractRequest implements PaymentInstrument
 
         /** @var PaymentInstrument $instrument */
         $instrument = $this->getParameter('instrument');
-        $cardData = $instrument->accept($this);
 
         $data = [
             'DeviceGuid' => $this->getDeviceGuid(),
             'Amount' => (float) $this->formatMoney($money),
-            'ConnexPayTransaction' => ['ExpectedPayments' => 1],
         ];
 
-        if ($cardData !== null) {
-            $data['Card'] = $cardData;
+        $statementDescription = $this->getStatementDescription();
+        if ($statementDescription !== null && $statementDescription !== '') {
+            $data['StatementDescription'] = $statementDescription;
         }
 
-        if ($this->getClientUniqueId() !== null) {
-            $data['OrderNumber'] = $this->getClientUniqueId();
-        }
-
-        $billingAddress = $this->getParameter('billingAddress');
-        if ($billingAddress !== null) {
-            $customer = $this->formatBillingAddress($billingAddress);
-            if ($customer !== []) {
-                $data['Card']['Customer'] = $customer;
-                $data['RiskData'] = array_filter([
-                    'Email' => $customer['Email'] ?? null,
-                ]);
-            }
-        }
+        $data = [...$data, ...$instrument->accept($this)];
 
         $threeDS = $this->getThreeDS();
         if ($threeDS !== null && isset($data['Card'])) {
             $data['Card']['ThreeDS'] = [
                 'Cavv' => $threeDS->authenticationValue,
                 'Version' => $threeDS->version?->value,
-                'DirectoryServerTransactionID' => $threeDS->dsTransactionId,
-                'AcsTransactionId' => $threeDS->acsTransactionId,
+                'DirectoryServerTransactionID' => (string) $threeDS->dsTransactionId,
+                'AcsTransactionId' => (string) $threeDS->acsTransactionId,
                 'ECI' => $threeDS->eci?->value,
             ];
+        }
+
+        $billingAddress = $this->getParameter('billingAddress');
+        if ($billingAddress !== null && isset($data['Card'])) {
+            $data['RiskData'] = $this->formatRiskData($billingAddress);
         }
 
         return $data;
@@ -83,7 +78,8 @@ final class PurchaseRequest extends AbstractRequest implements PaymentInstrument
     {
         $decrypter = $this->getDecrypter();
 
-        $data = [
+        $cardData = [
+            'CardHolderName' => (string) $card->holder,
             'CardNumber' => $card->number->getNumber($decrypter),
             'ExpirationDate' => $this->formatExpirationDate(
                 $card->expiration->format('m'),
@@ -93,20 +89,30 @@ final class PurchaseRequest extends AbstractRequest implements PaymentInstrument
 
         $cvv = $card->cvc->getCvc($decrypter);
         if ($cvv !== null && $cvv !== '') {
-            $data['Cvv2'] = $cvv;
+            $cardData['Cvv2'] = $cvv;
         }
 
-        $name = (string) $card->holder;
-        if ($name !== '') {
-            $data['CardHolderName'] = $name;
+        return [
+            'TenderType' => 'Credit',
+            'Card' => $cardData,
+            'ConnexPayTransaction' => ['ExpectedPayments' => self::EXPECTED_PAYMENTS_CARD],
+        ];
+    }
+
+    public function visitCash(Cash $cash): array
+    {
+        $billingAddress = $this->getParameter('billingAddress');
+
+        $data = [
+            'TenderType' => 'Cash',
+            'ConnexPayTransaction' => ['ExpectedPayments' => self::EXPECTED_PAYMENTS_CASH],
+        ];
+
+        if ($billingAddress !== null) {
+            $data['Customer'] = $this->formatCustomer($billingAddress);
         }
 
         return $data;
-    }
-
-    public function visitCash(Cash $cash): null
-    {
-        return null;
     }
 
     public function visitToken(Token $token): array
@@ -117,7 +123,11 @@ final class PurchaseRequest extends AbstractRequest implements PaymentInstrument
         $reference = $this->getReferenceResolver()->find($gateway->getId(), $token)
             ?? throw new RuntimeException("No ConnexPay reference found for token {$token->id->toString()}.");
 
-        return ['Guid' => $reference];
+        return [
+            'TenderType' => 'Credit',
+            'Card' => ['Guid' => $reference],
+            'ConnexPayTransaction' => ['ExpectedPayments' => self::EXPECTED_PAYMENTS_CARD],
+        ];
     }
 
     public function visitPaymentMethod(PaymentMethod $paymentMethod): array
@@ -128,7 +138,11 @@ final class PurchaseRequest extends AbstractRequest implements PaymentInstrument
         $reference = $this->getReferenceResolver()->find($gateway->getId(), $paymentMethod)
             ?? throw new RuntimeException("No ConnexPay reference found for payment method {$paymentMethod->id->toString()}.");
 
-        return ['Guid' => $reference];
+        return [
+            'TenderType' => 'Credit',
+            'Card' => ['Guid' => $reference],
+            'ConnexPayTransaction' => ['ExpectedPayments' => self::EXPECTED_PAYMENTS_CARD],
+        ];
     }
 
     public function sendData($data): PurchaseResponse
