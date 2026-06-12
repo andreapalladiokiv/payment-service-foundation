@@ -161,7 +161,23 @@ it('builds purchase data for cash with Cash tender, ExpectedPayments=5 and Custo
         ->and($data['Amount'])->toBe(75.00);
 });
 
-it('omits OrderNumber even when clientUniqueId set', function () {
+it('transliterates the Customer city to ASCII (ConnexPay rejects accents)', function () {
+    $billing = new BillingAddress('Test', 'User', '456 Oak', 'München', new Country('DE'), '80331');
+
+    $request = new PurchaseRequest(new OmnipayClient, new HttpRequest);
+    $request->initialize([
+        'money' => new Money(7500, new Currency('USD')),
+        'instrument' => new Cash,
+        'gateway' => purchaseCpCredential(),
+        'decrypter' => purchaseCpDec(),
+        'deviceGuid' => 'device-1',
+        'billingAddress' => $billing,
+    ]);
+
+    expect($request->getData()['Customer']['City'])->toBe('Munchen');
+});
+
+it('forwards clientUniqueId as OrderNumber', function () {
     $request = new PurchaseRequest(new OmnipayClient, new HttpRequest);
     $request->initialize([
         'money' => new Money(1000, new Currency('USD')),
@@ -174,7 +190,7 @@ it('omits OrderNumber even when clientUniqueId set', function () {
 
     $data = $request->getData();
 
-    expect($data)->not->toHaveKey('OrderNumber');
+    expect($data['OrderNumber'])->toBe('order-789');
 });
 
 it('includes billing address as top-level RiskData', function () {

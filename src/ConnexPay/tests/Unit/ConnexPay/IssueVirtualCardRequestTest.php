@@ -45,6 +45,11 @@ it('throws on unsupported brand', function () {
     makeConnexPayIssueRequest(['cardBrand' => CardBrand::Amex])->getData();
 })->throws(InvalidArgumentException::class, 'Unsupported ConnexPay card brand: amex');
 
+it('forwards clientUniqueId as OrderNumber and omits it when absent', function () {
+    expect(makeConnexPayIssueRequest(['clientUniqueId' => 'ORD-42'])->getData()['OrderNumber'])->toBe('ORD-42')
+        ->and(makeConnexPayIssueRequest()->getData())->not->toHaveKey('OrderNumber');
+});
+
 it('builds the full request body with required fields', function () {
     $data = makeConnexPayIssueRequest(['cardBrand' => CardBrand::Visa])->getData();
 

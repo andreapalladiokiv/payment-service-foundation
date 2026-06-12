@@ -7,6 +7,7 @@ namespace Techork\PaymentService\ConnexPay;
 use Omnipay\Common\AbstractGateway;
 use Omnipay\Common\Message\AbstractRequest;
 use Techork\PaymentService\Common\ValueObject\Cash;
+use Techork\PaymentService\Common\ValueObject\PaymentMethod;
 use Techork\PaymentService\Gateway\Contract\CustomerRepository;
 use Techork\PaymentService\Gateway\Contract\Gateway;
 
@@ -140,8 +141,42 @@ final class ConnexPayGateway extends AbstractGateway implements Gateway
         return $this->createRequest(AuthorizeRequest::class, $parameters);
     }
 
+    /**
+     * ConnexPay can only capture the full authorized amount
+     * (https://docs.connexpay.com/docs/auth-and-capture). For a smaller
+     * amount the documented procedure — and what the legacy integration
+     * did — is void the AuthOnly and run a fresh sale with the original
+     * instrument, which {@see PartialCaptureRequest} implements. Requires
+     * `authorizedAmount` + `instrument` in the parameters; without them a
+     * partial request can't be detected and the full hold would be
+     * captured silently.
+     */
     public function capture(array $parameters = []): AbstractRequest
     {
+        $money = $parameters['money'] ?? null;
+        $authorized = $parameters['authorizedAmount'] ?? null;
+
+        if ($money !== null && $authorized !== null && $money->greaterThan($authorized)) {
+            throw new \InvalidArgumentException('Capture amount exceeds the authorized amount.');
+        }
+
+        if ($money !== null && $authorized !== null && $money->lessThan($authorized)) {
+            $instrument = $parameters['instrument'] ?? null;
+
+            if ($instrument === null) {
+                throw new \InvalidArgumentException(
+                    'ConnexPay cannot capture a partial amount without the original instrument '
+                    .'(full-auth void + fresh sale is required).',
+                );
+            }
+
+            if ($instrument instanceof PaymentMethod && ! isset($parameters['billingAddress'])) {
+                $parameters['billingAddress'] = $instrument->billingAddress;
+            }
+
+            return $this->createRequest(PartialCaptureRequest::class, $parameters);
+        }
+
         return $this->createRequest(CaptureRequest::class, $parameters);
     }
 
@@ -162,10 +197,17 @@ final class ConnexPayGateway extends AbstractGateway implements Gateway
 
     public function issueVirtualCard(array $parameters = []): AbstractRequest
     {
-        $transactionReference = $parameters['transactionReference'] ?? null;
-        $incomingTransactionCode = $transactionReference !== null
-            ? $this->resolveIncomingTransactionCode($transactionReference)
-            : null;
+        // Prefer the code persisted with the sale / capture response
+        // (passed down by the router from gateway_references.metadata) —
+        // Search/Sales is the fallback, not the source of truth.
+        $incomingTransactionCode = $parameters['incomingTransactionCode'] ?? null;
+
+        if ($incomingTransactionCode === null || $incomingTransactionCode === '') {
+            $transactionReference = $parameters['transactionReference'] ?? null;
+            $incomingTransactionCode = $transactionReference !== null
+                ? $this->resolveIncomingTransactionCode($transactionReference, $parameters['clientUniqueId'] ?? null)
+                : null;
+        }
 
         return parent::createRequest(IssueVirtualCardRequest::class, [
             ...$parameters,
@@ -192,20 +234,42 @@ final class ConnexPayGateway extends AbstractGateway implements Gateway
         ]);
     }
 
-    private function resolveIncomingTransactionCode(string $saleGuid): string
+    /**
+     * Search/Sales silently ignores any body filter outside its documented
+     * list — `SaleGuid` / `Guid` / `IncomingTransactionCode` are NOT honored
+     * and the endpoint just returns sales pages for the merchant. The only
+     * usable narrowing filter we have is `OrderNumber` (sent on the original
+     * sale as the clientUniqueId), so filter by it when available and always
+     * match the row's `guid` against `$saleGuid` client-side while paging.
+     */
+    private function resolveIncomingTransactionCode(string $saleGuid, ?string $orderNumber = null): string
     {
-        $result = $this->client->post('/api/v1/Search/Sales/false/1/1', [
-            'MerchantGuid' => $this->getMerchantGuid(),
-            'SaleGuid' => $saleGuid,
-        ]);
+        $filters = ['MerchantGuid' => $this->getMerchantGuid()];
 
-        $sale = $result['searchResultDTO'][0] ?? null;
-
-        if ($sale === null || empty($sale['incomingTransactionCode'])) {
-            throw new \RuntimeException("Could not resolve IncomingTransactionCode for sale GUID: {$saleGuid}");
+        if ($orderNumber !== null && $orderNumber !== '') {
+            $filters['OrderNumber'] = preg_replace('/:(?:capture|cancel)$/', '', $orderNumber);
         }
 
-        return $sale['incomingTransactionCode'];
+        $page = 1;
+        $pageTotal = null;
+        // Safety cap — without it a bad filter would page through every sale
+        // on the merchant.
+        $maxPages = 20;
+
+        do {
+            $result = $this->client->post("/api/v1/Search/Sales/false/{$page}/100", $filters);
+
+            foreach ($result['searchResultDTO'] ?? [] as $row) {
+                if (is_array($row) && ($row['guid'] ?? null) === $saleGuid && ! empty($row['incomingTransactionCode'])) {
+                    return $row['incomingTransactionCode'];
+                }
+            }
+
+            $pageTotal ??= (int) ($result['pageTotal'] ?? 0);
+            $page++;
+        } while ($page <= $pageTotal && $page <= $maxPages);
+
+        throw new \RuntimeException("Could not resolve IncomingTransactionCode for sale GUID: {$saleGuid}");
     }
 
     protected function createRequest($class, array $parameters): AbstractRequest

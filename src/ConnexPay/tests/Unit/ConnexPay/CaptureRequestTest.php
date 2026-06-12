@@ -22,13 +22,13 @@ it('builds capture data with DeviceGuid and AuthOnlyGuid', function () {
         ->and($data)->not->toHaveKey('OrderNumber');
 });
 
-it('includes OrderNumber when clientUniqueId is set', function () {
+it('forwards clientUniqueId as OrderNumber', function () {
     $request = new CaptureRequest(new OmnipayClient, new HttpRequest);
     $request->initialize([
         'transactionReference' => 'auth-guid-abc',
         'deviceGuid' => 'device-123',
-        'clientUniqueId' => 'pi-uuid-7:capture',
+        'clientUniqueId' => 'ORD-42',
     ]);
 
-    expect($request->getData()['OrderNumber'])->toBe('pi-uuid-7:capture');
+    expect($request->getData()['OrderNumber'])->toBe('ORD-42');
 });

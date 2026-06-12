@@ -18,6 +18,7 @@ use Techork\PaymentService\Gateway\Contract\GatewayCredential;
 use Techork\PaymentService\Gateway\Contract\GatewayCredentialRepository;
 use Techork\PaymentService\Gateway\Contract\GatewayInstrumentRepository;
 use Techork\PaymentService\Gateway\Contract\GatewayTransactionRepository;
+use Techork\PaymentService\Gateway\Contract\TransactionMetadataProvider;
 use Techork\PaymentService\Gateway\Contract\VirtualCardResponseInterface;
 use Techork\PaymentService\Gateway\Contract\VirtualCardResult;
 use Techork\PaymentService\Gateway\GatewayFactory;
@@ -195,6 +196,64 @@ it('passes billing address through to charge', function () {
     $result = $gateway->charge(GatewayId::generate(), $instrument, new Money(100, new Currency('USD')), billingAddress: $billing);
 
     expect($result->success)->toBeTrue();
+});
+
+// ──────────────────────────────────────────────
+//  TransactionMetadataProvider extraction
+// ──────────────────────────────────────────────
+
+it('folds transaction metadata onto a successful capture result', function () {
+    $gwId = GatewayId::generate();
+    $piId = 'pi-' . uniqid();
+
+    $txRepo = Mockery::mock(GatewayTransactionRepository::class);
+    $txRepo->shouldReceive('findForPaymentIntent')->andReturn('auth_ref');
+
+    $response = Mockery::mock(ResponseInterface::class, TransactionMetadataProvider::class);
+    $response->shouldReceive('isSuccessful')->andReturn(true);
+    $response->shouldReceive('getTransactionReference')->andReturn('sale_guid');
+    $response->shouldReceive('getTransactionMetadata')->andReturn(['incoming_transaction_code' => 'ICT-9']);
+
+    $omnipay = makeOmnipayWithMethod('capture', $response);
+    $gateway = makeRouter(omnipay: $omnipay, transactionRepo: $txRepo);
+
+    $result = $gateway->capture($gwId, $piId, new Money(1000, new Currency('USD')));
+
+    expect($result->success)->toBeTrue()
+        ->and($result->reference)->toBe('sale_guid')
+        ->and($result->metadata)->toBe(['incoming_transaction_code' => 'ICT-9']);
+});
+
+it('folds transaction metadata onto a successful charge result alongside checks', function () {
+    $response = Mockery::mock(ResponseInterface::class, CardChecksProvider::class, TransactionMetadataProvider::class);
+    $response->shouldReceive('isSuccessful')->andReturn(true);
+    $response->shouldReceive('getTransactionReference')->andReturn('sale_guid');
+    $response->shouldReceive('getAddressLineCheck')->andReturn(CheckResult::Pass);
+    $response->shouldReceive('getPostalCodeCheck')->andReturn(CheckResult::Pass);
+    $response->shouldReceive('getCvcCheck')->andReturn(CheckResult::Pass);
+    $response->shouldReceive('getTransactionMetadata')->andReturn(['incoming_transaction_code' => 'ICT-10']);
+
+    $omnipay = makeOmnipayWithMethod('purchase', $response);
+    $gateway = makeRouter(omnipay: $omnipay);
+    $instrument = Mockery::mock(PaymentInstrument::class);
+    $instrument->shouldReceive('toPayload')->andReturn([]);
+
+    $result = $gateway->charge(GatewayId::generate(), $instrument, new Money(100, new Currency('USD')));
+
+    expect($result->success)->toBeTrue()
+        ->and($result->metadata)->toBe(['incoming_transaction_code' => 'ICT-10'])
+        ->and($result->cvcCheck)->toBe(CheckResult::Pass);
+});
+
+it('leaves metadata empty when the response carries none', function () {
+    $omnipay = makeOmnipayWithMethod('purchase', makeSuccessResponse('ch_plain_meta'));
+    $gateway = makeRouter(omnipay: $omnipay);
+    $instrument = Mockery::mock(PaymentInstrument::class);
+    $instrument->shouldReceive('toPayload')->andReturn([]);
+
+    $result = $gateway->charge(GatewayId::generate(), $instrument, new Money(100, new Currency('USD')));
+
+    expect($result->metadata)->toBe([]);
 });
 
 // ──────────────────────────────────────────────

@@ -14,7 +14,20 @@ interface GatewayTransactionRepository
 {
     public function findForPaymentIntent(string $paymentIntentId): ?string;
 
-    public function saveForPaymentIntent(GatewayId $gatewayId, string $paymentIntentId, string $reference): void;
+    /**
+     * @param array<string, mixed> $metadata gateway-specific transaction
+     *                                       attributes (e.g. ConnexPay's
+     *                                       incoming transaction code); an
+     *                                       empty array leaves any previously
+     *                                       stored metadata untouched
+     */
+    public function saveForPaymentIntent(GatewayId $gatewayId, string $paymentIntentId, string $reference, array $metadata = []): void;
+
+    /**
+     * @return array<string, mixed> the metadata stored with the payment
+     *                              intent's reference; empty when none
+     */
+    public function findMetadataForPaymentIntent(string $paymentIntentId): array;
 
     public function findForRefund(string $refundId): ?string;
 

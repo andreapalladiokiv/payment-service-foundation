@@ -123,7 +123,7 @@ it('refuses to build authorize data for cash (cash must go through charge)', fun
     $request->getData();
 })->throws(RuntimeException::class, 'does not support cash');
 
-it('omits OrderNumber even when clientUniqueId is set', function () {
+it('forwards clientUniqueId as OrderNumber', function () {
     $card = new CreditCard(
         Number::fromNumber('4012000098765439', cpEncrypter()),
         Expiration::fromMonthAndYear(12, 2030),
@@ -143,7 +143,7 @@ it('omits OrderNumber even when clientUniqueId is set', function () {
 
     $data = $request->getData();
 
-    expect($data)->not->toHaveKey('OrderNumber');
+    expect($data['OrderNumber'])->toBe('order-456');
 });
 
 it('includes billing address as top-level RiskData', function () {

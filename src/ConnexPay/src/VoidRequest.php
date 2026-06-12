@@ -20,16 +20,10 @@ final class VoidRequest extends AbstractRequest
     {
         $this->validate('transactionReference');
 
-        $data = [
+        return $this->withOrderNumber([
             'DeviceGuid' => $this->getDeviceGuid(),
             'AuthOnlyGuid' => $this->getParameter('transactionReference'),
-        ];
-
-        if ($this->getClientUniqueId() !== null) {
-            $data['OrderNumber'] = $this->getClientUniqueId();
-        }
-
-        return $data;
+        ]);
     }
 
     public function sendData($data): VoidResponse

@@ -23,8 +23,11 @@ use Techork\PaymentService\Common\ValueObject\Token;
 /**
  * Creates a sale via ConnexPay.
  * Expects: money (Money), instrument (PaymentInstrument), gateway (Gateway).
+ *
+ * Not final: {@see PartialCaptureRequest} reuses the sale build for the
+ * void-then-resell partial capture flow.
  */
-final class PurchaseRequest extends AbstractRequest implements PaymentInstrumentVisitor
+class PurchaseRequest extends AbstractRequest implements PaymentInstrumentVisitor
 {
     use ConnexPayRequestParameters;
     use InstrumentParameters;
@@ -71,7 +74,7 @@ final class PurchaseRequest extends AbstractRequest implements PaymentInstrument
             $data['RiskData'] = $this->formatRiskData($billingAddress);
         }
 
-        return $data;
+        return $this->withOrderNumber($data);
     }
 
     public function visitCreditCard(CreditCard $card): array

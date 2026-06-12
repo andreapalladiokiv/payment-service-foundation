@@ -20,10 +20,16 @@ namespace Techork\PaymentService\Gateway\Contract;
  */
 readonly class GatewayResult
 {
+    /**
+     * @param array<string, mixed> $metadata gateway-specific transaction
+     *                                       attributes persisted alongside the
+     *                                       reference (see {@see TransactionMetadataProvider})
+     */
     public function __construct(
         public bool $success,
         public ?string $reference,
         public ?string $message,
+        public array $metadata = [],
     ) {}
 
     public static function succeeded(string $reference): static
@@ -34,5 +40,13 @@ readonly class GatewayResult
     public static function failed(string $message): static
     {
         return new static(false, null, $message);
+    }
+
+    /**
+     * @param array<string, mixed> $metadata
+     */
+    public function withMetadata(array $metadata): self
+    {
+        return new self($this->success, $this->reference, $this->message, $metadata);
     }
 }

@@ -20,13 +20,13 @@ it('builds void data with DeviceGuid and AuthOnlyGuid', function () {
         ->and($data)->not->toHaveKey('OrderNumber');
 });
 
-it('includes OrderNumber when clientUniqueId is set', function () {
+it('forwards clientUniqueId as OrderNumber', function () {
     $request = new VoidRequest(new OmnipayClient, new HttpRequest);
     $request->initialize([
         'transactionReference' => 'auth-guid-xyz',
         'deviceGuid' => 'device-789',
-        'clientUniqueId' => 'pi-uuid-7:cancel',
+        'clientUniqueId' => 'ORD-42',
     ]);
 
-    expect($request->getData()['OrderNumber'])->toBe('pi-uuid-7:cancel');
+    expect($request->getData()['OrderNumber'])->toBe('ORD-42');
 });

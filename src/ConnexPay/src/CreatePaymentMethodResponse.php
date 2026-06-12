@@ -4,4 +4,12 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\ConnexPay;
 
-final class CreatePaymentMethodResponse extends ConnexPayResponse {}
+use Techork\PaymentService\Gateway\Contract\CustomerReferenceProvider;
+
+final class CreatePaymentMethodResponse extends ConnexPayResponse implements CustomerReferenceProvider
+{
+    public function getCustomerReference(): ?string
+    {
+        return $this->data['customerGuid'] ?? null;
+    }
+}

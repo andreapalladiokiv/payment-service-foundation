@@ -22,6 +22,9 @@ use Techork\PaymentService\Common\ValueObject\CreditCard\CheckResult;
  */
 final readonly class AuthorizationResult extends GatewayResult
 {
+    /**
+     * @param array<string, mixed> $metadata
+     */
     public function __construct(
         bool $success,
         ?string $reference,
@@ -30,8 +33,9 @@ final readonly class AuthorizationResult extends GatewayResult
         public ?CheckResult $addressLineCheck = null,
         public ?CheckResult $postalCodeCheck = null,
         public ?CheckResult $cvcCheck = null,
+        array $metadata = [],
     ) {
-        parent::__construct($success, $reference, $message);
+        parent::__construct($success, $reference, $message, $metadata);
     }
 
     public static function requiresAction(string $reference, Challenge $challenge): self
@@ -52,6 +56,24 @@ final readonly class AuthorizationResult extends GatewayResult
             $addressLineCheck,
             $postalCodeCheck,
             $cvcCheck,
+            $this->metadata,
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $metadata
+     */
+    public function withMetadata(array $metadata): self
+    {
+        return new self(
+            $this->success,
+            $this->reference,
+            $this->message,
+            $this->challenge,
+            $this->addressLineCheck,
+            $this->postalCodeCheck,
+            $this->cvcCheck,
+            $metadata,
         );
     }
 

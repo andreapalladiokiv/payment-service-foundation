@@ -46,18 +46,12 @@ final class ReturnRetryRequest extends AbstractRequest implements PaymentInstrum
         /** @var PaymentInstrument $instrument */
         $instrument = $this->getParameter('instrument');
 
-        $data = [
+        return $this->withOrderNumber([
             'DeviceGuid' => $this->getDeviceGuid(),
             'SaleGuid' => $this->getParameter('transactionReference'),
             'Amount' => (float) $this->formatMoney($money),
             'ReturnRetryCard' => $instrument->accept($this),
-        ];
-
-        if ($this->getClientUniqueId() !== null) {
-            $data['OrderNumber'] = $this->getClientUniqueId();
-        }
-
-        return $data;
+        ]);
     }
 
     public function visitCreditCard(CreditCard $card): array

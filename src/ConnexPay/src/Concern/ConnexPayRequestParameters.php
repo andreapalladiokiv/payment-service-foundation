@@ -67,6 +67,34 @@ trait ConnexPayRequestParameters
         return (new DecimalMoneyFormatter(new ISOCurrencies))->format($money);
     }
 
+    /**
+     * The caller's `clientUniqueId` IS the business order number for
+     * ConnexPay — it lands on merchant-facing reports and is the only
+     * Search/Sales filter that can later locate the transaction (guid
+     * filters are silently ignored by that endpoint). Forward it on every
+     * endpoint that accepts `OrderNumber`; omit the key when absent.
+     *
+     * The bridge ports suffix the aggregate id with ":capture" / ":cancel"
+     * for gateways with idempotency-key semantics (see
+     * PaymentGatewayInterface). ConnexPay has no such concept — repeating
+     * the same OrderNumber across the auth, capture and void of one intent
+     * is correct and keeps Search/Sales lookups working — so the synthetic
+     * suffix is stripped rather than leaked into merchant-facing reports.
+     *
+     * @param array<string, mixed> $data
+     * @return array<string, mixed>
+     */
+    protected function withOrderNumber(array $data): array
+    {
+        $orderNumber = $this->getClientUniqueId();
+
+        if ($orderNumber !== null && $orderNumber !== '') {
+            $data['OrderNumber'] = preg_replace('/:(?:capture|cancel)$/', '', $orderNumber);
+        }
+
+        return $data;
+    }
+
     protected function formatExpirationDate(string $month, string $year): string
     {
         return substr($year, -2).str_pad($month, 2, '0', STR_PAD_LEFT);
@@ -92,7 +120,7 @@ trait ConnexPayRequestParameters
             'FirstName' => $address->firstName,
             'LastName' => $address->lastName,
             'Phone' => $address->phone ? (string) $address->phone : null,
-            'City' => $address->city,
+            'City' => self::transliterate($address->city),
             'State' => $address->state ? (string) $address->state : null,
             'Country' => (string) $address->country,
             'Email' => $address->email ? (string) $address->email : null,
@@ -100,5 +128,26 @@ trait ConnexPayRequestParameters
             'Address2' => $address->lineExtra,
             'Zip' => $address->postalCode,
         ];
+    }
+
+    /**
+     * ConnexPay rejects non-ASCII input on Customer fields ("München",
+     * "Kraków" fail validation), so fold accents down to their ASCII
+     * equivalents. Prefers ext-intl (locale-independent), falls back to
+     * iconv, and to the original value when neither can transliterate.
+     */
+    protected static function transliterate(string $value): string
+    {
+        if (class_exists(\Transliterator::class)) {
+            $result = \Transliterator::create('Any-Latin; Latin-ASCII')?->transliterate($value);
+
+            if (is_string($result)) {
+                return $result;
+            }
+        }
+
+        $ascii = iconv('UTF-8', 'ASCII//TRANSLIT', $value);
+
+        return $ascii === false ? $value : $ascii;
     }
 }

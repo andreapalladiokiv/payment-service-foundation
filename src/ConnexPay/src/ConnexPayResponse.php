@@ -10,8 +10,9 @@ use Techork\PaymentService\Common\ValueObject\Challenge\ThreeDSChallenge;
 use Techork\PaymentService\Common\ValueObject\CreditCard\CheckResult;
 use Techork\PaymentService\Gateway\Contract\CardChecksProvider;
 use Techork\PaymentService\Gateway\Contract\ChallengeProvider;
+use Techork\PaymentService\Gateway\Contract\TransactionMetadataProvider;
 
-class ConnexPayResponse extends AbstractResponse implements CardChecksProvider, ChallengeProvider
+class ConnexPayResponse extends AbstractResponse implements CardChecksProvider, ChallengeProvider, TransactionMetadataProvider
 {
     public function isSuccessful(): bool
     {
@@ -21,6 +22,24 @@ class ConnexPayResponse extends AbstractResponse implements CardChecksProvider, 
     public function getTransactionReference(): ?string
     {
         return $this->data['guid'] ?? null;
+    }
+
+    /**
+     * The incoming transaction code is the merchant-facing id the legacy API
+     * contract exposes as `acquirer_id` — it exists only in the sale /
+     * capture response body (capture nests it under `sale`, which
+     * {@see CaptureRequest::sendData()} already unwraps), so it must be
+     * persisted with the reference or it's gone until a backfill.
+     */
+    public function getTransactionMetadata(): array
+    {
+        $code = $this->data['connexPayTransaction']['incomingTransCode']
+            ?? $this->data['ConnexPayTransaction']['IncomingTransCode']
+            ?? null;
+
+        return $code === null || $code === ''
+            ? []
+            : ['incoming_transaction_code' => (string) $code];
     }
 
     public function getMessage(): ?string

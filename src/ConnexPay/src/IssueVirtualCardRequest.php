@@ -104,7 +104,7 @@ final class IssueVirtualCardRequest extends AbstractRequest
             $data['CardBrand'] = $brand;
         }
 
-        return $data;
+        return $this->withOrderNumber($data);
     }
 
     /**

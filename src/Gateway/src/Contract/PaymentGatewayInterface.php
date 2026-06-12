@@ -41,7 +41,13 @@ interface PaymentGatewayInterface
 
     public function charge(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null): AuthorizationResult;
 
-    public function capture(GatewayId $gatewayId, string $paymentIntentId, Money $amount, ?string $clientUniqueId = null): GatewayResult;
+    /**
+     * @param  ?Money  $authorizedAmount  The originally authorized amount.
+     *  Gateways without native partial capture (ConnexPay) need it to detect
+     *  a partial request and fall back to void + a fresh sale with
+     *  `$instrument`. Gateways with native partial capture ignore both.
+     */
+    public function capture(GatewayId $gatewayId, string $paymentIntentId, Money $amount, ?string $clientUniqueId = null, ?Money $authorizedAmount = null, ?PaymentInstrument $instrument = null): GatewayResult;
 
     public function cancel(GatewayId $gatewayId, string $paymentIntentId, ?string $clientUniqueId = null): GatewayResult;
 

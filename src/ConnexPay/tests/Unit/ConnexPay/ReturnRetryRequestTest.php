@@ -77,7 +77,7 @@ it('resolves ReturnRetryCard.Guid from the reference resolver when given a store
     expect($request->getData()['ReturnRetryCard'])->toBe(['Guid' => 'cnx-tok-ref-7']);
 });
 
-it('includes OrderNumber when clientUniqueId is set', function () {
+it('forwards clientUniqueId as OrderNumber', function () {
     $card = new CreditCard(
         Number::fromNumber('4012000098765439', cpEncrypter()),
         Expiration::fromMonthAndYear(12, 2030),

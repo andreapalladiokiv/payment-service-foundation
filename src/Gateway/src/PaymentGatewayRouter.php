@@ -22,6 +22,7 @@ use Techork\PaymentService\Gateway\Contract\GatewayResult;
 use Techork\PaymentService\Gateway\Contract\GatewayTransactionRepository;
 use Techork\PaymentService\Gateway\Contract\PaymentGatewayInterface;
 use Techork\PaymentService\Gateway\Contract\RegistrationResult;
+use Techork\PaymentService\Gateway\Contract\TransactionMetadataProvider;
 use Techork\PaymentService\Gateway\Contract\VirtualCardResponseInterface;
 use Techork\PaymentService\Gateway\Contract\VirtualCardResult;
 use Techork\PaymentService\Gateway\Logger\GatewayLoggerInterface;
@@ -237,7 +238,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         return $result;
     }
 
-    public function capture(GatewayId $gatewayId, string $paymentIntentId, Money $amount, ?string $clientUniqueId = null): GatewayResult
+    public function capture(GatewayId $gatewayId, string $paymentIntentId, Money $amount, ?string $clientUniqueId = null, ?Money $authorizedAmount = null, ?PaymentInstrument $instrument = null): GatewayResult
     {
         $credential = $this->credentialRepository->findOrFail($gatewayId);
         $omnipay = $this->gatewayFactory->createForCredential($credential);
@@ -251,12 +252,22 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             'transactionReference' => $transactionReference,
             'amount' => $amount,
             'clientUniqueId' => $clientUniqueId,
+            'authorizedAmount' => $authorizedAmount,
+            'instrument' => $instrument?->toPayload(),
         ]);
 
         $result = $this->buildOutcome(fn () => $omnipay->capture([
             'transactionReference' => $transactionReference,
             'money' => $amount,
             'clientUniqueId' => $clientUniqueId,
+            // Consumed only by gateways without native partial capture
+            // (ConnexPay voids the auth and runs a fresh sale with the
+            // original instrument); others have no setters and ignore them.
+            'authorizedAmount' => $authorizedAmount,
+            'instrument' => $instrument,
+            'gateway' => $credential,
+            'decrypter' => $this->decrypter,
+            'referenceResolver' => $this->referenceRepository,
         ])->send());
 
         $this->logger->log('Gateway capture response', [
@@ -446,6 +457,12 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         ]);
 
         try {
+            // The incoming transaction code persisted at sale / capture time
+            // (TransactionMetadataProvider). Passing it spares the gateway a
+            // Search/Sales round-trip whose guid filters ConnexPay silently
+            // ignores.
+            $metadata = $this->transactionRepository->findMetadataForPaymentIntent($paymentIntentId);
+
             $response = $omnipay->issueVirtualCard([
                 'money' => $amountLimit,
                 'transactionReference' => $transactionReference,
@@ -454,6 +471,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
                 'lastName' => $lastName,
                 'cardBrand' => $cardBrand,
                 'clientUniqueId' => $clientUniqueId,
+                'incomingTransactionCode' => $metadata['incoming_transaction_code'] ?? null,
             ])->send();
 
             if ($response instanceof VirtualCardResponseInterface) {
@@ -494,7 +512,8 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             $response = $request();
 
             if ($response->isSuccessful()) {
-                return GatewayResult::succeeded($response->getTransactionReference());
+                return GatewayResult::succeeded($response->getTransactionReference())
+                    ->withMetadata(self::extractMetadata($response));
             }
 
             return GatewayResult::failed($response->getMessage() ?? 'Gateway returned an unsuccessful response.');
@@ -519,14 +538,14 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
                 return self::attachChecksToAuthorization(
                     AuthorizationResult::requiresAction($response->getTransactionReference(), $challenge),
                     $response,
-                );
+                )->withMetadata(self::extractMetadata($response));
             }
 
             if ($response->isSuccessful()) {
                 return self::attachChecksToAuthorization(
                     AuthorizationResult::succeeded($response->getTransactionReference()),
                     $response,
-                );
+                )->withMetadata(self::extractMetadata($response));
             }
 
             return AuthorizationResult::failed($response->getMessage() ?? 'Gateway returned an unsuccessful response.');
@@ -563,6 +582,16 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         } catch (Throwable $e) {
             return RegistrationResult::failed($e->getMessage());
         }
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private static function extractMetadata(ResponseInterface $response): array
+    {
+        return $response instanceof TransactionMetadataProvider
+            ? $response->getTransactionMetadata()
+            : [];
     }
 
     private static function attachChecksToAuthorization(AuthorizationResult $result, ResponseInterface $response): AuthorizationResult

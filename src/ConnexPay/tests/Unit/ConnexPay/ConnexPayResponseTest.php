@@ -18,6 +18,31 @@ it('implements CardChecksProvider', function () {
     expect(makeConnexPayResponse([]))->toBeInstanceOf(CardChecksProvider::class);
 });
 
+it('surfaces the incoming transaction code as transaction metadata', function () {
+    $response = makeConnexPayResponse([
+        'wasProcessed' => true,
+        'guid' => 'sale-guid',
+        'connexPayTransaction' => ['incomingTransCode' => 'ICT-001'],
+    ]);
+
+    expect($response->getTransactionMetadata())->toBe(['incoming_transaction_code' => 'ICT-001']);
+});
+
+it('surfaces the incoming transaction code from PascalCase payloads', function () {
+    $response = makeConnexPayResponse([
+        'wasProcessed' => true,
+        'guid' => 'sale-guid',
+        'ConnexPayTransaction' => ['IncomingTransCode' => 'ICT-002'],
+    ]);
+
+    expect($response->getTransactionMetadata())->toBe(['incoming_transaction_code' => 'ICT-002']);
+});
+
+it('returns empty metadata when the incoming transaction code is absent or empty', function () {
+    expect(makeConnexPayResponse(['wasProcessed' => true, 'guid' => 'g'])->getTransactionMetadata())->toBe([])
+        ->and(makeConnexPayResponse(['connexPayTransaction' => ['incomingTransCode' => '']])->getTransactionMetadata())->toBe([]);
+});
+
 it('returns null for all checks when codes absent', function () {
     $response = makeConnexPayResponse(['wasProcessed' => true, 'guid' => 'abc']);
 
