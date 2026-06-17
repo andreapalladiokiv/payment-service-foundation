@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace Techork\PaymentService\Conferma;
+namespace Techork\PaymentService\Revolut;
 
 use GuzzleHttp\Exception\GuzzleException;
 
-interface ConfermaHttpClientInterface
+interface RevolutHttpClientInterface
 {
     /**
      * @param  array<string, mixed>  $data
@@ -22,7 +22,7 @@ interface ConfermaHttpClientInterface
      *
      * @throws GuzzleException
      */
-    public function put(string $path, array $data): array;
+    public function patch(string $path, array $data): array;
 
     /**
      * @return array<string, mixed>
@@ -30,4 +30,11 @@ interface ConfermaHttpClientInterface
      * @throws GuzzleException
      */
     public function get(string $path): array;
+
+    /**
+     * @return array<string, mixed>
+     *
+     * @throws GuzzleException
+     */
+    public function delete(string $path): array;
 }

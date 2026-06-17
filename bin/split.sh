@@ -20,7 +20,7 @@ declare -A REMOTES=(
   [Paynet]="git@github.com:andreapalladiokiv/payment-service-paynet.git"
   [Nuvei]="git@github.com:andreapalladiokiv/payment-service-nuvei.git"
   [ConnexPay]="git@github.com:andreapalladiokiv/payment-service-connexpay.git"
-  [Conferma]="git@github.com:andreapalladiokiv/payment-service-confermapay.git"
+  [Revolut]="git@github.com:andreapalladiokiv/payment-service-revolut.git"
 )
 
 ROOT="$(git rev-parse --show-toplevel)"

@@ -30,13 +30,13 @@
     },
     "replace": {
         "techork/payment-service-common": "self.version",
-        "techork/payment-service-confermapay": "self.version",
         "techork/payment-service-connexpay": "self.version",
         "techork/payment-service-domain": "self.version",
         "techork/payment-service-gateway": "self.version",
         "techork/payment-service-laravel-bridge": "self.version",
         "techork/payment-service-nuvei": "self.version",
         "techork/payment-service-paynet": "self.version",
+        "techork/payment-service-revolut": "self.version",
         "techork/payment-service-stripe": "self.version"
     },
     "require-dev": {
@@ -49,11 +49,11 @@
             "Techork\\PaymentService\\Common\\": "src/Common/src/",
             "Techork\\PaymentService\\Domain\\": "src/Domain/src/",
             "Techork\\PaymentService\\Gateway\\": "src/Gateway/src/",
-            "Techork\\PaymentService\\Conferma\\": "src/Conferma/src/",
             "Techork\\PaymentService\\ConnexPay\\": "src/ConnexPay/src/",
             "Techork\\PaymentService\\Laravel\\": "src/Laravel/src/",
             "Techork\\PaymentService\\Nuvei\\": "src/Nuvei/src/",
             "Techork\\PaymentService\\Paynet\\": "src/Paynet/src/",
+            "Techork\\PaymentService\\Revolut\\": "src/Revolut/src/",
             "Techork\\PaymentService\\Stripe\\": "src/Stripe/src/"
         }
     },
@@ -63,11 +63,11 @@
                 "src/Common/tests/",
                 "src/Domain/tests/",
                 "src/Gateway/tests/",
-                "src/Conferma/tests/",
                 "src/ConnexPay/tests/",
                 "src/Laravel/tests/",
                 "src/Nuvei/tests/",
                 "src/Paynet/tests/",
+                "src/Revolut/tests/",
                 "src/Stripe/tests/"
             ]
         }
@@ -91,7 +91,7 @@
                 "Techork\\PaymentService\\Paynet\\PaynetGateway",
                 "Techork\\PaymentService\\Nuvei\\NuveiGateway",
                 "Techork\\PaymentService\\ConnexPay\\ConnexPayGateway",
-                "Techork\\PaymentService\\Conferma\\ConfermaGateway"
+                "Techork\\PaymentService\\Revolut\\RevolutGateway"
             ],
             "webhook": [
                 "Techork\\PaymentService\\Stripe\\Webhook\\StripeWebhookSubscriber",

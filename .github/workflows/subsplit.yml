@@ -30,7 +30,7 @@ jobs:
           - Paynet
           - Nuvei
           - ConnexPay
-          - Conferma
+          - Revolut
 
     steps:
       - name: Checkout monorepo (full history)

@@ -30,8 +30,8 @@
         <testsuite name="ConnexPay">
             <directory>src/ConnexPay/tests</directory>
         </testsuite>
-        <testsuite name="Conferma">
-            <directory>src/Conferma/tests</directory>
+        <testsuite name="Revolut">
+            <directory>src/Revolut/tests</directory>
         </testsuite>
     </testsuites>
     <source>
@@ -44,7 +44,7 @@
             <directory>src/Paynet/src</directory>
             <directory>src/Nuvei/src</directory>
             <directory>src/ConnexPay/src</directory>
-            <directory>src/Conferma/src</directory>
+            <directory>src/Revolut/src</directory>
         </include>
     </source>
 </phpunit>

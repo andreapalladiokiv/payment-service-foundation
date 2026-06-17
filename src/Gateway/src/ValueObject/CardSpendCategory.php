@@ -13,10 +13,6 @@ namespace Techork\PaymentService\Gateway\ValueObject;
  *  - ConnexPay uses a wide MCC-style numeric enum (Airline=01,
  *    HotelAndResort=02, …). Most cases below map one-to-one to ConnexPay
  *    `PurchaseType` codes (see ConnexPay `PurchaseTypeMapper`).
- *  - Conferma uses a narrow 6-case enum (Generic, Air, Accommodation,
- *    Rail, Transport, ServiceFee). All `Travel*` cases map onto specific
- *    Conferma spend types; non-travel cases collapse to Generic. See
- *    Conferma `SpendTypeMapper`.
  *
  * Each gateway-package keeps its own mapper. This enum is the domain
  * source of truth — gateway-package implementations are private to
