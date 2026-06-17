@@ -249,8 +249,11 @@ final readonly class State implements JsonSerializable
             'WGM' => 'WEST GLAMORGAN',
         ],
         'US' => [
+            'AA' => 'Armed Forces Americas',
+            'AE' => 'Armed Forces Europe',
             'AL' => 'ALABAMA',
             'AK' => 'ALASKA',
+            'AP' => 'Armed Forces Pacific',
             'AS' => 'AMERICAN SAMOA',
             'AZ' => 'ARIZONA',
             'AR' => 'ARKANSAS',
