@@ -26,6 +26,9 @@
         "mockery/mockery": "^1.6",
         "pestphp/pest": "^3.0 || ^4.0"
     },
+    "bin": [
+        "bin/revolut-obtain-refresh-token.php"
+    ],
     "autoload": {
         "psr-4": {
             "Techork\\PaymentService\\Revolut\\": "src/"

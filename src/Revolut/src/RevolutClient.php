@@ -6,18 +6,25 @@ namespace Techork\PaymentService\Revolut;
 
 use GuzzleHttp\Client;
 use GuzzleHttp\ClientInterface;
+use GuzzleHttp\Exception\GuzzleException;
 
 /**
  * HTTP client for the Revolut Business REST API
  * (https://developer.revolut.com/docs/business/business-api).
  *
- * Auth is a Bearer access token sent on every request. Revolut access
- * tokens are short-lived (40 min) and refreshed out-of-band via the
- * JWT client-assertion `/auth/token` flow; that lifecycle is the
- * application layer's responsibility (the legacy stack cached gateway
- * tokens per-tenant in its CacheManager). This SDK is deliberately
- * stateless about token rotation: the factory injects whatever access
- * token is currently valid and the client forwards it.
+ * Authentication follows the Business API OAuth 2.0 flow
+ * (https://developer.revolut.com/docs/guides/manage-accounts/get-started/make-your-first-api-request):
+ * before the first API call the client hands its stored `refreshToken` to a
+ * {@see RevolutAuthenticator}, which signs a short-lived RS256 JWT client
+ * assertion and exchanges the refresh token for a 40-minute `access_token` at
+ * `POST /api/1.0/auth/token`. The access token is cached in-memory for the
+ * life of the instance — the same self-authenticating pattern the ConnexPay
+ * client uses. Callers therefore supply the OAuth credentials, not a bearer
+ * token.
+ *
+ * The long-lived `refreshToken` itself is minted once, out-of-band, from the
+ * Revolut Business portal (see {@see RevolutAuthenticator::exchangeAuthorizationCode()}
+ * and the package README); it is a stored credential here.
  *
  * There is NO Revolut Sandbox for virtual cards — card creation, updates,
  * termination and sensitive-card-data exist only in Production
@@ -31,15 +38,24 @@ final class RevolutClient implements RevolutHttpClientInterface
 
     private ClientInterface $http;
 
+    private RevolutAuthenticator $authenticator;
+
+    private ?string $accessToken = null;
+
     public function __construct(
-        private readonly string $accessToken,
+        string $clientId,
+        string $privateKey,
+        private readonly string $refreshToken,
+        string $issuer,
         string $baseUrl = self::PRODUCTION_BASE_URL,
         ?ClientInterface $http = null,
     ) {
         $this->http = $http ?? new Client([
             'base_uri' => rtrim($baseUrl, '/').'/',
-            'headers' => ['Content-Type' => 'application/json', 'Accept' => 'application/json'],
+            'headers' => ['Accept' => 'application/json'],
         ]);
+
+        $this->authenticator = new RevolutAuthenticator($clientId, $privateKey, $issuer, $this->http);
     }
 
     public function post(string $path, array $data = []): array
@@ -65,12 +81,19 @@ final class RevolutClient implements RevolutHttpClientInterface
     /**
      * @param  array<string, mixed>  $options
      * @return array<string, mixed>
+     *
+     * @throws GuzzleException
      */
     private function send(string $method, string $path, array $options = []): array
     {
+        $this->authenticate();
+
         $response = $this->http->request($method, ltrim($path, '/'), [
             ...$options,
-            'headers' => ['Authorization' => 'Bearer '.$this->accessToken],
+            'headers' => [
+                'Authorization' => 'Bearer '.$this->accessToken,
+                'Content-Type' => 'application/json',
+            ],
         ]);
 
         // Terminate / freeze return 204 No Content; treat an empty body as
@@ -78,5 +101,22 @@ final class RevolutClient implements RevolutHttpClientInterface
         $body = $response->getBody()->getContents();
 
         return $body === '' ? [] : (json_decode($body, true) ?? []);
+    }
+
+    /**
+     * Exchanges the refresh token for a fresh access token on first use and
+     * caches it for the life of the instance. Revolut access tokens live 40
+     * minutes — longer than any single request — so per-instance caching is
+     * enough and keeps the transport stateless across processes.
+     *
+     * @throws GuzzleException
+     */
+    private function authenticate(): void
+    {
+        if ($this->accessToken !== null) {
+            return;
+        }
+
+        $this->accessToken = $this->authenticator->refreshAccessToken($this->refreshToken)['access_token'];
     }
 }

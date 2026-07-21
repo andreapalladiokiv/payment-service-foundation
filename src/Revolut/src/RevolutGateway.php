@@ -18,11 +18,12 @@ use Techork\PaymentService\Revolut\Exception\UnsupportedOperationException;
  * those through an acquiring gateway (Stripe / Nuvei / ConnexPay).
  *
  * Configuration parameters (set via {@see initialize}):
- *  - `accessToken`: Bearer token for the Business API. Revolut tokens are
- *    short-lived (40 min) and refreshed out-of-band via the JWT
- *    client-assertion flow; the application layer owns that lifecycle and
- *    injects the currently-valid token (same pattern the legacy stack used
- *    for ConnexPay / ConfermaPay).
+ *  - `clientId`, `privateKey`, `refreshToken`, `issuer`: the Business API
+ *    OAuth 2.0 credentials. {@see RevolutClient} signs a JWT client assertion
+ *    with `privateKey` and exchanges `refreshToken` for a short-lived access
+ *    token on demand — the SDK owns the token lifecycle rather than expecting
+ *    a pre-minted bearer token. `issuer` is the domain of the OAuth
+ *    redirect URL registered with Revolut (the JWT `iss` claim).
  *  - `baseUrl`: optional API host override. There is NO Revolut Sandbox for
  *    virtual cards — every card operation targets Production
  *    (https://b2b.revolut.com), so this exists only for tests / an outbound
@@ -58,7 +59,10 @@ final class RevolutGateway extends AbstractGateway implements Gateway
     public function getDefaultParameters(): array
     {
         return [
-            'accessToken' => '',
+            'clientId' => '',
+            'privateKey' => '',
+            'refreshToken' => '',
+            'issuer' => '',
             'baseUrl' => null,
             'holderId' => null,
             'accountId' => null,
@@ -68,14 +72,44 @@ final class RevolutGateway extends AbstractGateway implements Gateway
         ];
     }
 
-    public function getAccessToken(): string
+    public function getClientId(): string
     {
-        return $this->getParameter('accessToken') ?? '';
+        return $this->getParameter('clientId') ?? '';
     }
 
-    public function setAccessToken(string $value): static
+    public function setClientId(string $value): static
     {
-        return $this->setParameter('accessToken', $value);
+        return $this->setParameter('clientId', $value);
+    }
+
+    public function getPrivateKey(): string
+    {
+        return $this->getParameter('privateKey') ?? '';
+    }
+
+    public function setPrivateKey(string $value): static
+    {
+        return $this->setParameter('privateKey', $value);
+    }
+
+    public function getRefreshToken(): string
+    {
+        return $this->getParameter('refreshToken') ?? '';
+    }
+
+    public function setRefreshToken(string $value): static
+    {
+        return $this->setParameter('refreshToken', $value);
+    }
+
+    public function getIssuer(): string
+    {
+        return $this->getParameter('issuer') ?? '';
+    }
+
+    public function setIssuer(string $value): static
+    {
+        return $this->setParameter('issuer', $value);
     }
 
     public function getBaseUrl(): ?string
@@ -145,14 +179,17 @@ final class RevolutGateway extends AbstractGateway implements Gateway
     public function initialize(array $parameters = []): static
     {
         // parent::initialize() drives Omnipay's Helper, which translates
-        // snake_case keys (access_token, holder_id, account_id …) into the
+        // snake_case keys (client_id, private_key, holder_id …) into the
         // matching set*() calls. Reading our own getters afterwards is the
         // only way to see the same shape regardless of whether creds come
         // from the gateways table or a unit-test factory.
         parent::initialize($parameters);
 
         $this->client = new RevolutClient(
-            accessToken: $this->getAccessToken(),
+            clientId: $this->getClientId(),
+            privateKey: $this->getPrivateKey(),
+            refreshToken: $this->getRefreshToken(),
+            issuer: $this->getIssuer(),
             baseUrl: $this->getResolvedBaseUrl(),
         );
 
