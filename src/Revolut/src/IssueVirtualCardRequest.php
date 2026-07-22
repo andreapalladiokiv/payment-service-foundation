@@ -16,8 +16,10 @@ use Techork\PaymentService\Revolut\Concern\RevolutRequestParameters;
  * Issues a virtual card via the Revolut Business API.
  *
  * POST /api/1.0/cards — only virtual cards can be created via the API.
- * Requires `money` (the spend limit). `accountIds` (the `accounts` allow-list)
- * is optional; when omitted the card draws from the business default account.
+ * Requires `money` (the spend limit) and, for these auto-issued cards (no
+ * holder / no contacts), `product` (the card program code Revolut mandates).
+ * `accountIds` (the `accounts` allow-list) is optional; when omitted the card
+ * draws from the business default account.
  *
  * The create response carries the card id, masked PAN (`last_digits`),
  * `expiry` and `state` but never the full PAN / CVV. When
@@ -46,6 +48,13 @@ final class IssueVirtualCardRequest extends AbstractRequest
             'virtual' => true,
             'spending_limits' => $this->buildSpendingLimits($money),
         ];
+
+        // Auto-issued virtual cards (no holder / no contacts) require the card
+        // product/program code.
+        $product = $this->getProduct();
+        if ($product !== null && $product !== '') {
+            $body['product'] = $product;
+        }
 
         $categories = $this->resolveCategories();
         if ($categories !== []) {

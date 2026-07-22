@@ -66,6 +66,11 @@ it('includes only valid account uuids and omits accounts otherwise', function ()
         ->and(revolutIssueRequest(['accountIds' => ['not-a-uuid', $a]])->getData()['accounts'])->toBe([$a]);
 });
 
+it('includes the product code only when configured', function () {
+    expect(revolutIssueRequest(['product' => 'prod_123'])->getData()['product'])->toBe('prod_123')
+        ->and(revolutIssueRequest()->getData())->not->toHaveKey('product');
+});
+
 it('attaches a terminating spending period only when validity days are set', function () {
     $withPeriod = revolutIssueRequest(['validityDays' => 30])->getData();
 

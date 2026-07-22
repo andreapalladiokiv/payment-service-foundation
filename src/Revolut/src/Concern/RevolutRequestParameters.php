@@ -46,6 +46,16 @@ trait RevolutRequestParameters
     // accessors — redeclaring them with stricter signatures is a fatal
     // incompatibility, so they are intentionally not defined here.
 
+    public function setProduct(?string $value): self
+    {
+        return $this->setParameter('product', $value);
+    }
+
+    public function getProduct(): ?string
+    {
+        return $this->getParameter('product');
+    }
+
     /**
      * @param  list<string>|null  $value  Revolut account UUIDs the card draws from.
      */

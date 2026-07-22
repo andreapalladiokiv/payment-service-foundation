@@ -30,6 +30,9 @@ use Techork\PaymentService\Revolut\Exception\UnsupportedOperationException;
  *    proxy, not as an environment switch.
  *  - `accountIds`: optional list of account UUIDs the card draws from
  *    (the `accounts` allow-list on create). Omit to use the business default.
+ *  - `product`: the Revolut card product/program code the card is issued
+ *    under. Required by the create-card API for auto-issued virtual cards
+ *    (no holder / no contacts) — this integration's case.
  *  - `spendLimitPeriod`: which spend-limit bucket the deployment amount
  *    maps to (`single` default, or `day`/`week`/`month`/…).
  *  - `validityDays`: optional open-to-spend window; when > 0 the card is
@@ -63,6 +66,7 @@ final class RevolutGateway extends AbstractGateway implements Gateway
             'issuer' => '',
             'baseUrl' => null,
             'accountIds' => null,
+            'product' => null,
             'spendLimitPeriod' => 'single',
             'validityDays' => null,
             'fetchSensitiveDetails' => true,
@@ -141,6 +145,16 @@ final class RevolutGateway extends AbstractGateway implements Gateway
         }
 
         return $this->setParameter('accountIds', $value);
+    }
+
+    public function getProduct(): ?string
+    {
+        return $this->getParameter('product');
+    }
+
+    public function setProduct(?string $value): static
+    {
+        return $this->setParameter('product', $value);
     }
 
     public function getSpendLimitPeriod(): string
@@ -274,6 +288,7 @@ final class RevolutGateway extends AbstractGateway implements Gateway
             ...$parameters,
             'revolutClient' => $this->client,
             'accountIds' => $parameters['accountIds'] ?? $this->getAccountIds(),
+            'product' => $parameters['product'] ?? $this->getProduct(),
             'spendLimitPeriod' => $parameters['spendLimitPeriod'] ?? $this->getSpendLimitPeriod(),
             'validityDays' => $parameters['validityDays'] ?? $this->getValidityDays(),
             'fetchSensitiveDetails' => $parameters['fetchSensitiveDetails'] ?? $this->getFetchSensitiveDetails(),
