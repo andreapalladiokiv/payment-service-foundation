@@ -7,6 +7,7 @@ namespace Techork\PaymentService\Revolut;
 use Omnipay\Common\Message\AbstractResponse;
 use Techork\PaymentService\Gateway\Contract\VirtualCardResponseInterface;
 use Techork\PaymentService\Gateway\Contract\VirtualCardResult;
+use Techork\PaymentService\Revolut\Concern\RevolutExpiry;
 
 /**
  * Wraps the `PATCH /api/1.0/cards/{cardId}` response. Success is the
@@ -38,7 +39,7 @@ final class UpdateVirtualCardResponse extends AbstractResponse implements Virtua
 
         return VirtualCardResult::succeeded(
             cardGuid: (string) $this->data['id'],
-            expirationDate: $this->data['expiry'] ?? null,
+            expirationDate: RevolutExpiry::normalize($this->data['expiry'] ?? null),
             status: $this->data['state'] ?? null,
         );
     }

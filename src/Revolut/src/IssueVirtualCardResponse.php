@@ -7,12 +7,14 @@ namespace Techork\PaymentService\Revolut;
 use Omnipay\Common\Message\AbstractResponse;
 use Techork\PaymentService\Gateway\Contract\VirtualCardResponseInterface;
 use Techork\PaymentService\Gateway\Contract\VirtualCardResult;
+use Techork\PaymentService\Revolut\Concern\RevolutExpiry;
 
 /**
  * Wraps the `POST /api/1.0/cards` response (optionally merged with
  * sensitive details). Maps Revolut's card object onto the platform
  * {@see VirtualCardResult}: `id` → cardGuid, `pan`/`cvv` (when fetched) →
- * cardNumber/cvv, `expiry` ("MM/YYYY") → expirationDate, `state` → status.
+ * cardNumber/cvv, `expiry` ("MM/YYYY") → expirationDate (normalised to the
+ * digits-only `MMYYYY` the platform parses), `state` → status.
  */
 final class IssueVirtualCardResponse extends AbstractResponse implements VirtualCardResponseInterface
 {
@@ -41,7 +43,7 @@ final class IssueVirtualCardResponse extends AbstractResponse implements Virtual
             cardGuid: (string) $this->data['id'],
             cardNumber: $this->data['pan'] ?? null,
             cvv: $this->data['cvv'] ?? null,
-            expirationDate: $this->data['expiry'] ?? null,
+            expirationDate: RevolutExpiry::normalize($this->data['expiry'] ?? null),
             status: $this->data['state'] ?? null,
         );
     }

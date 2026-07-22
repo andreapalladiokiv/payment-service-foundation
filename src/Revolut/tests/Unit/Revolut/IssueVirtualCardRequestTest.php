@@ -116,7 +116,7 @@ it('creates the card then fetches sensitive details and maps the result', functi
         ->and($result->cardGuid)->toBe('card-1')
         ->and($result->cardNumber)->toBe('4111111111111111')
         ->and($result->cvv)->toBe('123')
-        ->and($result->expirationDate)->toBe('09/2030')
+        ->and($result->expirationDate)->toBe('092030')
         ->and($result->status)->toBe('active');
 });
 
