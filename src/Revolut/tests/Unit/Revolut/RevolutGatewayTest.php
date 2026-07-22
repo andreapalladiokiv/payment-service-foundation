@@ -63,7 +63,7 @@ it('injects gateway-level card configuration into issued cards', function () {
     $data = $request->getData();
 
     expect($data['accounts'])->toBe([$account])
-        ->and($data['product'])->toBe('prod_gw')
+        ->and($data['product'])->toBe(['code' => 'prod_gw'])
         ->and($data['spending_limits'])->toBe(['month' => ['amount' => 50.00, 'currency' => 'GBP']])
         ->and($data['spending_period']['end_date_action'])->toBe('terminate')
         ->and($request->getFetchSensitiveDetails())->toBeFalse();

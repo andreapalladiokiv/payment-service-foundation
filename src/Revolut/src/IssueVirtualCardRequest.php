@@ -50,10 +50,10 @@ final class IssueVirtualCardRequest extends AbstractRequest
         ];
 
         // Auto-issued virtual cards (no holder / no contacts) require the card
-        // product/program code.
+        // product; Revolut expects it as an object keyed by `code`.
         $product = $this->getProduct();
         if ($product !== null && $product !== '') {
-            $body['product'] = $product;
+            $body['product'] = ['code' => $product];
         }
 
         $categories = $this->resolveCategories();

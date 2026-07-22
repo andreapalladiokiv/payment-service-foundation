@@ -66,8 +66,8 @@ it('includes only valid account uuids and omits accounts otherwise', function ()
         ->and(revolutIssueRequest(['accountIds' => ['not-a-uuid', $a]])->getData()['accounts'])->toBe([$a]);
 });
 
-it('includes the product code only when configured', function () {
-    expect(revolutIssueRequest(['product' => 'prod_123'])->getData()['product'])->toBe('prod_123')
+it('includes the product code as an object only when configured', function () {
+    expect(revolutIssueRequest(['product' => 'prod_123'])->getData()['product'])->toBe(['code' => 'prod_123'])
         ->and(revolutIssueRequest()->getData())->not->toHaveKey('product');
 });
 
