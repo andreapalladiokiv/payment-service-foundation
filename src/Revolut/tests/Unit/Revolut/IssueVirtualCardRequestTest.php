@@ -59,11 +59,11 @@ it('includes only valid account uuids and omits accounts otherwise', function ()
     $a = '11111111-1111-1111-1111-111111111111';
     $b = '22222222-2222-2222-2222-222222222222';
 
-    expect(revolutIssueRequest(['accountId' => [$a, $b]])->getData()['accounts'])->toBe([$a, $b])
+    expect(revolutIssueRequest(['accountIds' => [$a, $b]])->getData()['accounts'])->toBe([$a, $b])
         ->and(revolutIssueRequest()->getData())->not->toHaveKey('accounts')
-        ->and(revolutIssueRequest(['accountId' => []])->getData())->not->toHaveKey('accounts')
-        ->and(revolutIssueRequest(['accountId' => ['', 'not-a-uuid']])->getData())->not->toHaveKey('accounts')
-        ->and(revolutIssueRequest(['accountId' => ['not-a-uuid', $a]])->getData()['accounts'])->toBe([$a]);
+        ->and(revolutIssueRequest(['accountIds' => []])->getData())->not->toHaveKey('accounts')
+        ->and(revolutIssueRequest(['accountIds' => ['', 'not-a-uuid']])->getData())->not->toHaveKey('accounts')
+        ->and(revolutIssueRequest(['accountIds' => ['not-a-uuid', $a]])->getData()['accounts'])->toBe([$a]);
 });
 
 it('attaches a terminating spending period only when validity days are set', function () {

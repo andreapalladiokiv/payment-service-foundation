@@ -28,7 +28,7 @@ use Techork\PaymentService\Revolut\Exception\UnsupportedOperationException;
  *    virtual cards — every card operation targets Production
  *    (https://b2b.revolut.com), so this exists only for tests / an outbound
  *    proxy, not as an environment switch.
- *  - `accountId`: optional list of account UUIDs the card draws from
+ *  - `accountIds`: optional list of account UUIDs the card draws from
  *    (the `accounts` allow-list on create). Omit to use the business default.
  *  - `spendLimitPeriod`: which spend-limit bucket the deployment amount
  *    maps to (`single` default, or `day`/`week`/`month`/…).
@@ -62,7 +62,7 @@ final class RevolutGateway extends AbstractGateway implements Gateway
             'refreshToken' => '',
             'issuer' => '',
             'baseUrl' => null,
-            'accountId' => null,
+            'accountIds' => null,
             'spendLimitPeriod' => 'single',
             'validityDays' => null,
             'fetchSensitiveDetails' => true,
@@ -122,25 +122,25 @@ final class RevolutGateway extends AbstractGateway implements Gateway
     /**
      * @return list<string>|null
      */
-    public function getAccountId(): ?array
+    public function getAccountIds(): ?array
     {
-        return $this->getParameter('accountId');
+        return $this->getParameter('accountIds');
     }
 
     /**
      * Accepts a list of account UUIDs. Tolerates a bare string too, so a
-     * gateway whose credentials still hold the pre-array single `account_id`
-     * initialises without a TypeError.
+     * gateway whose credentials still hold a single string initialises without
+     * a TypeError.
      *
      * @param  list<string>|string|null  $value
      */
-    public function setAccountId(array|string|null $value): static
+    public function setAccountIds(array|string|null $value): static
     {
         if (is_string($value)) {
             $value = $value === '' ? [] : [$value];
         }
 
-        return $this->setParameter('accountId', $value);
+        return $this->setParameter('accountIds', $value);
     }
 
     public function getSpendLimitPeriod(): string
@@ -180,7 +180,7 @@ final class RevolutGateway extends AbstractGateway implements Gateway
     public function initialize(array $parameters = []): static
     {
         // parent::initialize() drives Omnipay's Helper, which translates
-        // snake_case keys (client_id, private_key, account_id …) into the
+        // snake_case keys (client_id, private_key, account_ids …) into the
         // matching set*() calls. Reading our own getters afterwards is the
         // only way to see the same shape regardless of whether creds come
         // from the gateways table or a unit-test factory.
@@ -273,7 +273,7 @@ final class RevolutGateway extends AbstractGateway implements Gateway
         return parent::createRequest($class, [
             ...$parameters,
             'revolutClient' => $this->client,
-            'accountId' => $parameters['accountId'] ?? $this->getAccountId(),
+            'accountIds' => $parameters['accountIds'] ?? $this->getAccountIds(),
             'spendLimitPeriod' => $parameters['spendLimitPeriod'] ?? $this->getSpendLimitPeriod(),
             'validityDays' => $parameters['validityDays'] ?? $this->getValidityDays(),
             'fetchSensitiveDetails' => $parameters['fetchSensitiveDetails'] ?? $this->getFetchSensitiveDetails(),

@@ -16,7 +16,7 @@ use Techork\PaymentService\Revolut\Concern\RevolutRequestParameters;
  * Issues a virtual card via the Revolut Business API.
  *
  * POST /api/1.0/cards — only virtual cards can be created via the API.
- * Requires `money` (the spend limit). `accountId` (the `accounts` allow-list)
+ * Requires `money` (the spend limit). `accountIds` (the `accounts` allow-list)
  * is optional; when omitted the card draws from the business default account.
  *
  * The create response carries the card id, masked PAN (`last_digits`),
@@ -56,7 +56,7 @@ final class IssueVirtualCardRequest extends AbstractRequest
         // stale or malformed credentials can never trip Revolut's validation
         // (an empty result just omits `accounts`, issuing on the default account).
         $accounts = array_values(array_filter(
-            $this->getAccountId() ?? [],
+            $this->getAccountIds() ?? [],
             static fn ($id): bool => is_string($id) && Uuid::isValid($id),
         ));
         if ($accounts !== []) {

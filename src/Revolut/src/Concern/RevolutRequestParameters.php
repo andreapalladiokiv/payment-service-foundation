@@ -49,17 +49,17 @@ trait RevolutRequestParameters
     /**
      * @param  list<string>|null  $value  Revolut account UUIDs the card draws from.
      */
-    public function setAccountId(?array $value): self
+    public function setAccountIds(?array $value): self
     {
-        return $this->setParameter('accountId', $value);
+        return $this->setParameter('accountIds', $value);
     }
 
     /**
      * @return list<string>|null
      */
-    public function getAccountId(): ?array
+    public function getAccountIds(): ?array
     {
-        return $this->getParameter('accountId');
+        return $this->getParameter('accountIds');
     }
 
     public function setSpendCategory(?string $value): self

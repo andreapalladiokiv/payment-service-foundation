@@ -50,7 +50,7 @@ it('injects gateway-level card configuration into issued cards', function () {
     $account = '11111111-1111-1111-1111-111111111111';
 
     $request = makeRevolutGateway(params: [
-        'accountId' => [$account],
+        'accountIds' => [$account],
         'spendLimitPeriod' => 'month',
         'validityDays' => 14,
         'fetchSensitiveDetails' => false,
@@ -70,7 +70,7 @@ it('injects gateway-level card configuration into issued cards', function () {
 it('tolerates a legacy single-string account id', function () {
     $account = '11111111-1111-1111-1111-111111111111';
 
-    $request = makeRevolutGateway(params: ['accountId' => $account])->issueVirtualCard([
+    $request = makeRevolutGateway(params: ['accountIds' => $account])->issueVirtualCard([
         'money' => new Money(5000, new Currency('GBP')),
     ]);
 
@@ -80,8 +80,8 @@ it('tolerates a legacy single-string account id', function () {
 it('drops non-uuid account ids from the allow-list', function () {
     $account = '11111111-1111-1111-1111-111111111111';
 
-    expect(makeRevolutGateway(params: ['accountId' => ['not-a-uuid', $account]])
+    expect(makeRevolutGateway(params: ['accountIds' => ['not-a-uuid', $account]])
         ->issueVirtualCard(['money' => new Money(5000, new Currency('GBP'))])->getData()['accounts'])->toBe([$account])
-        ->and(makeRevolutGateway(params: ['accountId' => ['not-a-uuid']])
+        ->and(makeRevolutGateway(params: ['accountIds' => ['not-a-uuid']])
             ->issueVirtualCard(['money' => new Money(5000, new Currency('GBP'))])->getData())->not->toHaveKey('accounts');
 });
