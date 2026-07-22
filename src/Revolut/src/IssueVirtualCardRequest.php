@@ -52,7 +52,13 @@ final class IssueVirtualCardRequest extends AbstractRequest
             $body['categories'] = $categories;
         }
 
-        $accounts = array_values(array_filter($this->getAccountId() ?? [], static fn ($id): bool => $id !== null && $id !== ''));
+        // The account allow-list is optional; only forward well-formed UUIDs so
+        // stale or malformed credentials can never trip Revolut's validation
+        // (an empty result just omits `accounts`, issuing on the default account).
+        $accounts = array_values(array_filter(
+            $this->getAccountId() ?? [],
+            static fn ($id): bool => is_string($id) && Uuid::isValid($id),
+        ));
         if ($accounts !== []) {
             $body['accounts'] = $accounts;
         }

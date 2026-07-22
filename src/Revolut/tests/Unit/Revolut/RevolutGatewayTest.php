@@ -47,8 +47,10 @@ it('lets an explicit base URL override the production default', function () {
 });
 
 it('injects gateway-level card configuration into issued cards', function () {
+    $account = '11111111-1111-1111-1111-111111111111';
+
     $request = makeRevolutGateway(params: [
-        'accountId' => ['acc-9'],
+        'accountId' => [$account],
         'spendLimitPeriod' => 'month',
         'validityDays' => 14,
         'fetchSensitiveDetails' => false,
@@ -59,16 +61,27 @@ it('injects gateway-level card configuration into issued cards', function () {
 
     $data = $request->getData();
 
-    expect($data['accounts'])->toBe(['acc-9'])
+    expect($data['accounts'])->toBe([$account])
         ->and($data['spending_limits'])->toBe(['month' => ['amount' => 50.00, 'currency' => 'GBP']])
         ->and($data['spending_period']['end_date_action'])->toBe('terminate')
         ->and($request->getFetchSensitiveDetails())->toBeFalse();
 });
 
 it('tolerates a legacy single-string account id', function () {
-    $request = makeRevolutGateway(params: ['accountId' => 'acc-legacy'])->issueVirtualCard([
+    $account = '11111111-1111-1111-1111-111111111111';
+
+    $request = makeRevolutGateway(params: ['accountId' => $account])->issueVirtualCard([
         'money' => new Money(5000, new Currency('GBP')),
     ]);
 
-    expect($request->getData()['accounts'])->toBe(['acc-legacy']);
+    expect($request->getData()['accounts'])->toBe([$account]);
+});
+
+it('drops non-uuid account ids from the allow-list', function () {
+    $account = '11111111-1111-1111-1111-111111111111';
+
+    expect(makeRevolutGateway(params: ['accountId' => ['not-a-uuid', $account]])
+        ->issueVirtualCard(['money' => new Money(5000, new Currency('GBP'))])->getData()['accounts'])->toBe([$account])
+        ->and(makeRevolutGateway(params: ['accountId' => ['not-a-uuid']])
+            ->issueVirtualCard(['money' => new Money(5000, new Currency('GBP'))])->getData())->not->toHaveKey('accounts');
 });
