@@ -28,23 +28,13 @@ function revolutIssueRequest(array $params = [], ?RevolutHttpClientInterface $cl
 }
 
 it('builds the create-card body with the required fields', function () {
-    $data = revolutIssueRequest(['clientUniqueId' => 'req-1', 'firstName' => 'Kirby', 'lastName' => 'Janette'])->getData();
+    $data = revolutIssueRequest(['clientUniqueId' => 'req-1'])->getData();
 
     expect($data['request_id'])->toBe('req-1')
         ->and($data['virtual'])->toBeTrue()
         ->and($data)->not->toHaveKey('holder_id')
-        ->and($data['label'])->toBe('Kirby Janette')
+        ->and($data)->not->toHaveKey('label')
         ->and($data['spending_limits'])->toBe(['single' => ['amount' => 200.22, 'currency' => 'GBP']]);
-});
-
-it('falls back to the request id for the label when no name or label is given', function () {
-    expect(revolutIssueRequest(['clientUniqueId' => 'req-2'])->getData()['label'])->toBe('req-2');
-});
-
-it('prefers an explicit label over the cardholder name', function () {
-    $data = revolutIssueRequest(['label' => 'Trip 42', 'firstName' => 'Kirby', 'lastName' => 'Janette'])->getData();
-
-    expect($data['label'])->toBe('Trip 42');
 });
 
 it('generates a request id when no clientUniqueId is supplied', function () {

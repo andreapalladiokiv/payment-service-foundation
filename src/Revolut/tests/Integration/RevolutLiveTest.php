@@ -54,7 +54,6 @@ it('issues a virtual card against the live Revolut API', function () {
     $request->initialize([
         'revolutClient' => $client,
         'money' => new Money(100, new Currency('GBP')),
-        'label' => 'Foundation smoke test',
         'fetchSensitiveDetails' => false,
     ]);
 

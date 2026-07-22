@@ -44,7 +44,6 @@ final class IssueVirtualCardRequest extends AbstractRequest
         $body = [
             'request_id' => $requestId,
             'virtual' => true,
-            'label' => $this->resolveLabel($requestId),
             'spending_limits' => $this->buildSpendingLimits($money),
         ];
 
@@ -104,18 +103,6 @@ final class IssueVirtualCardRequest extends AbstractRequest
             'pan' => $details['pan'] ?? null,
             'cvv' => $details['cvv'] ?? null,
         ];
-    }
-
-    private function resolveLabel(string $fallback): string
-    {
-        $label = $this->getLabel();
-        if ($label !== null && $label !== '') {
-            return $label;
-        }
-
-        $name = trim(($this->getFirstName() ?? '').' '.($this->getLastName() ?? ''));
-
-        return $name !== '' ? $name : $fallback;
     }
 
     /**
