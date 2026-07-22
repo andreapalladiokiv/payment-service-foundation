@@ -64,3 +64,11 @@ it('injects gateway-level card configuration into issued cards', function () {
         ->and($data['spending_period']['end_date_action'])->toBe('terminate')
         ->and($request->getFetchSensitiveDetails())->toBeFalse();
 });
+
+it('tolerates a legacy single-string account id', function () {
+    $request = makeRevolutGateway(params: ['accountId' => 'acc-legacy'])->issueVirtualCard([
+        'money' => new Money(5000, new Currency('GBP')),
+    ]);
+
+    expect($request->getData()['accounts'])->toBe(['acc-legacy']);
+});

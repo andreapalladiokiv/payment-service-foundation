@@ -128,10 +128,18 @@ final class RevolutGateway extends AbstractGateway implements Gateway
     }
 
     /**
-     * @param  list<string>|null  $value
+     * Accepts a list of account UUIDs. Tolerates a bare string too, so a
+     * gateway whose credentials still hold the pre-array single `account_id`
+     * initialises without a TypeError.
+     *
+     * @param  list<string>|string|null  $value
      */
-    public function setAccountId(?array $value): static
+    public function setAccountId(array|string|null $value): static
     {
+        if (is_string($value)) {
+            $value = $value === '' ? [] : [$value];
+        }
+
         return $this->setParameter('accountId', $value);
     }
 
