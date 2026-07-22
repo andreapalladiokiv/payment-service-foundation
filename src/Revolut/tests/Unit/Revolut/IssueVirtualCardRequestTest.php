@@ -19,7 +19,6 @@ function revolutIssueRequest(array $params = [], ?RevolutHttpClientInterface $cl
     $request = new IssueVirtualCardRequest(new OmnipayClient, new HttpRequest);
     $request->initialize([
         'revolutClient' => $client ?? Mockery::mock(RevolutHttpClientInterface::class),
-        'holderId' => 'holder-1',
         'money' => new Money(20022, new Currency('GBP')),
         'fetchSensitiveDetails' => false,
         ...$params,
@@ -33,7 +32,7 @@ it('builds the create-card body with the required fields', function () {
 
     expect($data['request_id'])->toBe('req-1')
         ->and($data['virtual'])->toBeTrue()
-        ->and($data['holder_id'])->toBe('holder-1')
+        ->and($data)->not->toHaveKey('holder_id')
         ->and($data['label'])->toBe('Kirby Janette')
         ->and($data['spending_limits'])->toBe(['single' => ['amount' => 200.22, 'currency' => 'GBP']]);
 });
@@ -66,9 +65,10 @@ it('omits categories when no spend category is supplied', function () {
     expect(revolutIssueRequest()->getData())->not->toHaveKey('categories');
 });
 
-it('includes accounts only when an account id is configured', function () {
-    expect(revolutIssueRequest(['accountId' => 'acc-1'])->getData()['accounts'])->toBe(['acc-1'])
-        ->and(revolutIssueRequest()->getData())->not->toHaveKey('accounts');
+it('includes accounts only when account ids are configured', function () {
+    expect(revolutIssueRequest(['accountId' => ['acc-1', 'acc-2']])->getData()['accounts'])->toBe(['acc-1', 'acc-2'])
+        ->and(revolutIssueRequest()->getData())->not->toHaveKey('accounts')
+        ->and(revolutIssueRequest(['accountId' => []])->getData())->not->toHaveKey('accounts');
 });
 
 it('attaches a terminating spending period only when validity days are set', function () {
@@ -85,11 +85,10 @@ it('honours an overridden spend-limit period', function () {
         ->toBe(['month' => ['amount' => 200.22, 'currency' => 'GBP']]);
 });
 
-it('requires the holder id', function () {
+it('requires the spend limit money', function () {
     $request = new IssueVirtualCardRequest(new OmnipayClient, new HttpRequest);
     $request->initialize([
         'revolutClient' => Mockery::mock(RevolutHttpClientInterface::class),
-        'money' => new Money(100, new Currency('GBP')),
     ]);
 
     $request->getData();
@@ -99,7 +98,7 @@ it('creates the card then fetches sensitive details and maps the result', functi
     $client = Mockery::mock(RevolutHttpClientInterface::class);
     $client->shouldReceive('post')
         ->once()
-        ->with('/api/1.0/cards', Mockery::on(fn (array $d): bool => $d['virtual'] === true && $d['holder_id'] === 'holder-1'))
+        ->with('/api/1.0/cards', Mockery::on(fn (array $d): bool => $d['virtual'] === true))
         ->andReturn(['id' => 'card-1', 'last_digits' => '2671', 'expiry' => '09/2030', 'state' => 'active']);
     $client->shouldReceive('get')
         ->once()

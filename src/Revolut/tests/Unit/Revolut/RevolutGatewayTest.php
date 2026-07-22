@@ -25,25 +25,6 @@ it('creates a terminate card request', function () {
     expect(makeRevolutGateway()->terminateVirtualCard())->toBeInstanceOf(TerminateCardRequest::class);
 });
 
-it('injects the configured holder id into issued cards', function () {
-    $request = makeRevolutGateway(params: ['holderId' => 'holder-xyz'])->issueVirtualCard([
-        'money' => new Money(5000, new Currency('GBP')),
-        'clientUniqueId' => 'req-1',
-    ]);
-
-    expect($request->getData()['holder_id'])->toBe('holder-xyz');
-});
-
-it('lets a per-call holder id override the gateway default', function () {
-    $request = makeRevolutGateway(params: ['holderId' => 'holder-default'])->issueVirtualCard([
-        'money' => new Money(5000, new Currency('GBP')),
-        'holderId' => 'holder-override',
-        'clientUniqueId' => 'req-1',
-    ]);
-
-    expect($request->getData()['holder_id'])->toBe('holder-override');
-});
-
 it('throws on every acquiring / tokenization operation', function (string $operation) {
     makeRevolutGateway()->{$operation}();
 })->throws(UnsupportedOperationException::class)->with([
@@ -67,7 +48,7 @@ it('lets an explicit base URL override the production default', function () {
 
 it('injects gateway-level card configuration into issued cards', function () {
     $request = makeRevolutGateway(params: [
-        'accountId' => 'acc-9',
+        'accountId' => ['acc-9'],
         'spendLimitPeriod' => 'month',
         'validityDays' => 14,
         'fetchSensitiveDetails' => false,

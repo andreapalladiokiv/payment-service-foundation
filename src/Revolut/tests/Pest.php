@@ -20,7 +20,6 @@ function makeRevolutGateway(?RevolutHttpClientInterface $client = null, array $p
         'privateKey' => 'key-test',
         'refreshToken' => 'refresh-test',
         'issuer' => 'example.com',
-        'holderId' => 'holder-uuid',
         ...$params,
     ]);
 

@@ -21,18 +21,18 @@ use Techork\PaymentService\Revolut\RevolutClient;
  * the constraint and provides a Production-gated smoke check: set
  *
  *   REVOLUT_CLIENT_ID=... REVOLUT_PRIVATE_KEY=... REVOLUT_REFRESH_TOKEN=... \
- *   REVOLUT_ISSUER=... REVOLUT_PROD_HOLDER_ID=... \
+ *   REVOLUT_ISSUER=... \
  *   vendor/bin/pest src/Revolut/tests/Integration/RevolutLiveTest.php
  *
  * to issue a £1.00 card against the live API (it will be a real card —
  * terminate it afterwards). The client performs the JWT client-assertion
  * token exchange itself, so real OAuth credentials are required.
  */
-const REVOLUT_LIVE_SKIP = 'Revolut has no virtual-card Sandbox; set REVOLUT_CLIENT_ID + REVOLUT_PRIVATE_KEY + REVOLUT_REFRESH_TOKEN + REVOLUT_ISSUER + REVOLUT_PROD_HOLDER_ID to run the Production smoke test (issues a real card).';
+const REVOLUT_LIVE_SKIP = 'Revolut has no virtual-card Sandbox; set REVOLUT_CLIENT_ID + REVOLUT_PRIVATE_KEY + REVOLUT_REFRESH_TOKEN + REVOLUT_ISSUER to run the Production smoke test (issues a real card).';
 
 function revolutLiveConfigured(): bool
 {
-    foreach (['REVOLUT_CLIENT_ID', 'REVOLUT_PRIVATE_KEY', 'REVOLUT_REFRESH_TOKEN', 'REVOLUT_ISSUER', 'REVOLUT_PROD_HOLDER_ID'] as $var) {
+    foreach (['REVOLUT_CLIENT_ID', 'REVOLUT_PRIVATE_KEY', 'REVOLUT_REFRESH_TOKEN', 'REVOLUT_ISSUER'] as $var) {
         if ((getenv($var) ?: '') === '') {
             return false;
         }
@@ -53,7 +53,6 @@ it('issues a virtual card against the live Revolut API', function () {
     $request = new IssueVirtualCardRequest(new OmnipayClient, new HttpRequest);
     $request->initialize([
         'revolutClient' => $client,
-        'holderId' => (string) getenv('REVOLUT_PROD_HOLDER_ID'),
         'money' => new Money(100, new Currency('GBP')),
         'label' => 'Foundation smoke test',
         'fetchSensitiveDetails' => false,

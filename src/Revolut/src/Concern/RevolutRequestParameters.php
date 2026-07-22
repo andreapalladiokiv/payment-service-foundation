@@ -46,22 +46,18 @@ trait RevolutRequestParameters
     // accessors — redeclaring them with stricter signatures is a fatal
     // incompatibility, so they are intentionally not defined here.
 
-    public function setHolderId(?string $value): self
-    {
-        return $this->setParameter('holderId', $value);
-    }
-
-    public function getHolderId(): ?string
-    {
-        return $this->getParameter('holderId');
-    }
-
-    public function setAccountId(?string $value): self
+    /**
+     * @param  list<string>|null  $value  Revolut account UUIDs the card draws from.
+     */
+    public function setAccountId(?array $value): self
     {
         return $this->setParameter('accountId', $value);
     }
 
-    public function getAccountId(): ?string
+    /**
+     * @return list<string>|null
+     */
+    public function getAccountId(): ?array
     {
         return $this->getParameter('accountId');
     }
