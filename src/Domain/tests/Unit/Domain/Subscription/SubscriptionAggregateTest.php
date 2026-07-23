@@ -6,6 +6,7 @@ use Techork\PaymentService\Domain\PaymentIntent\CaptureMethod;
 use Techork\PaymentService\Domain\PaymentIntent\Command\CreatePaymentIntentCommand;
 use Techork\PaymentService\Common\Contract\Challenge;
 use Techork\PaymentService\Domain\PaymentIntent\PaymentIntentAggregate;
+use Techork\PaymentService\Domain\PaymentIntent\Port\CreateOutcome;
 use Techork\PaymentService\Domain\PaymentIntent\Port\CreatePort;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CreateRequest;
 use Techork\PaymentService\Domain\PaymentIntent\ValueObject\PaymentIntentId;
@@ -148,7 +149,7 @@ function makeSubscriptionPiSuccessPort(): CreatePort
 {
     return new readonly class implements CreatePort
     {
-        public function create(CreateRequest $request): ?Challenge { return null; }
+        public function create(CreateRequest $request): CreateOutcome { return new CreateOutcome(); }
     };
 }
 

@@ -13,6 +13,7 @@ use Techork\PaymentService\Common\ValueObject\Country;
 use Techork\PaymentService\Common\ValueObject\CreditCard\CheckResult;
 use Techork\PaymentService\Common\ValueObject\Email;
 use Techork\PaymentService\Gateway\Contract\CardChecksProvider;
+use Techork\PaymentService\Gateway\Contract\ConvertedAmountProvider;
 use Techork\PaymentService\Gateway\Contract\Gateway as GatewayContract;
 use Techork\PaymentService\Gateway\Contract\GatewayCredential;
 use Techork\PaymentService\Gateway\Contract\GatewayCredentialRepository;
@@ -254,6 +255,62 @@ it('leaves metadata empty when the response carries none', function () {
     $result = $gateway->charge(GatewayId::generate(), $instrument, new Money(100, new Currency('USD')));
 
     expect($result->metadata)->toBe([]);
+});
+
+// ──────────────────────────────────────────────
+//  ConvertedAmountProvider extraction
+// ──────────────────────────────────────────────
+
+it('folds the FX convertedAmount onto a successful charge result', function () {
+    $converted = new Money(5712, new Currency('USD'));
+
+    $response = Mockery::mock(ResponseInterface::class, ConvertedAmountProvider::class);
+    $response->shouldReceive('isSuccessful')->andReturn(true);
+    $response->shouldReceive('getTransactionReference')->andReturn('ch_fx');
+    $response->shouldReceive('getConvertedAmount')->andReturn($converted);
+
+    $omnipay = makeOmnipayWithMethod('purchase', $response);
+    $gateway = makeRouter(omnipay: $omnipay);
+    $instrument = Mockery::mock(PaymentInstrument::class);
+    $instrument->shouldReceive('toPayload')->andReturn([]);
+
+    $result = $gateway->charge(GatewayId::generate(), $instrument, new Money(5000, new Currency('EUR')));
+
+    expect($result->success)->toBeTrue()
+        ->and($result->convertedAmount)->toBe($converted);
+});
+
+it('folds the FX convertedAmount onto a successful capture result', function () {
+    $gwId = GatewayId::generate();
+    $piId = 'pi-' . uniqid();
+    $converted = new Money(9140, new Currency('USD'));
+
+    $txRepo = Mockery::mock(GatewayTransactionRepository::class);
+    $txRepo->shouldReceive('findForPaymentIntent')->andReturn('auth_ref');
+
+    $response = Mockery::mock(ResponseInterface::class, ConvertedAmountProvider::class);
+    $response->shouldReceive('isSuccessful')->andReturn(true);
+    $response->shouldReceive('getTransactionReference')->andReturn('cap_fx');
+    $response->shouldReceive('getConvertedAmount')->andReturn($converted);
+
+    $omnipay = makeOmnipayWithMethod('capture', $response);
+    $gateway = makeRouter(omnipay: $omnipay, transactionRepo: $txRepo);
+
+    $result = $gateway->capture($gwId, $piId, new Money(8000, new Currency('EUR')));
+
+    expect($result->success)->toBeTrue()
+        ->and($result->convertedAmount)->toBe($converted);
+});
+
+it('leaves convertedAmount null when the response does not report one', function () {
+    $omnipay = makeOmnipayWithMethod('purchase', makeSuccessResponse('ch_plain_fx'));
+    $gateway = makeRouter(omnipay: $omnipay);
+    $instrument = Mockery::mock(PaymentInstrument::class);
+    $instrument->shouldReceive('toPayload')->andReturn([]);
+
+    $result = $gateway->charge(GatewayId::generate(), $instrument, new Money(100, new Currency('USD')));
+
+    expect($result->convertedAmount)->toBeNull();
 });
 
 // ──────────────────────────────────────────────

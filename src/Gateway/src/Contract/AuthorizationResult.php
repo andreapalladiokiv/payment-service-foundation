@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Gateway\Contract;
 
+use Money\Money;
 use Techork\PaymentService\Common\Contract\Challenge;
 use Techork\PaymentService\Common\ValueObject\CreditCard\CheckResult;
 
@@ -34,8 +35,9 @@ final readonly class AuthorizationResult extends GatewayResult
         public ?CheckResult $postalCodeCheck = null,
         public ?CheckResult $cvcCheck = null,
         array $metadata = [],
+        ?Money $convertedAmount = null,
     ) {
-        parent::__construct($success, $reference, $message, $metadata);
+        parent::__construct($success, $reference, $message, $metadata, $convertedAmount);
     }
 
     public static function requiresAction(string $reference, Challenge $challenge): self
@@ -57,6 +59,7 @@ final readonly class AuthorizationResult extends GatewayResult
             $postalCodeCheck,
             $cvcCheck,
             $this->metadata,
+            $this->convertedAmount,
         );
     }
 
@@ -74,6 +77,22 @@ final readonly class AuthorizationResult extends GatewayResult
             $this->postalCodeCheck,
             $this->cvcCheck,
             $metadata,
+            $this->convertedAmount,
+        );
+    }
+
+    public function withConvertedAmount(?Money $convertedAmount): self
+    {
+        return new self(
+            $this->success,
+            $this->reference,
+            $this->message,
+            $this->challenge,
+            $this->addressLineCheck,
+            $this->postalCodeCheck,
+            $this->cvcCheck,
+            $this->metadata,
+            $convertedAmount,
         );
     }
 

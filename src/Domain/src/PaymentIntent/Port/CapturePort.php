@@ -9,7 +9,10 @@ use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CaptureRequest;
 interface CapturePort
 {
     /**
+     * @return CaptureOutcome carries the FX-settled convertedAmount when the
+     *                        gateway applied one, else null.
+     *
      * @throws GatewayDeclinedException
      */
-    public function capture(CaptureRequest $request): void;
+    public function capture(CaptureRequest $request): CaptureOutcome;
 }

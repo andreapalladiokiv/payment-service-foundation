@@ -169,7 +169,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         $self = new self($command->paymentIntentId());
 
         try {
-            $challenge = $port->create(new CreateRequest(
+            $outcome = $port->create(new CreateRequest(
                 paymentIntentId: $command->paymentIntentId(),
                 amount: $command->amount(),
                 instrument: $command->instrument(),
@@ -192,14 +192,14 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         }
 
         // Step-up required — branch off and wait for confirmChallenge().
-        if ($challenge !== null) {
+        if ($outcome->challenge !== null) {
             $self->recordThat(new PaymentIntentRequiresAction(
                 $command->amount(),
                 $command->instrument(),
                 $command->captureMethod(),
                 $command->billingAddress(),
                 $command->metadata(),
-                $challenge,
+                $outcome->challenge,
             ));
 
             return $self;
@@ -212,6 +212,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
             $command->billingAddress(),
             $command->metadata(),
             $command->challengeResult(),
+            $outcome->convertedAmount,
         );
 
         return $self;
@@ -223,7 +224,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         $this->captureMethod !== CaptureMethod::Immediate || throw PaymentIntentCannotBeCaptured::immediate();
 
         try {
-            $port->capture(new CaptureRequest(
+            $outcome = $port->capture(new CaptureRequest(
                 paymentIntentId: $this->aggregateRootId(),
                 amount: $command->amount(),
             ));
@@ -233,7 +234,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
             return;
         }
 
-        $this->recordThat(new PaymentIntentCaptured($command->amount()));
+        $this->recordThat(new PaymentIntentCaptured($command->amount(), $outcome->convertedAmount));
     }
 
     public function cancel(CancelPaymentIntentCommand $command, CancelPort $port): void
@@ -334,10 +335,13 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         BillingAddress $billingAddress,
         array $metadata,
         ?ChallengeResult $challengeResult,
+        ?Money $convertedAmount = null,
     ): void {
         if ($captureMethod === CaptureMethod::Immediate) {
-            $this->recordThat(new PaymentIntentCharged($amount, $instrument, $captureMethod, $billingAddress, $metadata, $challengeResult));
+            $this->recordThat(new PaymentIntentCharged($amount, $instrument, $captureMethod, $billingAddress, $metadata, $challengeResult, $convertedAmount));
         } else {
+            // Authorize-only holds funds without settlement, so no FX has
+            // occurred yet — the converted amount surfaces on capture.
             $this->recordThat(new PaymentIntentAuthorized($amount, $instrument, $captureMethod, $billingAddress, $metadata, $challengeResult));
         }
     }

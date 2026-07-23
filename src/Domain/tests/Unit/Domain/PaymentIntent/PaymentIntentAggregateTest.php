@@ -51,7 +51,9 @@ use Techork\PaymentService\Domain\PaymentIntent\Exception\PaymentIntentChallenge
 use Techork\PaymentService\Domain\PaymentIntent\Exception\PaymentIntentRefundExceedsAmount;
 use Techork\PaymentService\Domain\PaymentIntent\PaymentIntentAggregate;
 use Techork\PaymentService\Domain\PaymentIntent\PaymentIntentStatus;
+use Techork\PaymentService\Domain\PaymentIntent\Port\CaptureOutcome;
 use Techork\PaymentService\Domain\PaymentIntent\Port\CapturePort;
+use Techork\PaymentService\Domain\PaymentIntent\Port\CreateOutcome;
 use Techork\PaymentService\Domain\PaymentIntent\Port\GatewayDeclinedException;
 use Techork\PaymentService\Domain\PaymentIntent\Port\CreatePort;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CaptureRequest;
@@ -242,11 +244,12 @@ function makePiFeeCommand(PaymentIntentId $id, Money $fee, DateTimeImmutable $ob
 //  Port stubs (live and webhook flows look identical from the aggregate)
 // ──────────────────────────────────────────────
 
-function makePaySuccessPort(): CreatePort
+function makePaySuccessPort(?Money $convertedAmount = null): CreatePort
 {
-    return new readonly class implements CreatePort
+    return new readonly class($convertedAmount) implements CreatePort
     {
-        public function create(CreateRequest $request): ?Challenge { return null; }
+        public function __construct(private ?Money $convertedAmount) {}
+        public function create(CreateRequest $request): CreateOutcome { return new CreateOutcome(convertedAmount: $this->convertedAmount); }
     };
 }
 
@@ -255,7 +258,7 @@ function makePayChallengePort(Challenge $challenge): CreatePort
     return new readonly class($challenge) implements CreatePort
     {
         public function __construct(private Challenge $challenge) {}
-        public function create(CreateRequest $request): ?Challenge { return $this->challenge; }
+        public function create(CreateRequest $request): CreateOutcome { return new CreateOutcome(challenge: $this->challenge); }
     };
 }
 
@@ -264,15 +267,16 @@ function makePayDeclinedPort(string $reason): CreatePort
     return new readonly class($reason) implements CreatePort
     {
         public function __construct(private string $reason) {}
-        public function create(CreateRequest $request): ?Challenge { throw new GatewayDeclinedException($this->reason); }
+        public function create(CreateRequest $request): CreateOutcome { throw new GatewayDeclinedException($this->reason); }
     };
 }
 
-function makeCaptureSuccessPort(): CapturePort
+function makeCaptureSuccessPort(?Money $convertedAmount = null): CapturePort
 {
-    return new readonly class implements CapturePort
+    return new readonly class($convertedAmount) implements CapturePort
     {
-        public function capture(CaptureRequest $request): void {}
+        public function __construct(private ?Money $convertedAmount) {}
+        public function capture(CaptureRequest $request): CaptureOutcome { return new CaptureOutcome($this->convertedAmount); }
     };
 }
 
@@ -281,7 +285,7 @@ function makeCaptureDeclinedPort(string $reason): CapturePort
     return new readonly class($reason) implements CapturePort
     {
         public function __construct(private string $reason) {}
-        public function capture(CaptureRequest $request): void { throw new GatewayDeclinedException($this->reason); }
+        public function capture(CaptureRequest $request): CaptureOutcome { throw new GatewayDeclinedException($this->reason); }
     };
 }
 
@@ -357,6 +361,23 @@ it('records PaymentIntentCharged on create with Immediate + GatewaySuccess', fun
 
     then(new PaymentIntentCharged(
         makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [],
+    ));
+});
+
+it('records PaymentIntentCharged carrying the FX convertedAmount from the port', function () {
+    /** @var PaymentIntentId $id */
+    $id = $this->aggregateRootId();
+
+    $converted = new Money(1142, new Currency('EUR'));
+
+    $aggregate = PaymentIntentAggregate::create(
+        makeCreatePiCommand($id, CaptureMethod::Immediate),
+        makePaySuccessPort($converted),
+    );
+    $this->persistAggregateRoot($aggregate);
+
+    then(new PaymentIntentCharged(
+        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [], null, $converted,
     ));
 });
 
@@ -616,6 +637,23 @@ it('records PaymentIntentCaptured on capture from Authorized + GatewaySuccess', 
     $this->persistAggregateRoot($aggregate);
 
     then(new PaymentIntentCaptured(makeAmount()));
+});
+
+it('records PaymentIntentCaptured carrying the FX convertedAmount from the port', function () {
+    /** @var PaymentIntentId $id */
+    $id = $this->aggregateRootId();
+
+    $converted = new Money(9140, new Currency('USD'));
+
+    given(new PaymentIntentAuthorized(
+        makeAmount(), makeInstrument(), CaptureMethod::Manual, makeBillingAddress(), [],
+    ));
+
+    $aggregate = $this->retrieveAggregateRoot($id);
+    $aggregate->capture(makeCapturePiCommand($id), makeCaptureSuccessPort($converted));
+    $this->persistAggregateRoot($aggregate);
+
+    then(new PaymentIntentCaptured(makeAmount(), $converted));
 });
 
 it('records PaymentIntentCaptured with partial amount', function () {

@@ -22,6 +22,7 @@ use Techork\PaymentService\Gateway\Contract\GatewayResult;
 use Techork\PaymentService\Gateway\Contract\GatewayTransactionRepository;
 use Techork\PaymentService\Gateway\Contract\PaymentGatewayInterface;
 use Techork\PaymentService\Gateway\Contract\RegistrationResult;
+use Techork\PaymentService\Gateway\Contract\ConvertedAmountProvider;
 use Techork\PaymentService\Gateway\Contract\TransactionMetadataProvider;
 use Techork\PaymentService\Gateway\Contract\VirtualCardResponseInterface;
 use Techork\PaymentService\Gateway\Contract\VirtualCardResult;
@@ -513,7 +514,8 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
 
             if ($response->isSuccessful()) {
                 return GatewayResult::succeeded($response->getTransactionReference())
-                    ->withMetadata(self::extractMetadata($response));
+                    ->withMetadata(self::extractMetadata($response))
+                    ->withConvertedAmount(self::extractConvertedAmount($response));
             }
 
             return GatewayResult::failed($response->getMessage() ?? 'Gateway returned an unsuccessful response.');
@@ -545,7 +547,8 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
                 return self::attachChecksToAuthorization(
                     AuthorizationResult::succeeded($response->getTransactionReference()),
                     $response,
-                )->withMetadata(self::extractMetadata($response));
+                )->withMetadata(self::extractMetadata($response))
+                    ->withConvertedAmount(self::extractConvertedAmount($response));
             }
 
             return AuthorizationResult::failed($response->getMessage() ?? 'Gateway returned an unsuccessful response.');
@@ -592,6 +595,13 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         return $response instanceof TransactionMetadataProvider
             ? $response->getTransactionMetadata()
             : [];
+    }
+
+    private static function extractConvertedAmount(ResponseInterface $response): ?Money
+    {
+        return $response instanceof ConvertedAmountProvider
+            ? $response->getConvertedAmount()
+            : null;
     }
 
     private static function attachChecksToAuthorization(AuthorizationResult $result, ResponseInterface $response): AuthorizationResult

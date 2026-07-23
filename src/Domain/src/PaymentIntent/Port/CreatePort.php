@@ -4,16 +4,16 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Domain\PaymentIntent\Port;
 
-use Techork\PaymentService\Common\Contract\Challenge;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CreateRequest;
 
 interface CreatePort
 {
     /**
-     * @return ?Challenge null when the gateway settled inline; non-null when
-     *                    a step-up is required and confirmation is awaited.
+     * @return CreateOutcome carries the optional step-up challenge (non-null
+     *                       when confirmation is awaited) and the FX-settled
+     *                       convertedAmount when the gateway applied one.
      *
      * @throws GatewayDeclinedException
      */
-    public function create(CreateRequest $request): ?Challenge;
+    public function create(CreateRequest $request): CreateOutcome;
 }

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Gateway\Contract;
 
+use Money\Money;
+
 /**
  * Lean transactional outcome of a gateway interaction. Two terminal shapes:
  *  - success: operation completed, {@see $reference} set.
@@ -21,15 +23,19 @@ namespace Techork\PaymentService\Gateway\Contract;
 readonly class GatewayResult
 {
     /**
-     * @param array<string, mixed> $metadata gateway-specific transaction
-     *                                       attributes persisted alongside the
-     *                                       reference (see {@see TransactionMetadataProvider})
+     * @param array<string, mixed> $metadata        gateway-specific transaction
+     *                                              attributes persisted alongside the
+     *                                              reference (see {@see TransactionMetadataProvider})
+     * @param ?Money                $convertedAmount FX-settled amount when the gateway
+     *                                              applied a currency conversion, else null
+     *                                              (see {@see ConvertedAmountProvider})
      */
     public function __construct(
         public bool $success,
         public ?string $reference,
         public ?string $message,
         public array $metadata = [],
+        public ?Money $convertedAmount = null,
     ) {}
 
     public static function succeeded(string $reference): static
@@ -47,6 +53,11 @@ readonly class GatewayResult
      */
     public function withMetadata(array $metadata): self
     {
-        return new self($this->success, $this->reference, $this->message, $metadata);
+        return new self($this->success, $this->reference, $this->message, $metadata, $this->convertedAmount);
+    }
+
+    public function withConvertedAmount(?Money $convertedAmount): self
+    {
+        return new self($this->success, $this->reference, $this->message, $this->metadata, $convertedAmount);
     }
 }

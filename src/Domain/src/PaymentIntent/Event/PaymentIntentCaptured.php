@@ -12,6 +12,7 @@ final readonly class PaymentIntentCaptured implements SerializablePayload
 {
     public function __construct(
         public Money $capturedAmount,
+        public ?Money $convertedAmount = null,
     ) {}
 
     public function toPayload(): array
@@ -19,6 +20,8 @@ final readonly class PaymentIntentCaptured implements SerializablePayload
         return [
             'captured_amount' => $this->capturedAmount->getAmount(),
             'captured_currency' => $this->capturedAmount->getCurrency()->getCode(),
+            'converted_amount' => $this->convertedAmount?->getAmount(),
+            'converted_currency' => $this->convertedAmount?->getCurrency()->getCode(),
         ];
     }
 
@@ -26,6 +29,9 @@ final readonly class PaymentIntentCaptured implements SerializablePayload
     {
         return new self(
             new Money($payload['captured_amount'], new Currency($payload['captured_currency'])),
+            isset($payload['converted_amount'])
+                ? new Money($payload['converted_amount'], new Currency($payload['converted_currency']))
+                : null,
         );
     }
 }

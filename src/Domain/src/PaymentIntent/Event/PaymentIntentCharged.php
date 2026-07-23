@@ -24,6 +24,7 @@ final readonly class PaymentIntentCharged implements SerializablePayload
         /** @var array<string, mixed> */
         public array $metadata,
         public ?ChallengeResult $challengeResult = null,
+        public ?Money $convertedAmount = null,
     ) {}
 
     public function toPayload(): array
@@ -36,6 +37,8 @@ final readonly class PaymentIntentCharged implements SerializablePayload
             'billing_address' => $this->billingAddress->toArray(),
             'metadata' => $this->metadata,
             'challenge_result' => $this->challengeResult === null ? null : ChallengeResultArraySerializer::toArray($this->challengeResult),
+            'converted_amount' => $this->convertedAmount?->getAmount(),
+            'converted_currency' => $this->convertedAmount?->getCurrency()->getCode(),
         ];
     }
 
@@ -48,6 +51,9 @@ final readonly class PaymentIntentCharged implements SerializablePayload
             BillingAddress::fromArray($payload['billing_address']),
             $payload['metadata'] ?? [],
             isset($payload['challenge_result']) ? ChallengeResultArraySerializer::fromArray($payload['challenge_result']) : null,
+            isset($payload['converted_amount'])
+                ? new Money($payload['converted_amount'], new Currency($payload['converted_currency']))
+                : null,
         );
     }
 }
