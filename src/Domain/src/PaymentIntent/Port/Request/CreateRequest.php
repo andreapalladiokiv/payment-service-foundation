@@ -9,6 +9,7 @@ use Techork\PaymentService\Common\Contract\ChallengeResult;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
 use Techork\PaymentService\Domain\PaymentIntent\CaptureMethod;
+use Techork\PaymentService\Domain\PaymentIntent\PaymentInitiation;
 use Techork\PaymentService\Domain\PaymentIntent\ValueObject\PaymentIntentId;
 
 final readonly class CreateRequest
@@ -20,5 +21,6 @@ final readonly class CreateRequest
         public CaptureMethod $captureMethod,
         public BillingAddress $billingAddress,
         public ?ChallengeResult $challengeResult = null,
+        public PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated,
     ) {}
 }

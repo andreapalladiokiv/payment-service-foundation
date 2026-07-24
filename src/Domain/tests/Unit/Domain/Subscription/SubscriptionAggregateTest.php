@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Techork\PaymentService\Domain\PaymentIntent\CaptureMethod;
+use Techork\PaymentService\Domain\PaymentIntent\PaymentInitiation;
 use Techork\PaymentService\Domain\PaymentIntent\Command\CreatePaymentIntentCommand;
 use Techork\PaymentService\Common\Contract\Challenge;
 use Techork\PaymentService\Domain\PaymentIntent\PaymentIntentAggregate;
@@ -140,6 +141,7 @@ function makeChargedPiForSubscription(?Money $amount = null): PaymentIntentAggre
         }
         public function metadata(): array { return []; }
         public function challengeResult(): ?\Techork\PaymentService\Common\Contract\ChallengeResult { return null; }
+        public function initiation(): PaymentInitiation { return PaymentInitiation::CardholderInitiated; }
     };
 
     return PaymentIntentAggregate::create($cmd, makeSubscriptionPiSuccessPort());
@@ -300,6 +302,7 @@ it('throws SubscriptionNotActivatable when payment intent is not charged', funct
         }
         public function metadata(): array { return []; }
         public function challengeResult(): ?\Techork\PaymentService\Common\Contract\ChallengeResult { return null; }
+        public function initiation(): PaymentInitiation { return PaymentInitiation::CardholderInitiated; }
     };
     $pi = PaymentIntentAggregate::create($piCmd, makeSubscriptionPiSuccessPort());
 

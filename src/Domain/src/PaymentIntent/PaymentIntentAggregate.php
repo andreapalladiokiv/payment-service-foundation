@@ -176,6 +176,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                 captureMethod: $command->captureMethod(),
                 billingAddress: $command->billingAddress(),
                 challengeResult: $command->challengeResult(),
+                initiation: $command->initiation(),
             ));
         } catch (GatewayDeclinedException $e) {
             $self->recordThat(new PaymentIntentFailed(

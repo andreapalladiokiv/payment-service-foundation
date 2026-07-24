@@ -31,6 +31,7 @@ use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSVersion;
 use Techork\PaymentService\Common\ValueObject\Token;
 use Techork\PaymentService\Common\ValueObject\TokenId;
 use Techork\PaymentService\Domain\PaymentIntent\CaptureMethod;
+use Techork\PaymentService\Domain\PaymentIntent\PaymentInitiation;
 use Techork\PaymentService\Domain\PaymentIntent\Command\CancelPaymentIntentCommand;
 use Techork\PaymentService\Domain\PaymentIntent\Command\CapturePaymentIntentCommand;
 use Techork\PaymentService\Domain\PaymentIntent\Command\CreatePaymentIntentCommand;
@@ -206,6 +207,7 @@ function makeCreatePiCommand(
         public function billingAddress(): BillingAddress { return makeBillingAddress(); }
         public function metadata(): array { return []; }
         public function challengeResult(): ?ChallengeResult { return $this->challengeResult; }
+        public function initiation(): PaymentInitiation { return PaymentInitiation::CardholderInitiated; }
     };
 }
 

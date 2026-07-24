@@ -22,6 +22,7 @@ use Techork\PaymentService\Domain\Subscription\ValueObject\SubscriptionId;
 use Techork\PaymentService\Domain\Subscription\ValueObject\SubscriptionPlan;
 use Techork\PaymentService\Common\ValueObject\PaymentMethodId;
 use Techork\PaymentService\Domain\PaymentIntent\CaptureMethod;
+use Techork\PaymentService\Domain\PaymentIntent\PaymentInitiation;
 use Techork\PaymentService\Domain\PaymentIntent\Command\CapturePaymentIntentCommand;
 use Techork\PaymentService\Domain\PaymentIntent\Command\CreatePaymentIntentCommand;
 use Techork\PaymentService\Domain\PaymentIntent\PaymentIntentAggregate;
@@ -189,6 +190,7 @@ function makeChargedPiAggregate(): PaymentIntentAggregate
         public function billingAddress(): BillingAddress { return new BillingAddress(firstName: 'Test', lastName: 'User', line: '1 St', city: 'NYC', country: new Country('US'), postalCode: '10001'); }
         public function metadata(): array { return []; }
         public function challengeResult(): ?\Techork\PaymentService\Common\Contract\ChallengeResult { return null; }
+        public function initiation(): PaymentInitiation { return PaymentInitiation::CardholderInitiated; }
     };
 
     return PaymentIntentAggregate::create($cmd, makeCheckoutPiSuccessPort());
@@ -304,6 +306,7 @@ it('throws CheckoutNotPayable when payment intent amount does not match checkout
         public function billingAddress(): BillingAddress { return new BillingAddress(firstName: 'Test', lastName: 'User', line: '1 St', city: 'NYC', country: new Country('US'), postalCode: '10001'); }
         public function metadata(): array { return []; }
         public function challengeResult(): ?\Techork\PaymentService\Common\Contract\ChallengeResult { return null; }
+        public function initiation(): PaymentInitiation { return PaymentInitiation::CardholderInitiated; }
     };
 
     $pi = PaymentIntentAggregate::create($mismatchedPiCmd, makeCheckoutPiSuccessPort());
@@ -331,6 +334,7 @@ it('throws CheckoutNotPayable when payment intent is not charged', function () {
         public function billingAddress(): BillingAddress { return new BillingAddress(firstName: 'Test', lastName: 'User', line: '1 St', city: 'NYC', country: new Country('US'), postalCode: '10001'); }
         public function metadata(): array { return []; }
         public function challengeResult(): ?\Techork\PaymentService\Common\Contract\ChallengeResult { return null; }
+        public function initiation(): PaymentInitiation { return PaymentInitiation::CardholderInitiated; }
     };
 
     $pi = PaymentIntentAggregate::create($piCmd, makeCheckoutPiSuccessPort());

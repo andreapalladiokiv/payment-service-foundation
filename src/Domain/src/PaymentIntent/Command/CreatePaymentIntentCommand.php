@@ -9,6 +9,7 @@ use Techork\PaymentService\Common\Contract\ChallengeResult;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
 use Techork\PaymentService\Domain\PaymentIntent\CaptureMethod;
+use Techork\PaymentService\Domain\PaymentIntent\PaymentInitiation;
 use Techork\PaymentService\Domain\PaymentIntent\ValueObject\PaymentIntentId;
 
 interface CreatePaymentIntentCommand
@@ -32,4 +33,11 @@ interface CreatePaymentIntentCommand
      * the gateway as evidence to claim the liability shift.
      */
     public function challengeResult(): ?ChallengeResult;
+
+    /**
+     * How this payment was initiated (Stored Credential Framework). Gates the
+     * cardholder-facing controls: fraud screening and 3DS step-up run only for
+     * a cardholder-initiated transaction.
+     */
+    public function initiation(): PaymentInitiation;
 }
