@@ -13,6 +13,7 @@ use Techork\PaymentService\Common\ValueObject\BillingAddress;
 use Techork\PaymentService\Common\ValueObject\PaymentInstrumentFactory;
 use Techork\PaymentService\Domain\PaymentIntent\CaptureMethod;
 use Techork\PaymentService\Domain\PaymentIntent\ChallengeResultArraySerializer;
+use Techork\PaymentService\Domain\PaymentIntent\PaymentInitiation;
 
 final readonly class PaymentIntentFailed implements SerializablePayload
 {
@@ -25,6 +26,7 @@ final readonly class PaymentIntentFailed implements SerializablePayload
         public array $metadata,
         public string $reason,
         public ?ChallengeResult $challengeResult = null,
+        public PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated,
     ) {}
 
     public function toPayload(): array
@@ -38,6 +40,7 @@ final readonly class PaymentIntentFailed implements SerializablePayload
             'metadata' => $this->metadata,
             'reason' => $this->reason,
             'challenge_result' => $this->challengeResult === null ? null : ChallengeResultArraySerializer::toArray($this->challengeResult),
+            'initiation' => $this->initiation->value,
         ];
     }
 
@@ -51,6 +54,7 @@ final readonly class PaymentIntentFailed implements SerializablePayload
             $payload['metadata'] ?? [],
             $payload['reason'],
             isset($payload['challenge_result']) ? ChallengeResultArraySerializer::fromArray($payload['challenge_result']) : null,
+            PaymentInitiation::from($payload['initiation'] ?? PaymentInitiation::CardholderInitiated->value),
         );
     }
 }

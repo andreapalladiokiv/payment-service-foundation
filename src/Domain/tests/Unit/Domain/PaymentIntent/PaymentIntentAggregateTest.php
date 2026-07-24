@@ -189,8 +189,9 @@ function makeCreatePiCommand(
     ?Money $amount = null,
     ?PaymentInstrument $instrument = null,
     ?ChallengeResult $challengeResult = null,
+    PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated,
 ): CreatePaymentIntentCommand {
-    return new readonly class($id, $captureMethod, $amount ?? makeAmount(), $instrument ?? makeInstrument(), $challengeResult) implements CreatePaymentIntentCommand
+    return new readonly class($id, $captureMethod, $amount ?? makeAmount(), $instrument ?? makeInstrument(), $challengeResult, $initiation) implements CreatePaymentIntentCommand
     {
         public function __construct(
             private PaymentIntentId $paymentIntentId,
@@ -198,6 +199,7 @@ function makeCreatePiCommand(
             private Money $amount,
             private PaymentInstrument $instrument,
             private ?ChallengeResult $challengeResult,
+            private PaymentInitiation $initiation,
         ) {}
 
         public function paymentIntentId(): PaymentIntentId { return $this->paymentIntentId; }
@@ -207,7 +209,7 @@ function makeCreatePiCommand(
         public function billingAddress(): BillingAddress { return makeBillingAddress(); }
         public function metadata(): array { return []; }
         public function challengeResult(): ?ChallengeResult { return $this->challengeResult; }
-        public function initiation(): PaymentInitiation { return PaymentInitiation::CardholderInitiated; }
+        public function initiation(): PaymentInitiation { return $this->initiation; }
     };
 }
 
@@ -461,6 +463,37 @@ it('forwards pre-auth ChallengeResult into the initial event', function () {
     then(new PaymentIntentAuthorized(
         makeAmount(), makeInstrument(), CaptureMethod::Automatic, makeBillingAddress(), [], $preAuth,
     ));
+});
+
+it('binds the payment initiation onto the aggregate and the recorded event', function () {
+    /** @var PaymentIntentId $id */
+    $id = $this->aggregateRootId();
+
+    $aggregate = PaymentIntentAggregate::create(
+        makeCreatePiCommand($id, CaptureMethod::Immediate, initiation: PaymentInitiation::MerchantRecurring),
+        makePaySuccessPort(),
+    );
+    $this->persistAggregateRoot($aggregate);
+
+    expect($aggregate->initiation())->toBe(PaymentInitiation::MerchantRecurring);
+    then(new PaymentIntentCharged(
+        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [], initiation: PaymentInitiation::MerchantRecurring,
+    ));
+});
+
+it('snapshot roundtrip preserves the payment initiation', function () {
+    $id = PaymentIntentId::generate();
+    $aggregate = PaymentIntentAggregate::create(
+        makeCreatePiCommand($id, CaptureMethod::Immediate, initiation: PaymentInitiation::MerchantUnscheduled),
+        makePaySuccessPort(),
+    );
+
+    $state = (fn () => $this->createSnapshotState())->call($aggregate);
+    $restored = (fn () => PaymentIntentAggregate::reconstituteFromSnapshotState($id, $state))->call($aggregate);
+
+    expect($restored->initiation())->toBe(PaymentInitiation::MerchantUnscheduled);
+
+    then();
 });
 
 // ──────────────────────────────────────────────

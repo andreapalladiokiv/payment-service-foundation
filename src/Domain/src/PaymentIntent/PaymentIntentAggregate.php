@@ -92,6 +92,8 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
 
     private ?ChallengeResult $challengeResult = null;
 
+    private PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated;
+
     /** @var array<string, Refund> indexed by RefundId string */
     private array $refunds = [];
 
@@ -141,6 +143,11 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         return $this->challengeResult;
     }
 
+    public function initiation(): PaymentInitiation
+    {
+        return $this->initiation;
+    }
+
     /**
      * Remaining amount available for refund. Computed: amount minus the
      * sum of every refund that has settled successfully.
@@ -187,6 +194,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                 $command->metadata(),
                 $e->reason,
                 $command->challengeResult(),
+                $command->initiation(),
             ));
 
             return $self;
@@ -201,6 +209,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                 $command->billingAddress(),
                 $command->metadata(),
                 $outcome->challenge,
+                $command->initiation(),
             ));
 
             return $self;
@@ -213,6 +222,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
             $command->billingAddress(),
             $command->metadata(),
             $command->challengeResult(),
+            $command->initiation(),
             $outcome->convertedAmount,
         );
 
@@ -275,6 +285,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
             $this->billingAddress,
             $this->metadata,
             $result,
+            $this->initiation,
         );
     }
 
@@ -336,14 +347,15 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         BillingAddress $billingAddress,
         array $metadata,
         ?ChallengeResult $challengeResult,
+        PaymentInitiation $initiation,
         ?Money $convertedAmount = null,
     ): void {
         if ($captureMethod === CaptureMethod::Immediate) {
-            $this->recordThat(new PaymentIntentCharged($amount, $instrument, $captureMethod, $billingAddress, $metadata, $challengeResult, $convertedAmount));
+            $this->recordThat(new PaymentIntentCharged($amount, $instrument, $captureMethod, $billingAddress, $metadata, $challengeResult, $convertedAmount, $initiation));
         } else {
             // Authorize-only holds funds without settlement, so no FX has
             // occurred yet — the converted amount surfaces on capture.
-            $this->recordThat(new PaymentIntentAuthorized($amount, $instrument, $captureMethod, $billingAddress, $metadata, $challengeResult));
+            $this->recordThat(new PaymentIntentAuthorized($amount, $instrument, $captureMethod, $billingAddress, $metadata, $challengeResult, $initiation));
         }
     }
 
@@ -357,6 +369,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
             $this->metadata,
             $reason,
             $challengeResult ?? $this->challengeResult,
+            $this->initiation,
         );
     }
 
@@ -384,6 +397,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
             'billing_address' => $this->billingAddress?->toArray(),
             'challenge' => $this->challenge === null ? null : ChallengeArraySerializer::toArray($this->challenge),
             'challenge_result' => $this->challengeResult === null ? null : ChallengeResultArraySerializer::toArray($this->challengeResult),
+            'initiation' => $this->initiation->value,
             'refunds' => array_map(fn (Refund $r) => $r->toSnapshot(), array_values($this->refunds)),
         ];
     }
@@ -401,6 +415,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         $self->billingAddress = isset($state['billing_address']) ? BillingAddress::fromArray($state['billing_address']) : null;
         $self->challenge = isset($state['challenge']) ? ChallengeArraySerializer::fromArray($state['challenge']) : null;
         $self->challengeResult = isset($state['challenge_result']) ? ChallengeResultArraySerializer::fromArray($state['challenge_result']) : null;
+        $self->initiation = PaymentInitiation::from($state['initiation'] ?? PaymentInitiation::CardholderInitiated->value);
 
         foreach ($state['refunds'] ?? [] as $refundState) {
             $refund = Refund::fromSnapshot($refundState);
@@ -426,6 +441,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
     protected function applyPaymentIntentAuthorized(PaymentIntentAuthorized $event): void
     {
         $this->status = PaymentIntentStatus::Authorized;
+        $this->initiation = $event->initiation;
         $this->amount = $event->amount;
         $this->instrument = $event->instrument;
         $this->captureMethod = $event->captureMethod;
@@ -438,6 +454,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
     protected function applyPaymentIntentCharged(PaymentIntentCharged $event): void
     {
         $this->status = PaymentIntentStatus::Charged;
+        $this->initiation = $event->initiation;
         $this->amount = $event->amount;
         $this->instrument = $event->instrument;
         $this->captureMethod = $event->captureMethod;
@@ -451,6 +468,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
     protected function applyPaymentIntentRequiresAction(PaymentIntentRequiresAction $event): void
     {
         $this->status = PaymentIntentStatus::RequiresAction;
+        $this->initiation = $event->initiation;
         $this->amount = $event->amount;
         $this->instrument = $event->instrument;
         $this->captureMethod = $event->captureMethod;
@@ -462,6 +480,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
     protected function applyPaymentIntentFailed(PaymentIntentFailed $event): void
     {
         $this->status = PaymentIntentStatus::Failed;
+        $this->initiation = $event->initiation;
         $this->amount = $event->amount;
         $this->instrument = $event->instrument;
         $this->captureMethod = $event->captureMethod;
