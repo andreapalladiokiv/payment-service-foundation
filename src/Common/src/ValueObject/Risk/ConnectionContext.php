@@ -17,7 +17,7 @@ namespace Techork\PaymentService\Common\ValueObject\Risk;
 final readonly class ConnectionContext
 {
     public function __construct(
-        public string $ipAddress,
+        public IpAddress $ipAddress,
         public string $userAgent,
         public ?string $deviceToken = null,
     ) {}

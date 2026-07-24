@@ -14,6 +14,7 @@ use Techork\PaymentService\Common\ValueObject\CreditCard\Holder;
 use Techork\PaymentService\Common\ValueObject\Risk\CardFunding;
 use Techork\PaymentService\Common\ValueObject\Risk\CardIntelligence;
 use Techork\PaymentService\Common\ValueObject\Risk\ConnectionContext;
+use Techork\PaymentService\Common\ValueObject\Risk\IpAddress;
 use Techork\PaymentService\Common\ValueObject\Risk\FraudDecision;
 use Techork\PaymentService\Common\ValueObject\Risk\FraudScreeningRequest;
 use Techork\PaymentService\Common\ValueObject\Risk\FraudVerdict;
@@ -34,7 +35,7 @@ it('lets a fraud-screening provider be implemented and return a verdict', functi
         billing: new BillingAddress('A', 'B', '1 Main St', 'Town', new Country('US'), '10001'),
         amountMinorUnits: 12345,
         currencyCode: 'USD',
-        connection: new ConnectionContext('203.0.113.7', 'Mozilla/5.0'),
+        connection: new ConnectionContext(new IpAddress('203.0.113.7'), 'Mozilla/5.0'),
     );
 
     $verdict = $provider->screen($request);

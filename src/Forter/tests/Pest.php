@@ -10,6 +10,7 @@ use Techork\PaymentService\Common\ValueObject\CreditCard\Expiration;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Holder;
 use Techork\PaymentService\Common\ValueObject\Email;
 use Techork\PaymentService\Common\ValueObject\Risk\ConnectionContext;
+use Techork\PaymentService\Common\ValueObject\Risk\IpAddress;
 use Techork\PaymentService\Common\ValueObject\Risk\FraudScreeningRequest;
 use Techork\PaymentService\Forter\ForterHttpClientInterface;
 
@@ -32,7 +33,7 @@ function makeForterScreeningRequest(int $amountMinorUnits = 12345, string $curre
         ),
         amountMinorUnits: $amountMinorUnits,
         currencyCode: $currency,
-        connection: new ConnectionContext('203.0.113.7', 'Mozilla/5.0'),
+        connection: new ConnectionContext(new IpAddress('203.0.113.7'), 'Mozilla/5.0'),
     );
 }
 

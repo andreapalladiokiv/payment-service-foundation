@@ -10,6 +10,7 @@ use Techork\PaymentService\Common\ValueObject\CreditCard\CardSummary;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Expiration;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Holder;
 use Techork\PaymentService\Common\ValueObject\Risk\ConnectionContext;
+use Techork\PaymentService\Common\ValueObject\Risk\IpAddress;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\RiskAssessmentRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Port\RiskAction;
 use Techork\PaymentService\Domain\PaymentIntent\Port\RiskDecisionPort;
@@ -34,7 +35,7 @@ it('can be implemented to decide a risk action from an assessment request', func
         amount: Money::USD(0),
         card: new CardSummary('411111', '1111', CardBrand::Visa, Expiration::fromMonthAndYear(6, 2030), new Holder('A B')),
         billing: new BillingAddress('A', 'B', '1 Main St', 'Town', new Country('US'), '10001'),
-        connection: new ConnectionContext('203.0.113.7', 'Mozilla/5.0'),
+        connection: new ConnectionContext(new IpAddress('203.0.113.7'), 'Mozilla/5.0'),
         phase: RiskPhase::Registration,
         fraudReference: 'uuid-42',
     );
@@ -50,7 +51,7 @@ it('carries an optional gateway id for per-gateway decisions', function () {
         amount: Money::USD(5000),
         card: new CardSummary('411111', '1111', CardBrand::Visa, Expiration::fromMonthAndYear(6, 2030), new Holder('A B')),
         billing: new BillingAddress('A', 'B', '1 Main St', 'Town', new Country('US'), '10001'),
-        connection: new ConnectionContext('203.0.113.7', 'Mozilla/5.0'),
+        connection: new ConnectionContext(new IpAddress('203.0.113.7'), 'Mozilla/5.0'),
         phase: RiskPhase::Authorization,
         gatewayId: 'gw-123',
     );
@@ -60,7 +61,7 @@ it('carries an optional gateway id for per-gateway decisions', function () {
             amount: Money::USD(0),
             card: new CardSummary('411111', '1111', CardBrand::Visa, Expiration::fromMonthAndYear(6, 2030), new Holder('A B')),
             billing: new BillingAddress('A', 'B', '1 Main St', 'Town', new Country('US'), '10001'),
-            connection: new ConnectionContext('203.0.113.7', 'Mozilla/5.0'),
+            connection: new ConnectionContext(new IpAddress('203.0.113.7'), 'Mozilla/5.0'),
             phase: RiskPhase::Registration,
         ))->gatewayId)->toBeNull();
 });

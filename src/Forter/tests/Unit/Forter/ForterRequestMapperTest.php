@@ -9,6 +9,7 @@ use Techork\PaymentService\Common\ValueObject\CreditCard\CardSummary;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Expiration;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Holder;
 use Techork\PaymentService\Common\ValueObject\Risk\ConnectionContext;
+use Techork\PaymentService\Common\ValueObject\Risk\IpAddress;
 use Techork\PaymentService\Common\ValueObject\Risk\FraudScreeningRequest;
 use Techork\PaymentService\Forter\ForterRequestMapper;
 
@@ -57,7 +58,7 @@ it('includes the device token as forterTokenCookie when present, omits it otherw
         billing: new BillingAddress('A', 'B', '1 Main St', 'Town', new Country('US'), '10001'),
         amountMinorUnits: 1000,
         currencyCode: 'USD',
-        connection: new ConnectionContext('203.0.113.7', 'UA', deviceToken: 'forter-device-xyz'),
+        connection: new ConnectionContext(new IpAddress('203.0.113.7'), 'UA', deviceToken: 'forter-device-xyz'),
     );
 
     expect((new ForterRequestMapper)->toOrderPayload($request)['connectionInformation']['forterTokenCookie'])->toBe('forter-device-xyz');
@@ -70,7 +71,7 @@ it('omits optional billing fields that are absent', function () {
         billing: new BillingAddress('A', 'B', '2 Side St', 'Town', new Country('GB'), 'EC1A 1BB'),
         amountMinorUnits: 1000,
         currencyCode: 'GBP',
-        connection: new ConnectionContext('198.51.100.9', 'UA'),
+        connection: new ConnectionContext(new IpAddress('198.51.100.9'), 'UA'),
     );
 
     $payload = (new ForterRequestMapper)->toOrderPayload($request);

@@ -78,7 +78,7 @@ final class ForterRequestMapper
             'orderType' => 'WEB',
             'authorizationStep' => 'PRE_AUTHORIZATION',
             'connectionInformation' => array_filter([
-                'customerIP' => $request->connection->ipAddress,
+                'customerIP' => $request->connection->ipAddress->toString(),
                 'userAgent' => $request->connection->userAgent,
                 'forterTokenCookie' => $request->connection->deviceToken,
             ], static fn ($value): bool => $value !== null),
