@@ -27,6 +27,11 @@ enum ThreeDSStatus: string
     /** Authentication Rejected; Issuer is rejecting authentication */
     case Rejected = 'R';
 
-    /** Informational Only / Data Share Only; Data received by the issuer, no cardholder authentication performed — no liability shift. */
+    /**
+     * Informational Only / Data Share Only; the requestor asked for no challenge
+     * and the directory server acknowledged. Observed carrying an authentication
+     * value and an ECI, so it is treated as a completed authentication rather
+     * than a refusal.
+     */
     case Info = 'I';
 }

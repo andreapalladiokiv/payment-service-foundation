@@ -602,6 +602,24 @@ it('treats ThreeDSStatus::NotAvailable as success (liability shift)', function (
     ));
 });
 
+it('treats ThreeDSStatus::Info as success (data share only, not a refusal)', function () {
+    /** @var PaymentIntentId $id */
+    $id = $this->aggregateRootId();
+    $result = makePiThreeDSResult(ThreeDSStatus::Info);
+
+    given(new PaymentIntentRequiresAction(
+        makeAmount(), makeInstrument(), CaptureMethod::Manual, makeBillingAddress(), [], makeThreeDSChallenge(),
+    ));
+
+    $aggregate = $this->retrieveAggregateRoot($id);
+    $aggregate->confirmChallenge($result);
+    $this->persistAggregateRoot($aggregate);
+
+    then(new PaymentIntentAuthorized(
+        makeAmount(), makeInstrument(), CaptureMethod::Manual, makeBillingAddress(), [], $result,
+    ));
+});
+
 it('treats RedirectResult as success', function () {
     /** @var PaymentIntentId $id */
     $id = $this->aggregateRootId();
@@ -1454,6 +1472,25 @@ it('does not consult the firewall when 3DS already succeeded', function () {
 
     $aggregate = PaymentIntentAggregate::create(
         makeCreatePiCommand($id, CaptureMethod::Immediate, challengeResult: makePiThreeDSResult()),
+        makePaySuccessPort(),
+        $firewall,
+    );
+
+    expect($firewall->received)->toBeNull()
+        ->and($aggregate->status())->toBe(PaymentIntentStatus::Charged);
+});
+
+it('does not consult the firewall when 3DS returned Info', function () {
+    // The consequence of counting Info as success: a data-share-only result
+    // satisfies the firewall's demand for a step-up, even though no cardholder
+    // was challenged. Pinned deliberately — it is the reachable way to skip
+    // inspection with a completed 3DS call, so it must break loudly if the
+    // success set is ever narrowed again.
+    $id = $this->aggregateRootId();
+    $firewall = StubPaymentIntentFirewall::denying();
+
+    $aggregate = PaymentIntentAggregate::create(
+        makeCreatePiCommand($id, CaptureMethod::Immediate, challengeResult: makePiThreeDSResult(ThreeDSStatus::Info)),
         makePaySuccessPort(),
         $firewall,
     );
