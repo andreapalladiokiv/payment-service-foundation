@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Techork\PaymentService\Domain\Firewall;
+namespace Techork\PaymentService\Domain\PaymentIntent\Port;
 
 /**
  * What a firewall chain concluded — the equivalent of an iptables target, plus

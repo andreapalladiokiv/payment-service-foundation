@@ -16,7 +16,7 @@ namespace Techork\PaymentService\Firewall\Rule;
  * Implementations MUST return the rules already ordered — the engine takes the
  * first match and does not sort — and SHOULD return only enabled rules. An
  * unknown chain is not an error: return nothing, and the evaluation reports
- * {@see \Techork\PaymentService\Domain\Firewall\FirewallVerdict::NoMatch}.
+ * {@see \Techork\PaymentService\Domain\PaymentIntent\Port\FirewallVerdict::NoMatch}.
  */
 interface FirewallRuleSource
 {

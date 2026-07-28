@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Firewall\Rule;
 
-use Techork\PaymentService\Domain\Firewall\FirewallVerdict;
+use Techork\PaymentService\Domain\PaymentIntent\Port\FirewallVerdict;
 
 /**
  * One rule in a chain: what to match, and what to answer when it matches.

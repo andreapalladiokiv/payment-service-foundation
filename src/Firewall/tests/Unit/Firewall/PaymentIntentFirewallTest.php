@@ -12,7 +12,7 @@ use Techork\PaymentService\Common\ValueObject\CreditCard\CardSummary;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Expiration;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Holder;
 use Techork\PaymentService\Common\ValueObject\IpAddress;
-use Techork\PaymentService\Domain\Firewall\FirewallVerdict;
+use Techork\PaymentService\Domain\PaymentIntent\Port\FirewallVerdict;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\PaymentIntentFirewallRequest;
 use Techork\PaymentService\Firewall\Chain\ChainEvaluator;
 use Techork\PaymentService\Firewall\Dsl\RuleCompiler;

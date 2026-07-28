@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace Techork\PaymentService\Firewall\Chain;
 
 use Psr\Log\LoggerInterface;
-use Techork\PaymentService\Domain\Firewall\FirewallDecision;
-use Techork\PaymentService\Domain\Firewall\FirewallVerdict;
+use Techork\PaymentService\Domain\PaymentIntent\Port\FirewallDecision;
+use Techork\PaymentService\Domain\PaymentIntent\Port\FirewallVerdict;
 use Techork\PaymentService\Firewall\Dsl\RuleEvaluator;
 use Techork\PaymentService\Firewall\Rule\FirewallRuleSource;
 use Throwable;

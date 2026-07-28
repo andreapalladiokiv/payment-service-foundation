@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Tests\Support;
 
-use Techork\PaymentService\Domain\Firewall\FirewallDecision;
+use Techork\PaymentService\Domain\PaymentIntent\Port\FirewallDecision;
 use Techork\PaymentService\Domain\PaymentIntent\Port\PaymentIntentFirewallPort;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\PaymentIntentFirewallRequest;
 

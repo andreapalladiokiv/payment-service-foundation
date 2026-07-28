@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-use Techork\PaymentService\Domain\Firewall\FirewallVerdict;
+use Techork\PaymentService\Domain\PaymentIntent\Port\FirewallVerdict;
+use Techork\PaymentService\Firewall\Chain\ChainEvaluator;
 use Techork\PaymentService\Firewall\Dsl\FactSchema;
 use Techork\PaymentService\Firewall\Dsl\FieldType;
 use Techork\PaymentService\Firewall\Dsl\RuleCompiler;
 use Techork\PaymentService\Firewall\Dsl\RuleEvaluator;
-use Techork\PaymentService\Firewall\Chain\ChainEvaluator;
 use Techork\PaymentService\Firewall\Rule\FirewallRule;
 use Techork\PaymentService\Firewall\Rule\FirewallRuleSource;
 

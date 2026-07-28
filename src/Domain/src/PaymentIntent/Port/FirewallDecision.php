@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Techork\PaymentService\Domain\Firewall;
+namespace Techork\PaymentService\Domain\PaymentIntent\Port;
 
 /**
  * The outcome of evaluating one firewall chain — the whole of what a domain's
