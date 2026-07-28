@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use Techork\PaymentService\Common\ValueObject\Risk\FraudDecision;
+use Techork\PaymentService\Forter\FraudDecision;
 use Techork\PaymentService\Forter\ForterFraudScreeningProvider;
 
 it('maps Forter actions onto fraud decisions', function (string $action, FraudDecision $expected) {

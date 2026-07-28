@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use Techork\PaymentService\Common\ValueObject\ConnectionContext;
+use Techork\PaymentService\Tests\Support\StubPaymentIntentFirewall;
 use Techork\PaymentService\Domain\Checkout\CheckoutAggregate;
 use Techork\PaymentService\Domain\Checkout\Command\CreateCheckoutCommand;
 use Techork\PaymentService\Domain\Checkout\Command\PayCheckoutCommand;
@@ -191,9 +193,11 @@ function makeChargedPiAggregate(): PaymentIntentAggregate
         public function metadata(): array { return []; }
         public function challengeResult(): ?\Techork\PaymentService\Common\Contract\ChallengeResult { return null; }
         public function initiation(): PaymentInitiation { return PaymentInitiation::CardholderInitiated; }
+        public function connection(): ?ConnectionContext { return null; }
+        public function gatewayId(): ?string { return null; }
     };
 
-    return PaymentIntentAggregate::create($cmd, makeCheckoutPiSuccessPort());
+    return PaymentIntentAggregate::create($cmd, makeCheckoutPiSuccessPort(), StubPaymentIntentFirewall::allowing());
 }
 
 function makePayCheckoutCommand(CheckoutId $id, ?PaymentIntentAggregate $pi = null, ?SubscriptionAggregate $subscription = null): PayCheckoutCommand
@@ -307,9 +311,11 @@ it('throws CheckoutNotPayable when payment intent amount does not match checkout
         public function metadata(): array { return []; }
         public function challengeResult(): ?\Techork\PaymentService\Common\Contract\ChallengeResult { return null; }
         public function initiation(): PaymentInitiation { return PaymentInitiation::CardholderInitiated; }
+        public function connection(): ?ConnectionContext { return null; }
+        public function gatewayId(): ?string { return null; }
     };
 
-    $pi = PaymentIntentAggregate::create($mismatchedPiCmd, makeCheckoutPiSuccessPort());
+    $pi = PaymentIntentAggregate::create($mismatchedPiCmd, makeCheckoutPiSuccessPort(), StubPaymentIntentFirewall::allowing());
 
     $cmd = makePayCheckoutCommand($id, $pi);
 
@@ -335,9 +341,11 @@ it('throws CheckoutNotPayable when payment intent is not charged', function () {
         public function metadata(): array { return []; }
         public function challengeResult(): ?\Techork\PaymentService\Common\Contract\ChallengeResult { return null; }
         public function initiation(): PaymentInitiation { return PaymentInitiation::CardholderInitiated; }
+        public function connection(): ?ConnectionContext { return null; }
+        public function gatewayId(): ?string { return null; }
     };
 
-    $pi = PaymentIntentAggregate::create($piCmd, makeCheckoutPiSuccessPort());
+    $pi = PaymentIntentAggregate::create($piCmd, makeCheckoutPiSuccessPort(), StubPaymentIntentFirewall::allowing());
     $cmd = makePayCheckoutCommand($id, $pi);
 
     $aggregate = $this->retrieveAggregateRoot($id);

@@ -36,6 +36,12 @@ use Techork\PaymentService\Domain\PaymentIntent\Exception\PaymentIntentRefundExc
 use Techork\PaymentService\Domain\PaymentIntent\Port\CapturePort;
 use Techork\PaymentService\Domain\PaymentIntent\Port\GatewayDeclinedException;
 use Techork\PaymentService\Domain\PaymentIntent\Port\CreatePort;
+use Techork\PaymentService\Common\ValueObject\Challenge\ThreeDSChallenge;
+use Techork\PaymentService\Common\ValueObject\CreditCard\CardSummaryExtractor;
+use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSResult;
+use Techork\PaymentService\Domain\Firewall\FirewallDecision;
+use Techork\PaymentService\Domain\PaymentIntent\Port\PaymentIntentFirewallPort;
+use Techork\PaymentService\Domain\PaymentIntent\Port\Request\PaymentIntentFirewallRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CaptureRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CreateRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CancelRequest;
@@ -168,12 +174,31 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         return $this->refunds;
     }
 
-    public static function create(CreatePaymentIntentCommand $command, CreatePort $port): self
-    {
+    public static function create(
+        CreatePaymentIntentCommand $command,
+        CreatePort $port,
+        PaymentIntentFirewallPort $firewall,
+    ): self {
         $command->amount()->isPositive() || throw InvalidPaymentIntent::nonPositiveAmount();
         $command->instrument()->isValid() || throw InvalidPaymentIntent::unusablePaymentSource();
 
         $self = new self($command->paymentIntentId());
+
+        // Inspect before spending a gateway call: a rejected payment never
+        // reaches the acquirer, it parks for authentication instead.
+        if (($refusal = $self->firewallRefusal($command, $firewall)) !== null) {
+            $self->recordThat(new PaymentIntentRequiresAction(
+                $command->amount(),
+                $command->instrument(),
+                $command->captureMethod(),
+                $command->billingAddress(),
+                $command->metadata(),
+                $refusal,
+                $command->initiation(),
+            ));
+
+            return $self;
+        }
 
         try {
             $outcome = $port->create(new CreateRequest(
@@ -340,6 +365,63 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
     /**
      * @param  array<string, mixed>  $metadata
      */
+    /**
+     * Put the payment through its firewall chain and, when the decision does not
+     * permit it, return the challenge to park on. Null means proceed.
+     *
+     * Three cases skip inspection outright, and all three are about there being
+     * nothing to gain:
+     *  - a merchant-initiated payment has no cardholder to answer a challenge, so
+     *    a step-up could only fail;
+     *  - a completed 3DS authentication already claims the liability shift, so a
+     *    second one is redundant;
+     *  - a non-card instrument has no card facts to inspect.
+     *
+     * A missing connection is deliberately NOT one of them: the chain still runs
+     * and rules leaning on connection facts merely fail to match. Skipping because
+     * an input is absent would let a forgotten field bypass the firewall.
+     *
+     * Otherwise the domain's own policy decides: only an explicit accept on a
+     * cleanly evaluated chain proceeds ({@see FirewallDecision::permits()}).
+     */
+    private function firewallRefusal(
+        CreatePaymentIntentCommand $command,
+        PaymentIntentFirewallPort $firewall,
+    ): ?Challenge {
+        if ($command->initiation()->isMerchantInitiated()) {
+            return null;
+        }
+
+        if ($this->hasSuccessfulThreeDS($command->challengeResult())) {
+            return null;
+        }
+
+        $card = CardSummaryExtractor::from($command->instrument());
+
+        if ($card === null) {
+            return null;
+        }
+
+        $decision = $firewall->evaluate(new PaymentIntentFirewallRequest(
+            amount: $command->amount(),
+            card: $card,
+            billing: $command->billingAddress(),
+            connection: $command->connection(),
+            paymentIntentId: $command->paymentIntentId(),
+            gatewayId: $command->gatewayId(),
+        ));
+
+        return $decision->permits()
+            ? null
+            : new ThreeDSChallenge(transactionId: $command->paymentIntentId()->toString());
+    }
+
+    private function hasSuccessfulThreeDS(?ChallengeResult $result): bool
+    {
+        return $result instanceof ThreeDSResult
+            && $result->accept(new ChallengeFailureReasonExtractor) === null;
+    }
+
     private function chargeOrAuthorize(
         CaptureMethod $captureMethod,
         Money $amount,

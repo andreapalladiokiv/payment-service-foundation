@@ -15,6 +15,7 @@ declare -A REMOTES=(
   [Common]="git@github.com:andreapalladiokiv/payment-service-common.git"
   [Domain]="git@github.com:andreapalladiokiv/payment-service-domain.git"
   [Gateway]="git@github.com:andreapalladiokiv/payment-service-gateway.git"
+  [Firewall]="git@github.com:andreapalladiokiv/payment-service-firewall.git"
   [Forter]="git@github.com:andreapalladiokiv/payment-service-forter.git"
   [Neutrino]="git@github.com:andreapalladiokiv/payment-service-neutrino.git"
   [Laravel]="git@github.com:andreapalladiokiv/payment-service-laravel.git"

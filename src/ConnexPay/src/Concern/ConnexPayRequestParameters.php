@@ -114,6 +114,32 @@ trait ConnexPayRequestParameters
         ];
     }
 
+    /**
+     * The `Card.ThreeDS` block, or null when this operation carries no
+     * authentication result.
+     *
+     * ConnexPay accepts this on `/api/v1/verify` as well as on sales and
+     * auth-onlys, so a card registration that was authenticated must forward it
+     * too — otherwise the authentication is performed and then thrown away, and
+     * the issuer sees an unauthenticated verification.
+     */
+    protected function formatThreeDS(): ?array
+    {
+        $threeDS = $this->getThreeDS();
+
+        if ($threeDS === null) {
+            return null;
+        }
+
+        return [
+            'Cavv' => $threeDS->authenticationValue,
+            'Version' => $threeDS->version?->value,
+            'DirectoryServerTransactionID' => (string) $threeDS->dsTransactionId,
+            'AcsTransactionId' => (string) $threeDS->acsTransactionId,
+            'ECI' => $threeDS->eci?->value,
+        ];
+    }
+
     protected function formatCustomer(BillingAddress $address): array
     {
         return [

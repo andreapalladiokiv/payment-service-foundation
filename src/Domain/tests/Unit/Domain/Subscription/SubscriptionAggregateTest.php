@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use Techork\PaymentService\Common\ValueObject\ConnectionContext;
+use Techork\PaymentService\Tests\Support\StubPaymentIntentFirewall;
 use Techork\PaymentService\Domain\PaymentIntent\CaptureMethod;
 use Techork\PaymentService\Domain\PaymentIntent\PaymentInitiation;
 use Techork\PaymentService\Domain\PaymentIntent\Command\CreatePaymentIntentCommand;
@@ -142,9 +144,11 @@ function makeChargedPiForSubscription(?Money $amount = null): PaymentIntentAggre
         public function metadata(): array { return []; }
         public function challengeResult(): ?\Techork\PaymentService\Common\Contract\ChallengeResult { return null; }
         public function initiation(): PaymentInitiation { return PaymentInitiation::CardholderInitiated; }
+        public function connection(): ?ConnectionContext { return null; }
+        public function gatewayId(): ?string { return null; }
     };
 
-    return PaymentIntentAggregate::create($cmd, makeSubscriptionPiSuccessPort());
+    return PaymentIntentAggregate::create($cmd, makeSubscriptionPiSuccessPort(), StubPaymentIntentFirewall::allowing());
 }
 
 function makeSubscriptionPiSuccessPort(): CreatePort
@@ -303,8 +307,10 @@ it('throws SubscriptionNotActivatable when payment intent is not charged', funct
         public function metadata(): array { return []; }
         public function challengeResult(): ?\Techork\PaymentService\Common\Contract\ChallengeResult { return null; }
         public function initiation(): PaymentInitiation { return PaymentInitiation::CardholderInitiated; }
+        public function connection(): ?ConnectionContext { return null; }
+        public function gatewayId(): ?string { return null; }
     };
-    $pi = PaymentIntentAggregate::create($piCmd, makeSubscriptionPiSuccessPort());
+    $pi = PaymentIntentAggregate::create($piCmd, makeSubscriptionPiSuccessPort(), StubPaymentIntentFirewall::allowing());
 
     $aggregate = $this->retrieveAggregateRoot($id);
     $aggregate->activate(makeActivateCommand($id, $pi));

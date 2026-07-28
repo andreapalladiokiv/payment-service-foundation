@@ -19,6 +19,8 @@ use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSResult;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSStatus;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSVersion;
 use Techork\PaymentService\ConnexPay\AuthorizeRequest;
+use Techork\PaymentService\ConnexPay\CreateCardRequest;
+use Techork\PaymentService\ConnexPay\CreatePaymentMethodRequest;
 use Techork\PaymentService\Gateway\Contract\GatewayCredential;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 
@@ -131,3 +133,74 @@ it('refuses Cash with ThreeDS (Cash must go through purchase)', function () {
 
     $request->getData();
 })->throws(RuntimeException::class, 'does not support cash');
+
+// ──────────────────────────────────────────────
+//  Registration — /api/v1/verify also carries ThreeDS
+// ──────────────────────────────────────────────
+
+it('forwards ThreeDS when registering a payment method', function () {
+    // Registration goes to /api/v1/verify, which accepts Card.ThreeDS. Without
+    // this the step-up is performed and then discarded, and the issuer sees an
+    // unauthenticated verification.
+    $threeDS = new ThreeDSResult(
+        ThreeDSStatus::Successful,
+        'cavv-registration',
+        ECICode::MastercardSuccessful,
+        'ds-txn-reg',
+        'acs-txn-reg',
+        ThreeDSVersion::V220,
+    );
+
+    $request = new CreatePaymentMethodRequest(new OmnipayClient, new HttpRequest);
+    $request->initialize([
+        'instrument' => threeDSCpCard(),
+        'gateway' => threeDSCpCredential(),
+        'decrypter' => threeDSCpDecrypter(),
+        'deviceGuid' => 'device-123',
+        'threeDS' => $threeDS,
+    ]);
+
+    $data = $request->getData();
+
+    expect($data['Card']['ThreeDS'])->toBe([
+        'Cavv' => 'cavv-registration',
+        'Version' => '2.2.0',
+        'DirectoryServerTransactionID' => 'ds-txn-reg',
+        'AcsTransactionId' => 'acs-txn-reg',
+        'ECI' => '02',
+    ]);
+});
+
+it('omits ThreeDS from a registration that was not authenticated', function () {
+    $request = new CreatePaymentMethodRequest(new OmnipayClient, new HttpRequest);
+    $request->initialize([
+        'instrument' => threeDSCpCard(),
+        'gateway' => threeDSCpCredential(),
+        'decrypter' => threeDSCpDecrypter(),
+        'deviceGuid' => 'device-123',
+    ]);
+
+    expect($request->getData()['Card'])->not->toHaveKey('ThreeDS');
+});
+
+it('forwards ThreeDS when tokenizing a card', function () {
+    $threeDS = new ThreeDSResult(
+        ThreeDSStatus::Successful,
+        'cavv-tokenize',
+        ECICode::MastercardSuccessful,
+        'ds-txn-tok',
+        'acs-txn-tok',
+        ThreeDSVersion::V220,
+    );
+
+    $request = new CreateCardRequest(new OmnipayClient, new HttpRequest);
+    $request->initialize([
+        'instrument' => threeDSCpCard(),
+        'gateway' => threeDSCpCredential(),
+        'decrypter' => threeDSCpDecrypter(),
+        'deviceGuid' => 'device-123',
+        'threeDS' => $threeDS,
+    ]);
+
+    expect($request->getData()['Card']['ThreeDS']['Cavv'])->toBe('cavv-tokenize');
+});

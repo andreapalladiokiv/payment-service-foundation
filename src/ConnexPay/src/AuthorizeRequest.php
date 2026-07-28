@@ -52,15 +52,9 @@ final class AuthorizeRequest extends AbstractRequest implements PaymentInstrumen
         $data['TenderType'] = 'Credit';
         $data['Card'] = $instrument->accept($this);
 
-        $threeDS = $this->getThreeDS();
+        $threeDS = $this->formatThreeDS();
         if ($threeDS !== null) {
-            $data['Card']['ThreeDS'] = [
-                'Cavv' => $threeDS->authenticationValue,
-                'Version' => $threeDS->version?->value,
-                'DirectoryServerTransactionID' => (string) $threeDS->dsTransactionId,
-                'AcsTransactionId' => (string) $threeDS->acsTransactionId,
-                'ECI' => $threeDS->eci?->value,
-            ];
+            $data['Card']['ThreeDS'] = $threeDS;
         }
 
         $billingAddress = $this->getParameter('billingAddress');

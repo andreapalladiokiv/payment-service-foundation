@@ -15,6 +15,9 @@
         <testsuite name="Gateway">
             <directory>src/Gateway/tests</directory>
         </testsuite>
+        <testsuite name="Firewall">
+            <directory>src/Firewall/tests</directory>
+        </testsuite>
         <testsuite name="Forter">
             <directory>src/Forter/tests</directory>
         </testsuite>
@@ -45,6 +48,7 @@
             <directory>src/Common/src</directory>
             <directory>src/Domain/src</directory>
             <directory>src/Gateway/src</directory>
+            <directory>src/Firewall/src</directory>
             <directory>src/Forter/src</directory>
             <directory>src/Neutrino/src</directory>
             <directory>src/Laravel/src</directory>

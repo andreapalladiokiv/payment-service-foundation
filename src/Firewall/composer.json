@@ -1,0 +1,45 @@
+{
+    "name": "techork/payment-service-firewall",
+    "description": "Rule-driven risk firewall for payment services: an ExpressionLanguage rule DSL, first-match-wins chain evaluation, and the fact-supplier seam risk providers plug into",
+    "type": "library",
+    "license": "proprietary",
+    "repositories": [
+        {
+            "type": "vcs",
+            "url": "git@github.com:andreapalladiokiv/payment-service-common.git"
+        },
+        {
+            "type": "vcs",
+            "url": "git@github.com:andreapalladiokiv/payment-service-domain.git"
+        }
+    ],
+    "require": {
+        "php": "^8.4",
+        "psr/log": "^3.0",
+        "symfony/expression-language": "^7.0 || ^8.0",
+        "techork/payment-service-common": "@dev",
+        "techork/payment-service-domain": "@dev"
+    },
+    "require-dev": {
+        "mockery/mockery": "^1.6",
+        "pestphp/pest": "^3.0 || ^4.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Techork\\PaymentService\\Firewall\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Techork\\PaymentService\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

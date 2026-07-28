@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use Techork\PaymentService\Common\ValueObject\Risk\CardFunding;
+use Techork\PaymentService\Neutrino\CardFunding;
 use Techork\PaymentService\Neutrino\NeutrinoCardIntelligenceProvider;
 
 it('maps a bin-lookup response to card intelligence', function () {

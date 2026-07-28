@@ -8,9 +8,9 @@ use Techork\PaymentService\Common\ValueObject\Country;
 use Techork\PaymentService\Common\ValueObject\CreditCard\CardSummary;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Expiration;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Holder;
-use Techork\PaymentService\Common\ValueObject\Risk\ConnectionContext;
-use Techork\PaymentService\Common\ValueObject\Risk\IpAddress;
-use Techork\PaymentService\Common\ValueObject\Risk\FraudScreeningRequest;
+use Techork\PaymentService\Common\ValueObject\ConnectionContext;
+use Techork\PaymentService\Common\ValueObject\IpAddress;
+use Techork\PaymentService\Forter\FraudScreeningRequest;
 use Techork\PaymentService\Forter\ForterRequestMapper;
 
 it('maps the PCI-safe card, billing and connection onto the Forter payload', function () {

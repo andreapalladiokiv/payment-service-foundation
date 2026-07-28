@@ -4,9 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Neutrino;
 
-use Techork\PaymentService\Common\Contract\IpIntelligenceProvider;
 use Techork\PaymentService\Common\ValueObject\Country;
-use Techork\PaymentService\Common\ValueObject\Risk\IpIntelligence;
 use Throwable;
 
 /**

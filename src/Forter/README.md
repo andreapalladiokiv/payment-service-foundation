@@ -1,10 +1,15 @@
 # Forter fraud-screening provider
 
-`techork/payment-service-forter` implements Common's
-`FraudScreeningProvider` port against the
-[Forter](https://docs.forter.com/) Order Validation API: it POSTs each card
-payment to `/orders/{orderId}` at the `PRE_AUTHORIZATION` step and translates
-Forter's decision into a `FraudVerdict`.
+`techork/payment-service-forter` owns the fraud-screening contract and speaks it
+to the [Forter](https://docs.forter.com/) Order Validation API: it POSTs each
+card payment to `/orders/{orderId}` at the `PRE_AUTHORIZATION` step and
+translates Forter's decision into a `FraudVerdict`.
+
+The contract (`FraudScreeningProvider`) and its value objects
+(`FraudScreeningRequest`, `FraudVerdict`, `FraudDecision`) live here rather than
+in the shared kernel: this package both produces and consumes them. What a
+firewall consumes is a `FactSupplier`, so a different screening vendor ships its
+own package without needing a contract shared with this one.
 
 ## Layout
 

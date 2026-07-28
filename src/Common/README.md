@@ -10,9 +10,6 @@ only `ramsey/uuid`, `giggsey/libphonenumber-for-php` and `symfony/intl`.
 
 | Interface | Role | Implemented by |
 | --- | --- | --- |
-| `FraudScreeningProvider` | `screen(FraudScreeningRequest): FraudVerdict`. Must not throw for business outcomes — a decline is a verdict; provider unavailability maps to `FraudDecision::Errored` | Forter |
-| `CardIntelligenceProvider` | `lookupBin(string $bin, ?string $ip): ?CardIntelligence` — BIN facts for fraud rules. Fail-soft: `null` when the BIN cannot be resolved; caching belongs to a decorator in the consuming app | Neutrino (`bin-lookup`) |
-| `IpIntelligenceProvider` | `lookupIp(string $ip): ?IpIntelligence` — IP geo/reputation facts. Same fail-soft/null convention | Neutrino (`ip-info`) |
 | `EncryptInterface` / `DecryptInterface` | Opaque string encryption used by `Number` and `Cvc` to hold PAN/CVC | the consuming application |
 | `PaymentInstrument` + `PaymentInstrumentVisitor<T>` | Sealed instrument hierarchy; visitor dispatch plus `toPayload()` / `fromPayload()` round-trip | this package (below) |
 | `Challenge` / `ChallengeVisitor<T>` | Interim state: the buyer's browser must complete an external action (ACS, hosted page) | `ThreeDSChallenge`, `RedirectChallenge` |
@@ -67,20 +64,20 @@ type-stable placeholder that replaces the value once shredded. Stubs live in
 `ShreddingStubs::RESERVED_EMAIL_DOMAINS` and `::PHONE_FICTION_REGEX` are input
 validation helpers to keep stub-shaped values out of real submissions.
 
-## Risk value objects (`ValueObject/Risk/`)
+## Request origin
 
-- `FraudScreeningRequest` — caller-generated `reference`, `CardSummary`,
-  `BillingAddress`, amount as **minor units + ISO currency code** (the kernel
-  stays free of the money library), `ConnectionContext`.
 - `ConnectionContext` — validated `IpAddress`, user-agent, optional
   `deviceToken` (front-end fraud SDK fingerprint, e.g. Forter's cookie token).
-- `FraudVerdict` / `FraudDecision` — `Approve` / `Decline` / `NotReviewed` /
-  `Errored`; `isInconclusive()` groups the last two so callers can apply a
-  fail-open/fail-closed policy. The verdict is the provider's recommendation,
-  not the final action — the Domain risk-decision layer decides.
-- `CardIntelligence` (`issuerCountry`, `CardFunding`, `isPrepaid`,
-  `isCommercial`) and `IpIntelligence` (`country`, `isProxy`, `isVpn`,
-  `hostDomain`) — the lookup results fraud rules match on.
+  Where a request came from is ordinary transaction metadata, so it lives here
+  rather than with any one risk vendor: the firewall requests in
+  `payment-service-domain` carry it, and the Forter adapter reads it.
+
+Vendor-specific risk contracts and value objects are **not** here. A screening
+provider's request and verdict live in `payment-service-forter`, and the BIN and
+IP intelligence contracts in `payment-service-neutrino`, because each is produced
+and consumed inside its own package. What the firewall consumes is a
+`FactSupplier` (see `payment-service-firewall`), so swapping vendors needs no
+shared contract in this kernel.
 
 ## Challenges and 3DS
 

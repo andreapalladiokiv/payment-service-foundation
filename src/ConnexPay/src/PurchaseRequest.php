@@ -58,15 +58,9 @@ class PurchaseRequest extends AbstractRequest implements PaymentInstrumentVisito
 
         $data = [...$data, ...$instrument->accept($this)];
 
-        $threeDS = $this->getThreeDS();
+        $threeDS = $this->formatThreeDS();
         if ($threeDS !== null && isset($data['Card'])) {
-            $data['Card']['ThreeDS'] = [
-                'Cavv' => $threeDS->authenticationValue,
-                'Version' => $threeDS->version?->value,
-                'DirectoryServerTransactionID' => (string) $threeDS->dsTransactionId,
-                'AcsTransactionId' => (string) $threeDS->acsTransactionId,
-                'ECI' => $threeDS->eci?->value,
-            ];
+            $data['Card']['ThreeDS'] = $threeDS;
         }
 
         $billingAddress = $this->getParameter('billingAddress');

@@ -4,10 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Neutrino;
 
-use Techork\PaymentService\Common\Contract\CardIntelligenceProvider;
 use Techork\PaymentService\Common\ValueObject\Country;
-use Techork\PaymentService\Common\ValueObject\Risk\CardFunding;
-use Techork\PaymentService\Common\ValueObject\Risk\CardIntelligence;
 use Throwable;
 
 /**

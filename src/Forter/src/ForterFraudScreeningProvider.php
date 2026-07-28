@@ -4,10 +4,6 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Forter;
 
-use Techork\PaymentService\Common\Contract\FraudScreeningProvider;
-use Techork\PaymentService\Common\ValueObject\Risk\FraudDecision;
-use Techork\PaymentService\Common\ValueObject\Risk\FraudScreeningRequest;
-use Techork\PaymentService\Common\ValueObject\Risk\FraudVerdict;
 use Throwable;
 
 /**

@@ -9,7 +9,6 @@ use Money\Currency;
 use Money\Formatter\DecimalMoneyFormatter;
 use Money\Money;
 use Money\MoneyFormatter;
-use Techork\PaymentService\Common\ValueObject\Risk\FraudScreeningRequest;
 
 /**
  * Maps a {@see FraudScreeningRequest} onto the JSON body Forter's `/orders`

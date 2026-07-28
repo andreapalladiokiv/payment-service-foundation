@@ -8,6 +8,7 @@ use Money\Money;
 use Techork\PaymentService\Common\Contract\ChallengeResult;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
+use Techork\PaymentService\Common\ValueObject\ConnectionContext;
 use Techork\PaymentService\Domain\PaymentIntent\CaptureMethod;
 use Techork\PaymentService\Domain\PaymentIntent\PaymentInitiation;
 use Techork\PaymentService\Domain\PaymentIntent\ValueObject\PaymentIntentId;
@@ -36,8 +37,27 @@ interface CreatePaymentIntentCommand
 
     /**
      * How this payment was initiated (Stored Credential Framework). Gates the
-     * cardholder-facing controls: fraud screening and 3DS step-up run only for
-     * a cardholder-initiated transaction.
+     * cardholder-facing controls: the firewall and 3DS step-up run only for a
+     * cardholder-initiated transaction.
      */
     public function initiation(): PaymentInitiation;
+
+    /**
+     * Where the request came from — the signals the firewall inspects (IP,
+     * user agent, an optional device fingerprint).
+     *
+     * Null when there is no cardholder present to attribute a connection to, as
+     * with a merchant-initiated payment; the firewall is not consulted then
+     * either.
+     */
+    public function connection(): ?ConnectionContext;
+
+    /**
+     * The gateway this payment will run through, when routing has already chosen
+     * one, so a rule can be scoped to it.
+     *
+     * This is an identifier only — the domain still learns nothing about the
+     * gateway itself, which stays behind the ports.
+     */
+    public function gatewayId(): ?string;
 }

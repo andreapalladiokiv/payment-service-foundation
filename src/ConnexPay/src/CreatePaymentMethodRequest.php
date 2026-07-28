@@ -49,6 +49,13 @@ final class CreatePaymentMethodRequest extends AbstractRequest implements Paymen
             $card['Customer'] = $this->formatCustomer($billingAddress);
         }
 
+        // A registration that was authenticated must carry the result through,
+        // or the 3DS step-up is performed and then discarded.
+        $threeDS = $this->formatThreeDS();
+        if ($threeDS !== null) {
+            $card['ThreeDS'] = $threeDS;
+        }
+
         return [
             'DeviceGuid' => $this->getDeviceGuid(),
             'Card' => $card,

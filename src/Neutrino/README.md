@@ -1,11 +1,15 @@
 # Neutrino BIN / IP intelligence provider
 
-`techork/payment-service-neutrino` implements the Common risk-intelligence
-ports against the [Neutrino API](https://www.neutrinoapi.com): BIN lookups for
-card facts and IP lookups for geolocation / reputation. The results feed the
-fraud rule engine; both lookups are **fail-soft** — any transport error or
-empty response yields `null` instead of an exception, so a provider outage
-degrades rules gracefully rather than blocking the payment flow.
+`techork/payment-service-neutrino` owns the risk-intelligence contracts and
+speaks them to the [Neutrino API](https://www.neutrinoapi.com): BIN lookups for
+card facts and IP lookups for geolocation / reputation. The results become
+firewall facts; both lookups are **fail-soft** — any transport error or empty
+response yields `null` instead of an exception, so a provider outage degrades
+rules gracefully rather than blocking the payment flow.
+
+The contracts (`CardIntelligenceProvider`, `IpIntelligenceProvider`) and their
+value objects (`CardIntelligence`, `CardFunding`, `IpIntelligence`) live here
+rather than in the shared kernel: this package both produces and consumes them.
 
 ## Classes
 
@@ -13,8 +17,8 @@ degrades rules gracefully rather than blocking the payment flow.
 | --- | --- |
 | `NeutrinoClient` | Guzzle transport. `POST`s form-encoded requests to `https://neutrinoapi.net` and decodes the JSON response |
 | `NeutrinoHttpClientInterface` | Transport abstraction (`request(string $endpoint, array $params): array`); lets tests substitute a canned client |
-| `NeutrinoCardIntelligenceProvider` | Implements `Common\Contract\CardIntelligenceProvider` via the `bin-lookup` endpoint |
-| `NeutrinoIpIntelligenceProvider` | Implements `Common\Contract\IpIntelligenceProvider` via the `ip-info` endpoint |
+| `NeutrinoCardIntelligenceProvider` | Implements this package’s `CardIntelligenceProvider` via the `bin-lookup` endpoint |
+| `NeutrinoIpIntelligenceProvider` | Implements this package’s `IpIntelligenceProvider` via the `ip-info` endpoint |
 
 ## Configuration
 

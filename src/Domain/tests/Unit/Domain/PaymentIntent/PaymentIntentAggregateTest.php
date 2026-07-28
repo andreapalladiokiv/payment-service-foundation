@@ -2,6 +2,9 @@
 
 declare(strict_types=1);
 
+use Techork\PaymentService\Common\ValueObject\ConnectionContext;
+use Techork\PaymentService\Tests\Support\StubPaymentIntentFirewall;
+use Techork\PaymentService\Domain\Firewall\FirewallDecision;
 use Money\Currency;
 use Money\Money;
 use Techork\PaymentService\Common\Contract\Challenge;
@@ -210,6 +213,8 @@ function makeCreatePiCommand(
         public function metadata(): array { return []; }
         public function challengeResult(): ?ChallengeResult { return $this->challengeResult; }
         public function initiation(): PaymentInitiation { return $this->initiation; }
+        public function connection(): ?ConnectionContext { return null; }
+        public function gatewayId(): ?string { return null; }
     };
 }
 
@@ -360,6 +365,7 @@ it('records PaymentIntentCharged on create with Immediate + GatewaySuccess', fun
     $aggregate = PaymentIntentAggregate::create(
         makeCreatePiCommand($id, CaptureMethod::Immediate),
         makePaySuccessPort(),
+        StubPaymentIntentFirewall::allowing(),
     );
     $this->persistAggregateRoot($aggregate);
 
@@ -377,6 +383,7 @@ it('records PaymentIntentCharged carrying the FX convertedAmount from the port',
     $aggregate = PaymentIntentAggregate::create(
         makeCreatePiCommand($id, CaptureMethod::Immediate),
         makePaySuccessPort($converted),
+        StubPaymentIntentFirewall::allowing(),
     );
     $this->persistAggregateRoot($aggregate);
 
@@ -392,6 +399,7 @@ it('records PaymentIntentAuthorized on create with Automatic + GatewaySuccess', 
     $aggregate = PaymentIntentAggregate::create(
         makeCreatePiCommand($id, CaptureMethod::Automatic),
         makePaySuccessPort(),
+        StubPaymentIntentFirewall::allowing(),
     );
     $this->persistAggregateRoot($aggregate);
 
@@ -407,6 +415,7 @@ it('records PaymentIntentAuthorized on create with Manual + GatewaySuccess', fun
     $aggregate = PaymentIntentAggregate::create(
         makeCreatePiCommand($id, CaptureMethod::Manual),
         makePaySuccessPort(),
+        StubPaymentIntentFirewall::allowing(),
     );
     $this->persistAggregateRoot($aggregate);
 
@@ -426,6 +435,7 @@ it('records PaymentIntentFailed on create with GatewayDeclined', function () {
     $aggregate = PaymentIntentAggregate::create(
         makeCreatePiCommand($id, CaptureMethod::Automatic),
         makePayDeclinedPort('insufficient_funds'),
+        StubPaymentIntentFirewall::allowing(),
     );
     $this->persistAggregateRoot($aggregate);
 
@@ -441,6 +451,7 @@ it('records PaymentIntentRequiresAction on create with GatewayChallengeRequired'
     $aggregate = PaymentIntentAggregate::create(
         makeCreatePiCommand($id, CaptureMethod::Automatic),
         makePayChallengePort(makeThreeDSChallenge()),
+        StubPaymentIntentFirewall::allowing(),
     );
     $this->persistAggregateRoot($aggregate);
 
@@ -457,6 +468,7 @@ it('forwards pre-auth ChallengeResult into the initial event', function () {
     $aggregate = PaymentIntentAggregate::create(
         makeCreatePiCommand($id, CaptureMethod::Automatic, challengeResult: $preAuth),
         makePaySuccessPort(),
+        StubPaymentIntentFirewall::allowing(),
     );
     $this->persistAggregateRoot($aggregate);
 
@@ -472,6 +484,7 @@ it('binds the payment initiation onto the aggregate and the recorded event', fun
     $aggregate = PaymentIntentAggregate::create(
         makeCreatePiCommand($id, CaptureMethod::Immediate, initiation: PaymentInitiation::MerchantRecurring),
         makePaySuccessPort(),
+        StubPaymentIntentFirewall::allowing(),
     );
     $this->persistAggregateRoot($aggregate);
 
@@ -486,6 +499,7 @@ it('snapshot roundtrip preserves the payment initiation', function () {
     $aggregate = PaymentIntentAggregate::create(
         makeCreatePiCommand($id, CaptureMethod::Immediate, initiation: PaymentInitiation::MerchantUnscheduled),
         makePaySuccessPort(),
+        StubPaymentIntentFirewall::allowing(),
     );
 
     $state = (fn () => $this->createSnapshotState())->call($aggregate);
@@ -507,6 +521,7 @@ it('throws InvalidPaymentIntent for zero amount', function () {
     PaymentIntentAggregate::create(
         makeCreatePiCommand($id, amount: $zero),
         makePaySuccessPort(),
+        StubPaymentIntentFirewall::allowing(),
     );
 })->throws(InvalidPaymentIntent::class, 'Payment intent amount must be positive.');
 
@@ -517,6 +532,7 @@ it('throws InvalidPaymentIntent for negative amount', function () {
     PaymentIntentAggregate::create(
         makeCreatePiCommand($id, amount: $negative),
         makePaySuccessPort(),
+        StubPaymentIntentFirewall::allowing(),
     );
 })->throws(InvalidPaymentIntent::class, 'Payment intent amount must be positive.');
 
@@ -526,6 +542,7 @@ it('throws InvalidPaymentIntent for unusable instrument', function () {
     PaymentIntentAggregate::create(
         makeCreatePiCommand($id, instrument: makeUnusableInstrument()),
         makePaySuccessPort(),
+        StubPaymentIntentFirewall::allowing(),
     );
 })->throws(InvalidPaymentIntent::class, 'Payment source is not usable');
 
@@ -830,6 +847,7 @@ it('records RefundProcessed with retryInstrument when alternative card supplied'
     $aggregate->refund(
         makeCreateRefundCommand($refundId, makeAmount(), $retry),
         makeRefundSuccessPort(),
+        StubPaymentIntentFirewall::allowing(),
     );
     $this->persistAggregateRoot($aggregate);
 
@@ -1276,6 +1294,7 @@ it('snapshot roundtrip preserves charged state with challenge_result', function 
     $aggregate = PaymentIntentAggregate::create(
         makeCreatePiCommand($id, CaptureMethod::Immediate, challengeResult: makePiThreeDSResult()),
         makePaySuccessPort(),
+        StubPaymentIntentFirewall::allowing(),
     );
 
     $state = (fn () => $this->createSnapshotState())->call($aggregate);
@@ -1293,6 +1312,7 @@ it('snapshot roundtrip preserves processed and failed refunds', function () {
     $aggregate = PaymentIntentAggregate::create(
         makeCreatePiCommand($id, CaptureMethod::Immediate),
         makePaySuccessPort(),
+        StubPaymentIntentFirewall::allowing(),
     );
     $processedId = RefundId::generate();
     $failedId = RefundId::generate();
@@ -1314,6 +1334,7 @@ it('snapshot roundtrip preserves processed and failed refunds', function () {
     $restored->refund(
         makeCreateRefundCommand($newRefundId, new Money(700, new Currency('USD'))),
         makeRefundSuccessPort(),
+        StubPaymentIntentFirewall::allowing(),
     );
     expect($restored->refundableAmount()->getAmount())->toBe('0');
 
@@ -1379,4 +1400,80 @@ it('InvalidPaymentIntent::nonPositiveAmount returns correct message', function (
 it('PaymentIntentCannotBeCaptured::immediate returns correct message', function () {
     expect(PaymentIntentCannotBeCaptured::immediate()->getMessage())
         ->toBe('PaymentIntent capture_method is immediate; capture happens inline at create.');
+});
+
+it('parks for authentication without touching the gateway when the firewall refuses', function () {
+    $id = $this->aggregateRootId();
+
+    $gateway = Mockery::mock(CreatePort::class);
+    $gateway->shouldNotReceive('create');
+
+    $aggregate = PaymentIntentAggregate::create(
+        makeCreatePiCommand($id, CaptureMethod::Automatic),
+        $gateway,
+        StubPaymentIntentFirewall::denying(),
+    );
+
+    expect($aggregate->status())->toBe(PaymentIntentStatus::RequiresAction)
+        ->and($aggregate->challenge())->toBeInstanceOf(ThreeDSChallenge::class);
+});
+
+it('passes the domain data it holds to the firewall', function () {
+    $id = $this->aggregateRootId();
+    $firewall = StubPaymentIntentFirewall::allowing();
+
+    PaymentIntentAggregate::create(
+        makeCreatePiCommand($id, CaptureMethod::Immediate),
+        makePaySuccessPort(),
+        $firewall,
+    );
+
+    expect($firewall->received?->paymentIntentId?->toString())->toBe($id->toString())
+        ->and($firewall->received?->amount)->toEqual(makeAmount());
+});
+
+it('does not consult the firewall for a merchant-initiated payment', function () {
+    // Nobody is present to answer a challenge, so a step-up could only fail.
+    $id = $this->aggregateRootId();
+    $firewall = StubPaymentIntentFirewall::denying();
+
+    $aggregate = PaymentIntentAggregate::create(
+        makeCreatePiCommand($id, CaptureMethod::Immediate, initiation: PaymentInitiation::MerchantRecurring),
+        makePaySuccessPort(),
+        $firewall,
+    );
+
+    expect($firewall->received)->toBeNull()
+        ->and($aggregate->status())->toBe(PaymentIntentStatus::Charged);
+});
+
+it('does not consult the firewall when 3DS already succeeded', function () {
+    // The liability shift is already claimed; a second step-up is redundant.
+    $id = $this->aggregateRootId();
+    $firewall = StubPaymentIntentFirewall::denying();
+
+    $aggregate = PaymentIntentAggregate::create(
+        makeCreatePiCommand($id, CaptureMethod::Immediate, challengeResult: makePiThreeDSResult()),
+        makePaySuccessPort(),
+        $firewall,
+    );
+
+    expect($firewall->received)->toBeNull()
+        ->and($aggregate->status())->toBe(PaymentIntentStatus::Charged);
+});
+
+it('refuses an accept whose chain was degraded', function () {
+    // A rejecting rule that failed to evaluate must not read as a clean accept.
+    $id = $this->aggregateRootId();
+
+    $gateway = Mockery::mock(CreatePort::class);
+    $gateway->shouldNotReceive('create');
+
+    $aggregate = PaymentIntentAggregate::create(
+        makeCreatePiCommand($id, CaptureMethod::Automatic),
+        $gateway,
+        StubPaymentIntentFirewall::returning(FirewallDecision::allow('matched rule 2', degraded: true)),
+    );
+
+    expect($aggregate->status())->toBe(PaymentIntentStatus::RequiresAction);
 });

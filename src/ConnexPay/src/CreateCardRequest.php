@@ -60,6 +60,13 @@ final class CreateCardRequest extends AbstractRequest implements PaymentInstrume
             $data['Card']['Customer'] = $this->formatCustomer($billingAddress);
         }
 
+        // Tokenization also goes through /verify, so an authentication result
+        // must travel with it rather than being discarded.
+        $threeDS = $this->formatThreeDS();
+        if ($threeDS !== null) {
+            $data['Card']['ThreeDS'] = $threeDS;
+        }
+
         return $data;
     }
 
