@@ -16,3 +16,6 @@ src/*/.phpunit.result.cache
 # build / split artifacts
 /build/
 /.splits/
+
+# local credentials
+/.env
