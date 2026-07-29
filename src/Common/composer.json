@@ -10,6 +10,7 @@
         "symfony/intl": "^7.0 || ^8.0"
     },
     "require-dev": {
+        "eventsauce/eventsauce": "^3.8",
         "mockery/mockery": "^1.6",
         "pestphp/pest": "^3.0 || ^4.0"
     },
