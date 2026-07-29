@@ -25,6 +25,29 @@ the lifetime of the client instance.
 | `deviceGuid` | Sent as `DeviceGuid` on every Sales-API transaction call (`Search/*` lookups don't send it) |
 | `merchantGuid` | Required for virtual card issuance and Search/Sales lookups |
 | `environment` | `sandbox` (default) or `production` — switches both base URLs |
+| `accountCurrency` | Currency the merchant account is provisioned in (ConnexPay's "Accounting Currency"). Empty means `USD`. Only `USD`, `CAD`, `GBP`, `EUR` are accepted — see below |
+
+### Why `accountCurrency` exists
+
+ConnexPay's v1 API carries **no currency field**, on any request or response, and
+neither does the Sale webhook. It bills whatever goes into `Amount` in the
+account's own currency, decided on ConnexPay's side. So an amount in any other
+currency is silently rebranded rather than rejected — a `Money` of ¥5,000 (about
+$32) would be charged as **$5,000** on a USD account, with nothing anywhere to
+reconstruct what was meant.
+
+`formatMoney()` therefore refuses any amount whose currency is not
+`accountCurrency`. Verified two ways: the OpenAPI source behind the reference
+(`sales-api.json`, updated 2026-07-16) has no currency property on any of the 28
+acquiring paths, and a sandbox probe
+(`tests/Integration/ConnexPayCurrencyFieldProbeTest.php`) found every spelling of
+a currency field silently dropped — including when sent as a type mismatch, which
+a bound property would have rejected by name.
+
+Configuring a currency ConnexPay does not *acquire* in fails immediately rather
+than disabling the check: acceptance is limited to those four currencies, while
+card **issuing** supports roughly thirty. Matching an amount against an
+issuing-only currency would reinstate exactly the mis-billing the guard prevents.
 
 ## Operations
 

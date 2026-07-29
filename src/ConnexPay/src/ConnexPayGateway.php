@@ -37,6 +37,7 @@ final class ConnexPayGateway extends AbstractGateway implements Gateway
             'deviceGuid' => '',
             'merchantGuid' => '',
             'environment' => 'sandbox',
+            'accountCurrency' => '',
         ];
     }
 
@@ -78,6 +79,22 @@ final class ConnexPayGateway extends AbstractGateway implements Gateway
     public function setMerchantGuid(string $value): static
     {
         return $this->setParameter('merchantGuid', $value);
+    }
+
+    /**
+     * Currency this merchant account is provisioned in (ConnexPay's "Accounting
+     * Currency"), from the `account_currency` credential; empty means USD.
+     * Requests inherit it through createRequest's parameter merge and refuse an
+     * amount in any other currency, since the API sends no currency field.
+     */
+    public function getAccountCurrency(): string
+    {
+        return $this->getParameter('accountCurrency') ?: 'USD';
+    }
+
+    public function setAccountCurrency(string $value): static
+    {
+        return $this->setParameter('accountCurrency', $value);
     }
 
     public function getEnvironment(): string

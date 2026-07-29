@@ -37,6 +37,40 @@ it('initializes with credentials', function () {
         ->and($gw->getEnvironment())->toBe('sandbox');
 });
 
+it('defaults the account currency to USD when the credential is absent', function () {
+    expect(makeConnexPayGateway()->getAccountCurrency())->toBe('USD');
+});
+
+it('maps the snake_case account_currency credential onto the gateway', function () {
+    // The DB hands credentials over as snake_case; Omnipay's Helper translates
+    // them into set*() calls during initialize().
+    $gw = new ConnexPayGateway;
+    $gw->initialize([
+        'username' => 'test-user',
+        'password' => 'test-pass',
+        'device_guid' => 'device-abc',
+        'account_currency' => 'CAD',
+    ]);
+
+    expect($gw->getAccountCurrency())->toBe('CAD');
+});
+
+it('propagates the account currency into every request it builds', function () {
+    // createRequest merges gateway parameters into the request, which is the
+    // only reason formatMoney() can see the account currency at all.
+    $gw = new ConnexPayGateway;
+    $gw->initialize([
+        'username' => 'test-user',
+        'password' => 'test-pass',
+        'device_guid' => 'device-abc',
+        'account_currency' => 'gbp',
+    ]);
+
+    expect($gw->purchase()->getAccountCurrency())->toBe('GBP')
+        ->and($gw->authorize()->getAccountCurrency())->toBe('GBP')
+        ->and($gw->refund()->getAccountCurrency())->toBe('GBP');
+});
+
 it('creates createCard request', function () {
     expect(makeConnexPayGateway()->createCard())->toBeInstanceOf(CreateCardRequest::class);
 });

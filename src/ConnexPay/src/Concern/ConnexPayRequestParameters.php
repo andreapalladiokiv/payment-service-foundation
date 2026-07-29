@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Techork\PaymentService\ConnexPay\Concern;
 
 use Techork\PaymentService\ConnexPay\ConnexPayHttpClientInterface;
+use InvalidArgumentException;
 use Money\Currencies\ISOCurrencies;
 use Money\Formatter\DecimalMoneyFormatter;
 use Money\Money;
@@ -12,6 +13,19 @@ use Techork\PaymentService\Common\ValueObject\BillingAddress;
 
 trait ConnexPayRequestParameters
 {
+    /**
+     * Currencies ConnexPay accepts payments in, per its acquiring product page
+     * ("four native currencies USD, CAD, GBP, and EUR"). Deliberately NOT the
+     * 30-code list from the Currency and Region Codes reference — that one is
+     * scoped to the Issue Card / Issue Lite endpoints, i.e. card issuing.
+     *
+     * The list exists so a typo or an issuing-only currency in `account_currency`
+     * fails loudly instead of waving {@see formatMoney} through: matching an
+     * amount against a currency ConnexPay cannot acquire in would reinstate the
+     * very mis-billing the check prevents.
+     */
+    private const array CONNEXPAY_ACQUIRING_CURRENCIES = ['USD', 'CAD', 'GBP', 'EUR'];
+
     public function getConnexPayClient(): ConnexPayHttpClientInterface
     {
         return $this->getParameter('connexPayClient');
@@ -62,8 +76,69 @@ trait ConnexPayRequestParameters
         return $this->getParameter('statementDescription');
     }
 
+    /**
+     * Currency the ConnexPay merchant account is provisioned in — what ConnexPay
+     * calls the "Accounting Currency". Comes from the `account_currency`
+     * credential; empty means USD.
+     *
+     * Named `accountCurrency` rather than `currency` because Omnipay's
+     * AbstractRequest and AbstractGateway both already define get/setCurrency().
+     *
+     * @throws InvalidArgumentException when configured to a currency ConnexPay
+     *                                  does not acquire in — a misconfiguration
+     *                                  must fail here, not silently disable the
+     *                                  check in {@see formatMoney}.
+     */
+    public function getAccountCurrency(): string
+    {
+        $code = strtoupper(trim((string) ($this->getParameter('accountCurrency') ?? '')));
+
+        if ($code === '') {
+            return 'USD';
+        }
+
+        if (! in_array($code, self::CONNEXPAY_ACQUIRING_CURRENCIES, true)) {
+            throw new InvalidArgumentException(sprintf(
+                'account_currency is set to %s, which ConnexPay does not acquire in (it acquires in %s). '
+                .'Issuing supports more currencies, acceptance does not.',
+                $code,
+                implode(', ', self::CONNEXPAY_ACQUIRING_CURRENCIES),
+            ));
+        }
+
+        return $code;
+    }
+
+    public function setAccountCurrency(string $value): self
+    {
+        return $this->setParameter('accountCurrency', $value);
+    }
+
+    /**
+     * The v1 API carries no currency field at all — verified against its OpenAPI
+     * source and empirically against the sandbox, where every currency spelling
+     * we sent was silently dropped. ConnexPay bills whatever we put in `Amount`
+     * in the account's own currency, so a Money in any other currency is
+     * rebranded rather than rejected: ¥5,000 would bill as $5,000, and nothing
+     * in the request, the response or the Sale webhook records what was meant.
+     * Refuse it instead.
+     */
     protected function formatMoney(Money $money): string
     {
+        $expected = $this->getAccountCurrency();
+        $code = $money->getCurrency()->getCode();
+
+        if ($code !== $expected) {
+            throw new InvalidArgumentException(sprintf(
+                'The ConnexPay account is provisioned in %s but the amount is %s; the API sends no '
+                .'currency field, so this would be billed as %s. Route %s to another gateway.',
+                $expected,
+                $code,
+                $expected,
+                $code,
+            ));
+        }
+
         return (new DecimalMoneyFormatter(new ISOCurrencies))->format($money);
     }
 
