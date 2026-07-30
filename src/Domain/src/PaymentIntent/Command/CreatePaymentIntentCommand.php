@@ -9,6 +9,7 @@ use Techork\PaymentService\Common\Contract\ChallengeResult;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
 use Techork\PaymentService\Common\ValueObject\ConnectionContext;
+use Techork\PaymentService\Common\ValueObject\MerchantDescriptor;
 use Techork\PaymentService\Domain\PaymentIntent\CaptureMethod;
 use Techork\PaymentService\Domain\PaymentIntent\PaymentInitiation;
 use Techork\PaymentService\Domain\PaymentIntent\ValueObject\PaymentIntentId;
@@ -24,6 +25,19 @@ interface CreatePaymentIntentCommand
     public function captureMethod(): CaptureMethod;
 
     public function billingAddress(): BillingAddress;
+
+    /**
+     * What the cardholder will see on their statement. May be empty, in which
+     * case the acquirer falls back to the merchant's configured default.
+     */
+    public function merchantDescriptor(): MerchantDescriptor;
+
+    /**
+     * Free-text note about the payment, for the merchant's own records. Never
+     * shown to the cardholder and never sent to the networks, so unlike
+     * {@see merchantDescriptor()} it carries no format constraints.
+     */
+    public function description(): string;
 
     /** @return array<string, mixed> */
     public function metadata(): array;

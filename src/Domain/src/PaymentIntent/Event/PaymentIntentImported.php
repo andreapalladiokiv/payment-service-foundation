@@ -9,6 +9,7 @@ use Money\Currency;
 use Money\Money;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
+use Techork\PaymentService\Common\ValueObject\MerchantDescriptor;
 use Techork\PaymentService\Common\ValueObject\PaymentInstrumentFactory;
 use Techork\PaymentService\Domain\PaymentIntent\CaptureMethod;
 use Techork\PaymentService\Domain\PaymentIntent\PaymentIntentStatus;
@@ -38,6 +39,8 @@ final readonly class PaymentIntentImported implements SerializablePayload
         public PaymentInstrument $instrument,
         public CaptureMethod $captureMethod,
         public BillingAddress $billingAddress,
+        public MerchantDescriptor $merchantDescriptor,
+        public string $description,
     ) {}
 
     public function toPayload(): array
@@ -49,6 +52,8 @@ final readonly class PaymentIntentImported implements SerializablePayload
             'instrument' => $this->instrument->toPayload(),
             'capture_method' => $this->captureMethod->value,
             'billing_address' => $this->billingAddress->toArray(),
+            'merchant_descriptor' => (string) $this->merchantDescriptor,
+            'description' => $this->description,
         ];
     }
 
@@ -67,6 +72,8 @@ final readonly class PaymentIntentImported implements SerializablePayload
             $payload['billing_address'] !== null
                 ? BillingAddress::fromArray($payload['billing_address'])
                 : BillingAddress::unknown(),
+            new MerchantDescriptor($payload['merchant_descriptor']),
+            $payload['description'],
         );
     }
 }

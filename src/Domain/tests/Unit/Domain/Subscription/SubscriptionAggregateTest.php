@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Techork\PaymentService\Common\ValueObject\MerchantDescriptor;
 use Techork\PaymentService\Common\ValueObject\ConnectionContext;
 use Techork\PaymentService\Tests\Support\StubPaymentIntentFirewall;
 use Techork\PaymentService\Domain\PaymentIntent\CaptureMethod;
@@ -141,6 +142,8 @@ function makeChargedPiForSubscription(?Money $amount = null): PaymentIntentAggre
         {
             return new BillingAddress(firstName: 'Test', lastName: 'User', line: '1 St', city: 'NYC', country: new Country('US'), postalCode: '10001');
         }
+        public function merchantDescriptor(): MerchantDescriptor { return new MerchantDescriptor('SUBSCRIPTION'); }
+        public function description(): string { return ''; }
         public function metadata(): array { return []; }
         public function challengeResult(): ?\Techork\PaymentService\Common\Contract\ChallengeResult { return null; }
         public function initiation(): PaymentInitiation { return PaymentInitiation::CardholderInitiated; }
@@ -304,6 +307,8 @@ it('throws SubscriptionNotActivatable when payment intent is not charged', funct
         {
             return new BillingAddress(firstName: 'Test', lastName: 'User', line: '1 St', city: 'NYC', country: new Country('US'), postalCode: '10001');
         }
+        public function merchantDescriptor(): MerchantDescriptor { return new MerchantDescriptor('SUBSCRIPTION'); }
+        public function description(): string { return ''; }
         public function metadata(): array { return []; }
         public function challengeResult(): ?\Techork\PaymentService\Common\Contract\ChallengeResult { return null; }
         public function initiation(): PaymentInitiation { return PaymentInitiation::CardholderInitiated; }

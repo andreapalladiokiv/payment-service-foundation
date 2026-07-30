@@ -17,6 +17,7 @@ use Techork\PaymentService\Common\ValueObject\Country;
 use Techork\PaymentService\Common\ValueObject\CreditCard;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Cvc;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Expiration;
+use Techork\PaymentService\Common\ValueObject\MerchantDescriptor;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Holder;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Number;
 use Techork\PaymentService\Common\ValueObject\Email;
@@ -186,6 +187,11 @@ function makeRedirectChallenge(): RedirectChallenge
 //  Command stubs
 // ──────────────────────────────────────────────
 
+function makeMerchantDescriptor(string $descriptor = 'ACME STORE'): MerchantDescriptor
+{
+    return new MerchantDescriptor($descriptor);
+}
+
 function makeCreatePiCommand(
     PaymentIntentId $id,
     CaptureMethod $captureMethod = CaptureMethod::Automatic,
@@ -193,8 +199,10 @@ function makeCreatePiCommand(
     ?PaymentInstrument $instrument = null,
     ?ChallengeResult $challengeResult = null,
     PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated,
+    ?MerchantDescriptor $merchantDescriptor = null,
+    string $description = '',
 ): CreatePaymentIntentCommand {
-    return new readonly class($id, $captureMethod, $amount ?? makeAmount(), $instrument ?? makeInstrument(), $challengeResult, $initiation) implements CreatePaymentIntentCommand
+    return new readonly class($id, $captureMethod, $amount ?? makeAmount(), $instrument ?? makeInstrument(), $challengeResult, $initiation, $merchantDescriptor ?? makeMerchantDescriptor(), $description) implements CreatePaymentIntentCommand
     {
         public function __construct(
             private PaymentIntentId $paymentIntentId,
@@ -203,6 +211,8 @@ function makeCreatePiCommand(
             private PaymentInstrument $instrument,
             private ?ChallengeResult $challengeResult,
             private PaymentInitiation $initiation,
+            private MerchantDescriptor $merchantDescriptor,
+            private string $description,
         ) {}
 
         public function paymentIntentId(): PaymentIntentId { return $this->paymentIntentId; }
@@ -210,6 +220,8 @@ function makeCreatePiCommand(
         public function instrument(): PaymentInstrument { return $this->instrument; }
         public function captureMethod(): CaptureMethod { return $this->captureMethod; }
         public function billingAddress(): BillingAddress { return makeBillingAddress(); }
+        public function merchantDescriptor(): MerchantDescriptor { return $this->merchantDescriptor; }
+        public function description(): string { return $this->description; }
         public function metadata(): array { return []; }
         public function challengeResult(): ?ChallengeResult { return $this->challengeResult; }
         public function initiation(): PaymentInitiation { return $this->initiation; }
@@ -370,7 +382,13 @@ it('records PaymentIntentCharged on create with Immediate + GatewaySuccess', fun
     $this->persistAggregateRoot($aggregate);
 
     then(new PaymentIntentCharged(
-        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [],
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Immediate,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
     ));
 });
 
@@ -388,7 +406,15 @@ it('records PaymentIntentCharged carrying the FX convertedAmount from the port',
     $this->persistAggregateRoot($aggregate);
 
     then(new PaymentIntentCharged(
-        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [], null, $converted,
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Immediate,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        null,
+        $converted,
     ));
 });
 
@@ -404,7 +430,13 @@ it('records PaymentIntentAuthorized on create with Automatic + GatewaySuccess', 
     $this->persistAggregateRoot($aggregate);
 
     then(new PaymentIntentAuthorized(
-        makeAmount(), makeInstrument(), CaptureMethod::Automatic, makeBillingAddress(), [],
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Automatic,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
     ));
 });
 
@@ -420,7 +452,13 @@ it('records PaymentIntentAuthorized on create with Manual + GatewaySuccess', fun
     $this->persistAggregateRoot($aggregate);
 
     then(new PaymentIntentAuthorized(
-        makeAmount(), makeInstrument(), CaptureMethod::Manual, makeBillingAddress(), [],
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Manual,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
     ));
 });
 
@@ -440,7 +478,14 @@ it('records PaymentIntentFailed on create with GatewayDeclined', function () {
     $this->persistAggregateRoot($aggregate);
 
     then(new PaymentIntentFailed(
-        makeAmount(), makeInstrument(), CaptureMethod::Automatic, makeBillingAddress(), [], 'insufficient_funds',
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Automatic,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        'insufficient_funds',
     ));
 });
 
@@ -456,7 +501,14 @@ it('records PaymentIntentRequiresAction on create with GatewayChallengeRequired'
     $this->persistAggregateRoot($aggregate);
 
     then(new PaymentIntentRequiresAction(
-        makeAmount(), makeInstrument(), CaptureMethod::Automatic, makeBillingAddress(), [], makeThreeDSChallenge(),
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Automatic,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        makeThreeDSChallenge(),
     ));
 });
 
@@ -473,7 +525,14 @@ it('forwards pre-auth ChallengeResult into the initial event', function () {
     $this->persistAggregateRoot($aggregate);
 
     then(new PaymentIntentAuthorized(
-        makeAmount(), makeInstrument(), CaptureMethod::Automatic, makeBillingAddress(), [], $preAuth,
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Automatic,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        $preAuth,
     ));
 });
 
@@ -490,7 +549,14 @@ it('binds the payment initiation onto the aggregate and the recorded event', fun
 
     expect($aggregate->initiation())->toBe(PaymentInitiation::MerchantRecurring);
     then(new PaymentIntentCharged(
-        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [], initiation: PaymentInitiation::MerchantRecurring,
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Immediate,
+        makeBillingAddress(),
+        [],
+        initiation: PaymentInitiation::MerchantRecurring,
+        merchantDescriptor: makeMerchantDescriptor(),
+        description: '',
     ));
 });
 
@@ -508,6 +574,165 @@ it('snapshot roundtrip preserves the payment initiation', function () {
     expect($restored->initiation())->toBe(PaymentInitiation::MerchantUnscheduled);
 
     then();
+});
+
+// ──────────────────────────────────────────────
+//  Create — statement descriptor and description
+// ──────────────────────────────────────────────
+
+it('carries the descriptor and description onto the charge', function () {
+    // Both used to travel as opaque `metadata` keys, which meant nothing
+    // required them and nothing typed them. They are first-class now because a
+    // projector has to write them into their own columns, and because the
+    // descriptor is the one field of a payment the cardholder actually reads.
+    /** @var PaymentIntentId $id */
+    $id = $this->aggregateRootId();
+
+    $aggregate = PaymentIntentAggregate::create(
+        makeCreatePiCommand(
+            $id,
+            CaptureMethod::Immediate,
+            merchantDescriptor: new MerchantDescriptor('ACME STORE'),
+            description: 'Order 4417',
+        ),
+        makePaySuccessPort(),
+        StubPaymentIntentFirewall::allowing(),
+    );
+    $this->persistAggregateRoot($aggregate);
+
+    expect($aggregate->merchantDescriptor())->toEqual(new MerchantDescriptor('ACME STORE'))
+        ->and($aggregate->description())->toBe('Order 4417');
+
+    then(new PaymentIntentCharged(
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Immediate,
+        makeBillingAddress(),
+        [],
+        new MerchantDescriptor('ACME STORE'),
+        'Order 4417',
+    ));
+});
+
+it('carries the descriptor and description onto the authorization', function () {
+    /** @var PaymentIntentId $id */
+    $id = $this->aggregateRootId();
+
+    $aggregate = PaymentIntentAggregate::create(
+        makeCreatePiCommand(
+            $id,
+            CaptureMethod::Manual,
+            merchantDescriptor: new MerchantDescriptor('ACME STORE'),
+            description: 'Order 4417',
+        ),
+        makePaySuccessPort(),
+        StubPaymentIntentFirewall::allowing(),
+    );
+    $this->persistAggregateRoot($aggregate);
+
+    then(new PaymentIntentAuthorized(
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Manual,
+        makeBillingAddress(),
+        [],
+        new MerchantDescriptor('ACME STORE'),
+        'Order 4417',
+    ));
+});
+
+it('carries the descriptor and description onto a gateway decline', function () {
+    $id = PaymentIntentId::generate();
+
+    $aggregate = PaymentIntentAggregate::create(
+        makeCreatePiCommand(
+            $id,
+            CaptureMethod::Immediate,
+            merchantDescriptor: new MerchantDescriptor('ACME STORE'),
+            description: 'Order 4417',
+        ),
+        makePayDeclinedPort('insufficient funds'),
+        StubPaymentIntentFirewall::allowing(),
+    );
+
+    expect($aggregate->status())->toBe(PaymentIntentStatus::Failed)
+        ->and($aggregate->merchantDescriptor())->toEqual(new MerchantDescriptor('ACME STORE'))
+        ->and($aggregate->description())->toBe('Order 4417');
+
+    then();
+});
+
+it('keeps the descriptor and description across the challenge confirmation', function () {
+    // confirmChallenge() rebuilds the charge from aggregate state rather than
+    // from a command, so anything the state forgets is silently dropped on the
+    // 3DS path only — which is exactly the shape of bug that survives a test
+    // suite covering the inline path.
+    $id = PaymentIntentId::generate();
+
+    $aggregate = PaymentIntentAggregate::create(
+        makeCreatePiCommand(
+            $id,
+            CaptureMethod::Immediate,
+            merchantDescriptor: new MerchantDescriptor('ACME STORE'),
+            description: 'Order 4417',
+        ),
+        makePayChallengePort(makeRedirectChallenge()),
+        StubPaymentIntentFirewall::allowing(),
+    );
+    $aggregate->confirmChallenge(makePiThreeDSResult());
+
+    expect($aggregate->status())->toBe(PaymentIntentStatus::Charged)
+        ->and($aggregate->merchantDescriptor())->toEqual(new MerchantDescriptor('ACME STORE'))
+        ->and($aggregate->description())->toBe('Order 4417');
+
+    then();
+});
+
+it('snapshot roundtrip preserves the descriptor and description', function () {
+    $id = PaymentIntentId::generate();
+    $aggregate = PaymentIntentAggregate::create(
+        makeCreatePiCommand(
+            $id,
+            CaptureMethod::Immediate,
+            merchantDescriptor: new MerchantDescriptor('ACME STORE'),
+            description: 'Order 4417',
+        ),
+        makePaySuccessPort(),
+        StubPaymentIntentFirewall::allowing(),
+    );
+
+    $state = (fn () => $this->createSnapshotState())->call($aggregate);
+    $restored = (fn () => PaymentIntentAggregate::reconstituteFromSnapshotState($id, $state))->call($aggregate);
+
+    expect($restored->merchantDescriptor())->toEqual(new MerchantDescriptor('ACME STORE'))
+        ->and($restored->description())->toBe('Order 4417');
+
+    then();
+});
+
+it('round-trips the descriptor and description through every event payload', function (object $event) {
+    $restored = $event::fromPayload($event->toPayload());
+
+    expect($restored->merchantDescriptor)->toEqual($event->merchantDescriptor)
+        ->and($restored->description)->toBe($event->description);
+})->with(function () {
+    $descriptor = new MerchantDescriptor('ACME STORE');
+
+    yield 'charged' => fn () => new PaymentIntentCharged(
+        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [], $descriptor, 'Order 4417',
+    );
+    yield 'authorized' => fn () => new PaymentIntentAuthorized(
+        makeAmount(), makeInstrument(), CaptureMethod::Manual, makeBillingAddress(), [], $descriptor, 'Order 4417',
+    );
+    yield 'failed' => fn () => new PaymentIntentFailed(
+        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [], $descriptor, 'Order 4417', 'declined',
+    );
+    yield 'requires action' => fn () => new PaymentIntentRequiresAction(
+        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [], $descriptor, 'Order 4417', makeRedirectChallenge(),
+    );
+    yield 'imported' => fn () => new PaymentIntentImported(
+        makeAmount(), PaymentIntentStatus::Charged, makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), $descriptor, 'Order 4417',
+    );
 });
 
 // ──────────────────────────────────────────────
@@ -555,7 +780,14 @@ it('records PaymentIntentAuthorized on confirmChallenge after RequiresAction wit
     $id = $this->aggregateRootId();
 
     given(new PaymentIntentRequiresAction(
-        makeAmount(), makeInstrument(), CaptureMethod::Automatic, makeBillingAddress(), [], makeThreeDSChallenge(),
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Automatic,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        makeThreeDSChallenge(),
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -563,7 +795,14 @@ it('records PaymentIntentAuthorized on confirmChallenge after RequiresAction wit
     $this->persistAggregateRoot($aggregate);
 
     then(new PaymentIntentAuthorized(
-        makeAmount(), makeInstrument(), CaptureMethod::Automatic, makeBillingAddress(), [], makePiThreeDSResult(),
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Automatic,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        makePiThreeDSResult(),
     ));
 });
 
@@ -572,7 +811,14 @@ it('records PaymentIntentCharged on confirmChallenge after RequiresAction with I
     $id = $this->aggregateRootId();
 
     given(new PaymentIntentRequiresAction(
-        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [], makeThreeDSChallenge(),
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Immediate,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        makeThreeDSChallenge(),
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -580,7 +826,14 @@ it('records PaymentIntentCharged on confirmChallenge after RequiresAction with I
     $this->persistAggregateRoot($aggregate);
 
     then(new PaymentIntentCharged(
-        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [], makePiThreeDSResult(),
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Immediate,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        makePiThreeDSResult(),
     ));
 });
 
@@ -590,7 +843,14 @@ it('treats ThreeDSStatus::NotAvailable as success (liability shift)', function (
     $result = makePiThreeDSResult(ThreeDSStatus::NotAvailable);
 
     given(new PaymentIntentRequiresAction(
-        makeAmount(), makeInstrument(), CaptureMethod::Manual, makeBillingAddress(), [], makeThreeDSChallenge(),
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Manual,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        makeThreeDSChallenge(),
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -598,7 +858,14 @@ it('treats ThreeDSStatus::NotAvailable as success (liability shift)', function (
     $this->persistAggregateRoot($aggregate);
 
     then(new PaymentIntentAuthorized(
-        makeAmount(), makeInstrument(), CaptureMethod::Manual, makeBillingAddress(), [], $result,
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Manual,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        $result,
     ));
 });
 
@@ -608,7 +875,14 @@ it('treats ThreeDSStatus::Info as success (data share only, not a refusal)', fun
     $result = makePiThreeDSResult(ThreeDSStatus::Info);
 
     given(new PaymentIntentRequiresAction(
-        makeAmount(), makeInstrument(), CaptureMethod::Manual, makeBillingAddress(), [], makeThreeDSChallenge(),
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Manual,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        makeThreeDSChallenge(),
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -616,7 +890,14 @@ it('treats ThreeDSStatus::Info as success (data share only, not a refusal)', fun
     $this->persistAggregateRoot($aggregate);
 
     then(new PaymentIntentAuthorized(
-        makeAmount(), makeInstrument(), CaptureMethod::Manual, makeBillingAddress(), [], $result,
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Manual,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        $result,
     ));
 });
 
@@ -626,7 +907,14 @@ it('treats RedirectResult as success', function () {
     $result = new RedirectResult(transactionId: 'pay-77');
 
     given(new PaymentIntentRequiresAction(
-        makeAmount(), makeInstrument(), CaptureMethod::Automatic, makeBillingAddress(), [], makeRedirectChallenge(),
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Automatic,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        makeRedirectChallenge(),
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -634,7 +922,14 @@ it('treats RedirectResult as success', function () {
     $this->persistAggregateRoot($aggregate);
 
     then(new PaymentIntentAuthorized(
-        makeAmount(), makeInstrument(), CaptureMethod::Automatic, makeBillingAddress(), [], $result,
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Automatic,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        $result,
     ));
 });
 
@@ -648,7 +943,14 @@ it('records PaymentIntentFailed on confirmChallenge with NotAuthenticated', func
     $result = makePiThreeDSResult(ThreeDSStatus::NotAuthenticated);
 
     given(new PaymentIntentRequiresAction(
-        makeAmount(), makeInstrument(), CaptureMethod::Automatic, makeBillingAddress(), [], makeThreeDSChallenge(),
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Automatic,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        makeThreeDSChallenge(),
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -656,7 +958,15 @@ it('records PaymentIntentFailed on confirmChallenge with NotAuthenticated', func
     $this->persistAggregateRoot($aggregate);
 
     then(new PaymentIntentFailed(
-        makeAmount(), makeInstrument(), CaptureMethod::Automatic, makeBillingAddress(), [], '3DS authentication: N', $result,
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Automatic,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        '3DS authentication: N',
+        $result,
     ));
 });
 
@@ -666,7 +976,14 @@ it('records PaymentIntentFailed on confirmChallenge with Rejected', function () 
     $result = makePiThreeDSResult(ThreeDSStatus::Rejected);
 
     given(new PaymentIntentRequiresAction(
-        makeAmount(), makeInstrument(), CaptureMethod::Manual, makeBillingAddress(), [], makeThreeDSChallenge(),
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Manual,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        makeThreeDSChallenge(),
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -674,7 +991,15 @@ it('records PaymentIntentFailed on confirmChallenge with Rejected', function () 
     $this->persistAggregateRoot($aggregate);
 
     then(new PaymentIntentFailed(
-        makeAmount(), makeInstrument(), CaptureMethod::Manual, makeBillingAddress(), [], '3DS authentication: R', $result,
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Manual,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        '3DS authentication: R',
+        $result,
     ));
 });
 
@@ -683,7 +1008,13 @@ it('throws PaymentIntentChallengeNotPending when confirmChallenge called outside
     $id = $this->aggregateRootId();
 
     given(new PaymentIntentCharged(
-        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [],
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Immediate,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -699,7 +1030,13 @@ it('records PaymentIntentCaptured on capture from Authorized + GatewaySuccess', 
     $id = $this->aggregateRootId();
 
     given(new PaymentIntentAuthorized(
-        makeAmount(), makeInstrument(), CaptureMethod::Manual, makeBillingAddress(), [],
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Manual,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -716,7 +1053,13 @@ it('records PaymentIntentCaptured carrying the FX convertedAmount from the port'
     $converted = new Money(9140, new Currency('USD'));
 
     given(new PaymentIntentAuthorized(
-        makeAmount(), makeInstrument(), CaptureMethod::Manual, makeBillingAddress(), [],
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Manual,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -732,7 +1075,13 @@ it('records PaymentIntentCaptured with partial amount', function () {
     $partial = new Money(500, new Currency('USD'));
 
     given(new PaymentIntentAuthorized(
-        makeAmount(), makeInstrument(), CaptureMethod::Manual, makeBillingAddress(), [],
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Manual,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -747,7 +1096,13 @@ it('records PaymentIntentFailed on capture + GatewayDeclined', function () {
     $id = $this->aggregateRootId();
 
     given(new PaymentIntentAuthorized(
-        makeAmount(), makeInstrument(), CaptureMethod::Manual, makeBillingAddress(), [],
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Manual,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -755,7 +1110,14 @@ it('records PaymentIntentFailed on capture + GatewayDeclined', function () {
     $this->persistAggregateRoot($aggregate);
 
     then(new PaymentIntentFailed(
-        makeAmount(), makeInstrument(), CaptureMethod::Manual, makeBillingAddress(), [], 'issuer_unavailable',
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Manual,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        'issuer_unavailable',
     ));
 });
 
@@ -764,7 +1126,13 @@ it('throws PaymentIntentCannotBeCaptured on capture from Charged', function () {
     $id = $this->aggregateRootId();
 
     given(new PaymentIntentCharged(
-        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [],
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Immediate,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -780,7 +1148,13 @@ it('records PaymentIntentCancelled on cancel from Authorized + GatewaySuccess', 
     $id = $this->aggregateRootId();
 
     given(new PaymentIntentAuthorized(
-        makeAmount(), makeInstrument(), CaptureMethod::Manual, makeBillingAddress(), [],
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Manual,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -795,7 +1169,14 @@ it('records PaymentIntentCancelled on cancel from RequiresAction + GatewaySucces
     $id = $this->aggregateRootId();
 
     given(new PaymentIntentRequiresAction(
-        makeAmount(), makeInstrument(), CaptureMethod::Automatic, makeBillingAddress(), [], makeThreeDSChallenge(),
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Automatic,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        makeThreeDSChallenge(),
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -810,7 +1191,13 @@ it('records PaymentIntentFailed on cancel + GatewayDeclined', function () {
     $id = $this->aggregateRootId();
 
     given(new PaymentIntentAuthorized(
-        makeAmount(), makeInstrument(), CaptureMethod::Manual, makeBillingAddress(), [],
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Manual,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -818,7 +1205,14 @@ it('records PaymentIntentFailed on cancel + GatewayDeclined', function () {
     $this->persistAggregateRoot($aggregate);
 
     then(new PaymentIntentFailed(
-        makeAmount(), makeInstrument(), CaptureMethod::Manual, makeBillingAddress(), [], 'void_not_allowed',
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Manual,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        'void_not_allowed',
     ));
 });
 
@@ -827,7 +1221,13 @@ it('throws PaymentIntentCannotBeCancelled when already Charged', function () {
     $id = $this->aggregateRootId();
 
     given(new PaymentIntentCharged(
-        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [],
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Immediate,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -839,7 +1239,7 @@ it('throws PaymentIntentCannotBeCancelled when already Cancelled', function () {
     $id = $this->aggregateRootId();
 
     given(
-        new PaymentIntentAuthorized(makeAmount(), makeInstrument(), CaptureMethod::Manual, makeBillingAddress(), []),
+        new PaymentIntentAuthorized(makeAmount(), makeInstrument(), CaptureMethod::Manual, makeBillingAddress(), [], makeMerchantDescriptor(), ''),
         new PaymentIntentCancelled('first cancel'),
     );
 
@@ -858,7 +1258,13 @@ it('records RefundProcessed with retryInstrument when alternative card supplied'
     $retry = makeCreditCardForPI();
 
     given(new PaymentIntentCharged(
-        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [],
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Immediate,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -879,7 +1285,13 @@ it('records RefundFailed with retryInstrument when alternative card declines', f
     $retry = makeCreditCardForPI();
 
     given(new PaymentIntentCharged(
-        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [],
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Immediate,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -898,7 +1310,13 @@ it('records RefundProcessed (full) on refund from Charged + GatewaySuccess', fun
     $refundId = RefundId::generate();
 
     given(new PaymentIntentCharged(
-        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [],
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Immediate,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -915,7 +1333,13 @@ it('records RefundProcessed (partial) and stays charged', function () {
     $refundId = RefundId::generate();
 
     given(new PaymentIntentCharged(
-        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [],
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Immediate,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -932,7 +1356,7 @@ it('allows two partial refunds that sum to full amount', function () {
     $second = RefundId::generate();
 
     given(
-        new PaymentIntentCharged(makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), []),
+        new PaymentIntentCharged(makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [], makeMerchantDescriptor(), ''),
         new RefundProcessed($first, new Money(400, new Currency('USD'))),
     );
 
@@ -949,7 +1373,13 @@ it('records RefundFailed when gateway declines the refund', function () {
     $refundId = RefundId::generate();
 
     given(new PaymentIntentCharged(
-        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [],
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Immediate,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -969,7 +1399,7 @@ it('failed refund does not consume refundable amount', function () {
     $second = RefundId::generate();
 
     given(
-        new PaymentIntentCharged(makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), []),
+        new PaymentIntentCharged(makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [], makeMerchantDescriptor(), ''),
         new RefundFailed($first, makeAmount(), 'declined'),
     );
 
@@ -986,7 +1416,13 @@ it('throws PaymentIntentRefundExceedsAmount when refund exceeds remaining', func
     $tooMuch = new Money(1500, new Currency('USD'));
 
     given(new PaymentIntentCharged(
-        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [],
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Immediate,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -998,7 +1434,13 @@ it('throws PaymentIntentCannotBeRefunded when not Charged (Authorized)', functio
     $id = $this->aggregateRootId();
 
     given(new PaymentIntentAuthorized(
-        makeAmount(), makeInstrument(), CaptureMethod::Manual, makeBillingAddress(), [],
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Manual,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -1013,7 +1455,7 @@ it('records RefundFeeRecorded for an existing refund', function () {
     $observedAt = new DateTimeImmutable('2026-04-29T16:00:00Z');
 
     given(
-        new PaymentIntentCharged(makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), []),
+        new PaymentIntentCharged(makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [], makeMerchantDescriptor(), ''),
         new RefundProcessed($refundId, makeAmount()),
     );
 
@@ -1029,7 +1471,13 @@ it('throws RefundNotFound when recording fee for unknown refund', function () {
     $id = $this->aggregateRootId();
 
     given(new PaymentIntentCharged(
-        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [],
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Immediate,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -1059,6 +1507,8 @@ it('imports an intent the gateway already holds without touching a port', functi
         instrument: HostedPayment::unknown(),
         captureMethod: CaptureMethod::Manual,
         billingAddress: BillingAddress::unknown(),
+        merchantDescriptor: makeMerchantDescriptor(),
+        description: '',
     );
     $this->persistAggregateRoot($aggregate);
 
@@ -1068,6 +1518,8 @@ it('imports an intent the gateway already holds without touching a port', functi
         instrument: HostedPayment::unknown(),
         captureMethod: CaptureMethod::Manual,
         billingAddress: BillingAddress::unknown(),
+        merchantDescriptor: makeMerchantDescriptor(),
+        description: '',
     ));
 });
 
@@ -1080,6 +1532,8 @@ it('refuses to import over an intent that already exists', function () {
         instrument: makeImportedPaymentMethod(),
         captureMethod: CaptureMethod::Automatic,
         billingAddress: makeBillingAddress(),
+        merchantDescriptor: makeMerchantDescriptor(),
+        description: '',
     ));
 
     /** @var PaymentIntentId $id */
@@ -1092,6 +1546,8 @@ it('refuses to import over an intent that already exists', function () {
         instrument: HostedPayment::unknown(),
         captureMethod: CaptureMethod::Manual,
         billingAddress: BillingAddress::unknown(),
+        merchantDescriptor: makeMerchantDescriptor(),
+        description: '',
     ))->toThrow(InvalidPaymentIntent::class, 'already exists');
 });
 
@@ -1106,6 +1562,8 @@ it('finishes an intent imported as RequiresAction through the ordinary challenge
         instrument: HostedPayment::unknown(),
         captureMethod: CaptureMethod::Manual,
         billingAddress: BillingAddress::unknown(),
+        merchantDescriptor: makeMerchantDescriptor(),
+        description: '',
     ));
 
     /** @var PaymentIntentId $id */
@@ -1121,6 +1579,8 @@ it('finishes an intent imported as RequiresAction through the ordinary challenge
         billingAddress: BillingAddress::unknown(),
         metadata: [],
         challengeResult: new RedirectResult('pi_123'),
+        merchantDescriptor: makeMerchantDescriptor(),
+        description: '',
     ));
 });
 
@@ -1137,6 +1597,8 @@ it('reads a legacy import that stored no billing address as the no-data marker',
         'instrument' => HostedPayment::unknown()->toPayload(),
         'capture_method' => CaptureMethod::Manual->value,
         'billing_address' => null,
+        'merchant_descriptor' => 'ACME STORE',
+        'description' => '',
     ];
 
     expect(PaymentIntentImported::fromPayload($legacy)->billingAddress)
@@ -1153,6 +1615,8 @@ it('applies PaymentIntentImported and allows refund up to the imported amount', 
         instrument: makeImportedPaymentMethod(),
         captureMethod: CaptureMethod::Automatic,
         billingAddress: makeBillingAddress(),
+        merchantDescriptor: makeMerchantDescriptor(),
+        description: '',
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -1179,6 +1643,8 @@ it('applies RefundImported and projects refund into refunds()', function () {
             instrument: makeImportedPaymentMethod(),
             captureMethod: CaptureMethod::Automatic,
             billingAddress: makeBillingAddress(),
+            merchantDescriptor: makeMerchantDescriptor(),
+            description: '',
         ),
         new RefundImported($refundId, $importedAmount, RefundStatus::Processed),
     );
@@ -1202,7 +1668,13 @@ it('records PaymentIntentFeeRecorded from any state', function () {
     $observedAt = new DateTimeImmutable('2026-04-29T12:00:00Z');
 
     given(new PaymentIntentCharged(
-        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [],
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Immediate,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -1218,7 +1690,14 @@ it('records PaymentIntentFeeRecorded from any state', function () {
 
 it('PaymentIntentAuthorized survives serialization roundtrip', function () {
     $event = new PaymentIntentAuthorized(
-        makeAmount(), makeInstrument(), CaptureMethod::Manual, makeBillingAddress(), ['k' => 'v'], makePiThreeDSResult(),
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Manual,
+        makeBillingAddress(),
+        ['k' => 'v'],
+        makeMerchantDescriptor(),
+        '',
+        makePiThreeDSResult(),
     );
     $restored = PaymentIntentAuthorized::fromPayload($event->toPayload());
 
@@ -1232,7 +1711,13 @@ it('PaymentIntentAuthorized survives serialization roundtrip', function () {
 
 it('PaymentIntentCharged survives serialization roundtrip without challenge result', function () {
     $event = new PaymentIntentCharged(
-        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [],
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Immediate,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
     );
     $restored = PaymentIntentCharged::fromPayload($event->toPayload());
 
@@ -1245,7 +1730,14 @@ it('PaymentIntentCharged survives serialization roundtrip without challenge resu
 
 it('PaymentIntentRequiresAction survives serialization roundtrip (3DS)', function () {
     $event = new PaymentIntentRequiresAction(
-        makeAmount(), makeInstrument(), CaptureMethod::Automatic, makeBillingAddress(), [], makeThreeDSChallenge(),
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Automatic,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        makeThreeDSChallenge(),
     );
     $restored = PaymentIntentRequiresAction::fromPayload($event->toPayload());
 
@@ -1257,7 +1749,14 @@ it('PaymentIntentRequiresAction survives serialization roundtrip (3DS)', functio
 
 it('PaymentIntentRequiresAction survives serialization roundtrip (Redirect)', function () {
     $event = new PaymentIntentRequiresAction(
-        makeAmount(), makeInstrument(), CaptureMethod::Automatic, makeBillingAddress(), [], makeRedirectChallenge(),
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Automatic,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        makeRedirectChallenge(),
     );
     $restored = PaymentIntentRequiresAction::fromPayload($event->toPayload());
 
@@ -1269,7 +1768,15 @@ it('PaymentIntentRequiresAction survives serialization roundtrip (Redirect)', fu
 
 it('PaymentIntentFailed survives serialization roundtrip', function () {
     $event = new PaymentIntentFailed(
-        makeAmount(), makeInstrument(), CaptureMethod::Automatic, makeBillingAddress(), [], 'card_declined', makePiThreeDSResult(),
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Automatic,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        'card_declined',
+        makePiThreeDSResult(),
     );
     $restored = PaymentIntentFailed::fromPayload($event->toPayload());
 
@@ -1304,6 +1811,8 @@ it('PaymentIntentImported survives serialization roundtrip', function () {
         instrument: makeImportedPaymentMethod(),
         captureMethod: CaptureMethod::Manual,
         billingAddress: makeBillingAddressFull(),
+        merchantDescriptor: makeMerchantDescriptor(),
+        description: '',
     );
 
     $restored = PaymentIntentImported::fromPayload($event->toPayload());
@@ -1325,6 +1834,8 @@ it('imports a hosted-flow PaymentIntent with no billing details of its own', fun
         instrument: new HostedPayment('', ''),
         captureMethod: CaptureMethod::Automatic,
         billingAddress: BillingAddress::unknown(),
+        merchantDescriptor: makeMerchantDescriptor(),
+        description: '',
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -1345,6 +1856,8 @@ it('hosted-flow PaymentIntentImported survives serialization roundtrip', functio
         instrument: new HostedPayment('', ''),
         captureMethod: CaptureMethod::Automatic,
         billingAddress: BillingAddress::unknown(),
+        merchantDescriptor: makeMerchantDescriptor(),
+        description: '',
     );
 
     $restored = PaymentIntentImported::fromPayload($event->toPayload());
@@ -1466,7 +1979,13 @@ it('throws InvalidRefund::currencyMismatch when refund currency differs from PI'
     $id = $this->aggregateRootId();
 
     given(new PaymentIntentCharged(
-        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [],
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Immediate,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);

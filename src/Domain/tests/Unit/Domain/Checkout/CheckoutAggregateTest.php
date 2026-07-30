@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Techork\PaymentService\Common\ValueObject\MerchantDescriptor;
 use Techork\PaymentService\Common\ValueObject\ConnectionContext;
 use Techork\PaymentService\Tests\Support\StubPaymentIntentFirewall;
 use Techork\PaymentService\Domain\Checkout\CheckoutAggregate;
@@ -190,6 +191,8 @@ function makeChargedPiAggregate(): PaymentIntentAggregate
         public function instrument(): PaymentInstrument { static $i = null; return $i ??= new Token(TokenId::fromString('01961f5a-0000-7000-8000-000000000001'), new CreditCard(new Number('424242', '4242', CardBrand::Visa), Expiration::fromMonthAndYear(12, 2030), new Holder('Test'), new Cvc), ExpiresAt::fromDateTime(new DateTimeImmutable('+1 hour'))); }
         public function captureMethod(): CaptureMethod { return CaptureMethod::Immediate; }
         public function billingAddress(): BillingAddress { return new BillingAddress(firstName: 'Test', lastName: 'User', line: '1 St', city: 'NYC', country: new Country('US'), postalCode: '10001'); }
+        public function merchantDescriptor(): MerchantDescriptor { return new MerchantDescriptor('CHECKOUT TEST'); }
+        public function description(): string { return ''; }
         public function metadata(): array { return []; }
         public function challengeResult(): ?\Techork\PaymentService\Common\Contract\ChallengeResult { return null; }
         public function initiation(): PaymentInitiation { return PaymentInitiation::CardholderInitiated; }
@@ -308,6 +311,8 @@ it('throws CheckoutNotPayable when payment intent amount does not match checkout
         public function instrument(): PaymentInstrument { static $i = null; return $i ??= new Token(TokenId::fromString('01961f5a-0000-7000-8000-000000000001'), new CreditCard(new Number('424242', '4242', CardBrand::Visa), Expiration::fromMonthAndYear(12, 2030), new Holder('Test'), new Cvc), ExpiresAt::fromDateTime(new DateTimeImmutable('+1 hour'))); }
         public function captureMethod(): CaptureMethod { return CaptureMethod::Immediate; }
         public function billingAddress(): BillingAddress { return new BillingAddress(firstName: 'Test', lastName: 'User', line: '1 St', city: 'NYC', country: new Country('US'), postalCode: '10001'); }
+        public function merchantDescriptor(): MerchantDescriptor { return new MerchantDescriptor('CHECKOUT TEST'); }
+        public function description(): string { return ''; }
         public function metadata(): array { return []; }
         public function challengeResult(): ?\Techork\PaymentService\Common\Contract\ChallengeResult { return null; }
         public function initiation(): PaymentInitiation { return PaymentInitiation::CardholderInitiated; }
@@ -338,6 +343,8 @@ it('throws CheckoutNotPayable when payment intent is not charged', function () {
         public function instrument(): PaymentInstrument { static $i = null; return $i ??= new Token(TokenId::fromString('01961f5a-0000-7000-8000-000000000001'), new CreditCard(new Number('424242', '4242', CardBrand::Visa), Expiration::fromMonthAndYear(12, 2030), new Holder('Test'), new Cvc), ExpiresAt::fromDateTime(new DateTimeImmutable('+1 hour'))); }
         public function captureMethod(): CaptureMethod { return CaptureMethod::Manual; }
         public function billingAddress(): BillingAddress { return new BillingAddress(firstName: 'Test', lastName: 'User', line: '1 St', city: 'NYC', country: new Country('US'), postalCode: '10001'); }
+        public function merchantDescriptor(): MerchantDescriptor { return new MerchantDescriptor('CHECKOUT TEST'); }
+        public function description(): string { return ''; }
         public function metadata(): array { return []; }
         public function challengeResult(): ?\Techork\PaymentService\Common\Contract\ChallengeResult { return null; }
         public function initiation(): PaymentInitiation { return PaymentInitiation::CardholderInitiated; }

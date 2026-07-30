@@ -10,6 +10,7 @@ use Money\Money;
 use Techork\PaymentService\Common\Contract\Challenge;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
+use Techork\PaymentService\Common\ValueObject\MerchantDescriptor;
 use Techork\PaymentService\Common\ValueObject\PaymentInstrumentFactory;
 use Techork\PaymentService\Domain\PaymentIntent\CaptureMethod;
 use Techork\PaymentService\Domain\PaymentIntent\ChallengeArraySerializer;
@@ -24,6 +25,8 @@ final readonly class PaymentIntentRequiresAction implements SerializablePayload
         public BillingAddress $billingAddress,
         /** @var array<string, mixed> */
         public array $metadata,
+        public MerchantDescriptor $merchantDescriptor,
+        public string $description,
         public Challenge $challenge,
         public PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated,
     ) {}
@@ -37,6 +40,8 @@ final readonly class PaymentIntentRequiresAction implements SerializablePayload
             'capture_method' => $this->captureMethod->value,
             'billing_address' => $this->billingAddress->toArray(),
             'metadata' => $this->metadata,
+            'merchant_descriptor' => (string) $this->merchantDescriptor,
+            'description' => $this->description,
             'challenge' => ChallengeArraySerializer::toArray($this->challenge),
             'initiation' => $this->initiation->value,
         ];
@@ -50,6 +55,8 @@ final readonly class PaymentIntentRequiresAction implements SerializablePayload
             CaptureMethod::from($payload['capture_method']),
             BillingAddress::fromArray($payload['billing_address']),
             $payload['metadata'] ?? [],
+            new MerchantDescriptor($payload['merchant_descriptor']),
+            $payload['description'],
             ChallengeArraySerializer::fromArray($payload['challenge']),
             PaymentInitiation::from($payload['initiation'] ?? PaymentInitiation::CardholderInitiated->value),
         );
