@@ -22,8 +22,9 @@ use Techork\PaymentService\Gateway\ValueObject\GatewayId;
  *
  * Note what that admits: an intent opened on the gateway account by anything at
  * all — another integration, the gateway's own dashboard, a second environment
- * sharing credentials — becomes a local intent. That is the intended trade, but
- * it is a real one, so applications that do not want it bind the no-op.
+ * sharing credentials — becomes a local intent. That is the intended trade and
+ * the bridge default takes it, so an account shared across environments will see
+ * each other's intents.
  */
 interface GatewayPaymentIntentRecorder
 {

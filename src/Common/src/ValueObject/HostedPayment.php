@@ -25,6 +25,22 @@ final readonly class HostedPayment implements PaymentInstrument
         public string $cancelUrl,
     ) {}
 
+    /**
+     * The instrument for an intent we did not open and therefore know nothing
+     * about — an import from a settlement file, or a `created` webhook for an
+     * intent placed elsewhere on the gateway account.
+     *
+     * `PaymentInstrument` is not nullable and an import has to carry something,
+     * so this is the honest something: a marker that says the payment data lives
+     * gateway-side. The URLs are blank because there is no redirect to make,
+     * which {@see isValid()} correctly reports as unusable — nothing may pay
+     * with this, and nothing should try.
+     */
+    public static function unknown(): self
+    {
+        return new self(successUrl: '', cancelUrl: '');
+    }
+
     #[Override]
     public static function type(): string
     {

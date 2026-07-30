@@ -1044,6 +1044,107 @@ it('throws RefundNotFound when recording fee for unknown refund', function () {
 //  Imported
 // ──────────────────────────────────────────────
 
+it('imports an intent the gateway already holds without touching a port', function () {
+    // The distinction from create(): that one spends a CreatePort::create() to
+    // make the intent. Against an intent the gateway opened moments ago, calling
+    // it would take the money a second time — so import() takes no port at all,
+    // and this test would fail to construct if it did.
+    /** @var PaymentIntentId $id */
+    $id = $this->aggregateRootId();
+
+    $aggregate = $this->retrieveAggregateRoot($id);
+    $aggregate->import(
+        amount: new Money(5000, new Currency('USD')),
+        status: PaymentIntentStatus::RequiresAction,
+        instrument: HostedPayment::unknown(),
+        captureMethod: CaptureMethod::Manual,
+        billingAddress: null,
+    );
+    $this->persistAggregateRoot($aggregate);
+
+    then(new PaymentIntentImported(
+        amount: new Money(5000, new Currency('USD')),
+        status: PaymentIntentStatus::RequiresAction,
+        instrument: HostedPayment::unknown(),
+        captureMethod: CaptureMethod::Manual,
+        billingAddress: null,
+    ));
+});
+
+it('refuses to import over an intent that already exists', function () {
+    // Importing onto a live intent would rewrite its amount and instrument from
+    // whatever the export happened to say and lose what it had progressed to.
+    given(new PaymentIntentImported(
+        amount: new Money(2000, new Currency('EUR')),
+        status: PaymentIntentStatus::Charged,
+        instrument: makeImportedPaymentMethod(),
+        captureMethod: CaptureMethod::Automatic,
+        billingAddress: makeBillingAddress(),
+    ));
+
+    /** @var PaymentIntentId $id */
+    $id = $this->aggregateRootId();
+    $aggregate = $this->retrieveAggregateRoot($id);
+
+    expect(fn () => $aggregate->import(
+        amount: new Money(5000, new Currency('USD')),
+        status: PaymentIntentStatus::RequiresAction,
+        instrument: HostedPayment::unknown(),
+        captureMethod: CaptureMethod::Manual,
+        billingAddress: null,
+    ))->toThrow(InvalidPaymentIntent::class, 'already exists');
+});
+
+it('finishes an intent imported as RequiresAction through the ordinary challenge path', function () {
+    // Why RequiresAction is the right state to open an unresolved intent in, and
+    // not a stand-in for a missing "created" case: the webhook that reports the
+    // outcome resolves it through machinery that already exists. Nothing had to
+    // learn about imported intents.
+    given(new PaymentIntentImported(
+        amount: new Money(5000, new Currency('USD')),
+        status: PaymentIntentStatus::RequiresAction,
+        instrument: HostedPayment::unknown(),
+        captureMethod: CaptureMethod::Manual,
+        billingAddress: BillingAddress::unknown(),
+    ));
+
+    /** @var PaymentIntentId $id */
+    $id = $this->aggregateRootId();
+    $aggregate = $this->retrieveAggregateRoot($id);
+    $aggregate->confirmChallenge(new RedirectResult('pi_123'));
+    $this->persistAggregateRoot($aggregate);
+
+    then(new PaymentIntentAuthorized(
+        amount: new Money(5000, new Currency('USD')),
+        instrument: HostedPayment::unknown(),
+        captureMethod: CaptureMethod::Manual,
+        billingAddress: BillingAddress::unknown(),
+        metadata: [],
+        challengeResult: new RedirectResult('pi_123'),
+    ));
+});
+
+it('cannot resolve an intent imported without a billing address', function () {
+    // The import event accepts null; every event that could finish the intent
+    // demands an address. So null is importable and then stuck — which is why
+    // the recorder passes a sentinel instead. Pinned so nobody "simplifies" it
+    // back to null.
+    /** @var PaymentIntentId $id */
+    $id = $this->aggregateRootId();
+
+    $aggregate = $this->retrieveAggregateRoot($id);
+    $aggregate->import(
+        amount: new Money(5000, new Currency('USD')),
+        status: PaymentIntentStatus::RequiresAction,
+        instrument: HostedPayment::unknown(),
+        captureMethod: CaptureMethod::Manual,
+        billingAddress: null,
+    );
+
+    expect(fn () => $aggregate->confirmChallenge(new RedirectResult('pi_123')))
+        ->toThrow(TypeError::class);
+});
+
 it('applies PaymentIntentImported and allows refund up to the imported amount', function () {
     /** @var PaymentIntentId $id */
     $id = $this->aggregateRootId();

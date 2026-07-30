@@ -254,6 +254,42 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         return $self;
     }
 
+    /**
+     * Opens an intent the gateway already holds, without going near a port.
+     *
+     * {@see PaymentIntentImported} has had an applier since the settlement-file
+     * import, but no way to record it — callers reached past the aggregate and
+     * hand-built the message. This is that entry point, and the only creation
+     * path that does not call the gateway: {@see create()} exists to *make* an
+     * intent and spends a `CreatePort::create()` doing it, which against an
+     * intent the gateway opened moments ago would take the money twice.
+     *
+     * No firewall either. Inspection decides whether to *place* a payment; this
+     * one is already placed, and refusing it here would leave the gateway
+     * holding an authorization the aggregate denies exists.
+     */
+    public function import(
+        Money $amount,
+        PaymentIntentStatus $status,
+        PaymentInstrument $instrument,
+        CaptureMethod $captureMethod,
+        ?BillingAddress $billingAddress,
+    ): void {
+        // Guards on the typed property being uninitialised rather than on the
+        // version, so it holds for a caller that assembled the aggregate some
+        // other way. Importing over a live intent would rewrite its amount and
+        // instrument from a stale export and lose whatever it had progressed to.
+        isset($this->status) && throw InvalidPaymentIntent::alreadyExists($this->aggregateRootId());
+
+        $this->recordThat(new PaymentIntentImported(
+            $amount,
+            $status,
+            $instrument,
+            $captureMethod,
+            $billingAddress,
+        ));
+    }
+
     public function capture(CapturePaymentIntentCommand $command, CapturePort $port): void
     {
         $this->status === PaymentIntentStatus::Authorized || throw PaymentIntentCannotBeCaptured::withStatus($this->status);
