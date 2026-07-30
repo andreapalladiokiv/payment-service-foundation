@@ -1058,7 +1058,7 @@ it('imports an intent the gateway already holds without touching a port', functi
         status: PaymentIntentStatus::RequiresAction,
         instrument: HostedPayment::unknown(),
         captureMethod: CaptureMethod::Manual,
-        billingAddress: null,
+        billingAddress: BillingAddress::unknown(),
     );
     $this->persistAggregateRoot($aggregate);
 
@@ -1067,7 +1067,7 @@ it('imports an intent the gateway already holds without touching a port', functi
         status: PaymentIntentStatus::RequiresAction,
         instrument: HostedPayment::unknown(),
         captureMethod: CaptureMethod::Manual,
-        billingAddress: null,
+        billingAddress: BillingAddress::unknown(),
     ));
 });
 
@@ -1091,7 +1091,7 @@ it('refuses to import over an intent that already exists', function () {
         status: PaymentIntentStatus::RequiresAction,
         instrument: HostedPayment::unknown(),
         captureMethod: CaptureMethod::Manual,
-        billingAddress: null,
+        billingAddress: BillingAddress::unknown(),
     ))->toThrow(InvalidPaymentIntent::class, 'already exists');
 });
 
@@ -1124,25 +1124,23 @@ it('finishes an intent imported as RequiresAction through the ordinary challenge
     ));
 });
 
-it('cannot resolve an intent imported without a billing address', function () {
-    // The import event accepts null; every event that could finish the intent
-    // demands an address. So null is importable and then stuck — which is why
-    // the recorder passes a sentinel instead. Pinned so nobody "simplifies" it
-    // back to null.
-    /** @var PaymentIntentId $id */
-    $id = $this->aggregateRootId();
+it('reads a legacy import that stored no billing address as the no-data marker', function () {
+    // Events written before the field was tightened carry null and the store
+    // keeps them forever, so fromPayload() coerces rather than failing. Note this
+    // only covers consumers that read through toPayload/fromPayload — a store
+    // whose events were written by a property normaliser reaches the constructor
+    // directly and has to have its nulls cleared out.
+    $legacy = [
+        'amount' => '5000',
+        'currency' => 'USD',
+        'status' => PaymentIntentStatus::RequiresAction->value,
+        'instrument' => HostedPayment::unknown()->toPayload(),
+        'capture_method' => CaptureMethod::Manual->value,
+        'billing_address' => null,
+    ];
 
-    $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->import(
-        amount: new Money(5000, new Currency('USD')),
-        status: PaymentIntentStatus::RequiresAction,
-        instrument: HostedPayment::unknown(),
-        captureMethod: CaptureMethod::Manual,
-        billingAddress: null,
-    );
-
-    expect(fn () => $aggregate->confirmChallenge(new RedirectResult('pi_123')))
-        ->toThrow(TypeError::class);
+    expect(PaymentIntentImported::fromPayload($legacy)->billingAddress)
+        ->toEqual(BillingAddress::unknown());
 });
 
 it('applies PaymentIntentImported and allows refund up to the imported amount', function () {
@@ -1317,7 +1315,7 @@ it('PaymentIntentImported survives serialization roundtrip', function () {
     then();
 });
 
-it('imports a hosted-flow PaymentIntent with no billing address', function () {
+it('imports a hosted-flow PaymentIntent with no billing details of its own', function () {
     /** @var PaymentIntentId $id */
     $id = $this->aggregateRootId();
 
@@ -1326,12 +1324,15 @@ it('imports a hosted-flow PaymentIntent with no billing address', function () {
         status: PaymentIntentStatus::Charged,
         instrument: new HostedPayment('', ''),
         captureMethod: CaptureMethod::Automatic,
-        billingAddress: null,
+        billingAddress: BillingAddress::unknown(),
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
 
-    expect($aggregate->billingAddress())->toBeNull()
+    // The marker, not null: a hosted intent has no merchant-side billing on file,
+    // and saying so with the "no data" sentinel keeps it resolvable — the events
+    // that would finish it all require an address.
+    expect($aggregate->billingAddress())->toEqual(BillingAddress::unknown())
         ->and($aggregate->instrument())->toBeInstanceOf(HostedPayment::class);
 
     then();
@@ -1343,12 +1344,12 @@ it('hosted-flow PaymentIntentImported survives serialization roundtrip', functio
         status: PaymentIntentStatus::Charged,
         instrument: new HostedPayment('', ''),
         captureMethod: CaptureMethod::Automatic,
-        billingAddress: null,
+        billingAddress: BillingAddress::unknown(),
     );
 
     $restored = PaymentIntentImported::fromPayload($event->toPayload());
 
-    expect($restored->billingAddress)->toBeNull()
+    expect($restored->billingAddress)->toEqual(BillingAddress::unknown())
         ->and($restored->instrument)->toBeInstanceOf(HostedPayment::class);
 
     then();

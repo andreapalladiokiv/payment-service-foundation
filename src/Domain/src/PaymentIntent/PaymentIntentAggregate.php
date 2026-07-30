@@ -273,7 +273,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         PaymentIntentStatus $status,
         PaymentInstrument $instrument,
         CaptureMethod $captureMethod,
-        ?BillingAddress $billingAddress,
+        BillingAddress $billingAddress,
     ): void {
         // Guards on the typed property being uninitialised rather than on the
         // version, so it holds for a caller that assembled the aggregate some

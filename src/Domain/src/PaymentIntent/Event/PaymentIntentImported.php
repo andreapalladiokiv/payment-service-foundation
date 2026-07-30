@@ -20,8 +20,15 @@ use Techork\PaymentService\Domain\PaymentIntent\PaymentIntentStatus;
  *
  * `instrument` is the open `PaymentInstrument` contract (not the `PaymentMethod`
  * wrapper) so hosted-page imports can carry a `HostedPayment` marker when no
- * local payment method record exists. `billingAddress` is nullable for the
- * same reason: hosted-flow intents have no merchant-side billing on file.
+ * local payment method record exists.
+ *
+ * `billingAddress` is not nullable, and this was the last event where it was.
+ * Charge, authorize and requires-action all demand an address, so an intent
+ * imported without one was importable and then permanently stuck — nothing could
+ * ever finish it. Where the import has no address to give,
+ * {@see BillingAddress::unknown()} is the answer: a marker that says "no data",
+ * which is the truth, rather than a null that says "this intent is exempt from
+ * the rule the rest of the lifecycle enforces".
  */
 final readonly class PaymentIntentImported implements SerializablePayload
 {
@@ -30,7 +37,7 @@ final readonly class PaymentIntentImported implements SerializablePayload
         public PaymentIntentStatus $status,
         public PaymentInstrument $instrument,
         public CaptureMethod $captureMethod,
-        public ?BillingAddress $billingAddress,
+        public BillingAddress $billingAddress,
     ) {}
 
     public function toPayload(): array
@@ -41,7 +48,7 @@ final readonly class PaymentIntentImported implements SerializablePayload
             'status' => $this->status->value,
             'instrument' => $this->instrument->toPayload(),
             'capture_method' => $this->captureMethod->value,
-            'billing_address' => $this->billingAddress?->toArray(),
+            'billing_address' => $this->billingAddress->toArray(),
         ];
     }
 
@@ -52,7 +59,14 @@ final readonly class PaymentIntentImported implements SerializablePayload
             PaymentIntentStatus::from($payload['status']),
             PaymentInstrumentFactory::fromPayload($payload['instrument']),
             CaptureMethod::from($payload['capture_method']),
-            $payload['billing_address'] !== null ? BillingAddress::fromArray($payload['billing_address']) : null,
+            // Coerced rather than passed straight through: events written before
+            // the field was tightened carry null, and the store keeps them
+            // forever. Reading one back as the "no data" marker is what it always
+            // meant, and is the only alternative to failing every replay of a
+            // stream recorded under the old shape.
+            $payload['billing_address'] !== null
+                ? BillingAddress::fromArray($payload['billing_address'])
+                : BillingAddress::unknown(),
         );
     }
 }
