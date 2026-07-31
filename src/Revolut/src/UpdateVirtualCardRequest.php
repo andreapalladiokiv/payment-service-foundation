@@ -75,8 +75,6 @@ final class UpdateVirtualCardRequest extends AbstractRequest
             return [];
         }
 
-        $mapped = MerchantCategoryMapper::fromCategory($category);
-
-        return $mapped === null ? [] : [$mapped];
+        return MerchantCategoryMapper::fromCategory($category);
     }
 }

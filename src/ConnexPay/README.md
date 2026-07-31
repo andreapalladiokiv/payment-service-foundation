@@ -107,6 +107,10 @@ amount throws `InvalidArgumentException`.
 - Virtual card issuance maps the domain `CardSpendCategory` to ConnexPay's
   2-digit `PurchaseType` via `PurchaseTypeBridge`; `CardBrand` accepts only
   Visa / Mastercard (anything else throws, `null` lets the issuer pick).
+- `PurchaseType` restricts the card, it does not label it: a card issued as
+  `04` (pay-TV) is declined at a filling station. ConnexPay's guidance is to
+  pick the most restrictive code that fits, so the bridge never substitutes a
+  narrower code than the domain category asked for.
 
 ## Webhooks
 

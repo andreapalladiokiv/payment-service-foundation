@@ -123,11 +123,16 @@ payment-method reference without deleting the local instrument.
 
 - `GatewayId` — UUID identifying one credential/tenant configuration.
 - `CardSpendCategory` — domain spend taxonomy for virtual card issuance
-  (`travel_air`, `travel_lodging`, …, `service_fee`, `general_business`);
-  each issuing gateway keeps its own mapper.
-- `PurchaseType` — legacy ConnexPay-native numeric industry enum;
+  (`travel_air`, `travel_lodging`, …, `service_fee`, `business_services`).
+  It is a spend **restriction**: issuers decline authorisations from
+  merchants outside the category, so pick the narrowest one that fits. Each
+  issuing gateway keeps its own mapper; set-valued controls (Revolut) may
+  expand one category into several native buckets.
+- `PurchaseType` — ConnexPay-native numeric industry enum, mirroring their
+  [published table](https://docs.connexpay.com/docs/purchase-types).
   `PurchaseTypeBridge` converts both ways (lossy: no ConnexPay code for
-  `TravelRail` / `ServiceFee`; both insurance codes collapse to `Insurance`).
+  `TravelRail` / `ServiceFee`, which widen to `Travel` / `MiscAndBusiness`;
+  both insurance codes collapse to `Insurance`).
 
 ## Testing
 

@@ -43,12 +43,14 @@ it('generates a request id when no clientUniqueId is supplied', function () {
     expect($requestId)->toBeString()->and($requestId)->not->toBe('');
 });
 
-it('maps a travel spend category onto the travel merchant control', function () {
-    expect(revolutIssueRequest(['spendCategory' => 'travel_air'])->getData()['categories'])->toBe(['travel']);
+it('maps a travel spend category onto its merchant controls', function () {
+    expect(revolutIssueRequest(['spendCategory' => 'travel_air'])->getData()['categories'])->toBe(['airlines'])
+        ->and(revolutIssueRequest(['spendCategory' => 'travel_generic'])->getData()['categories'])
+        ->toBe(['airlines', 'accommodation', 'transport']);
 });
 
-it('omits categories for a spend category with no Revolut counterpart', function () {
-    expect(revolutIssueRequest(['spendCategory' => 'medical'])->getData())->not->toHaveKey('categories');
+it('omits categories for an unrecognised spend category', function () {
+    expect(revolutIssueRequest(['spendCategory' => 'not_a_category'])->getData())->not->toHaveKey('categories');
 });
 
 it('omits categories when no spend category is supplied', function () {
