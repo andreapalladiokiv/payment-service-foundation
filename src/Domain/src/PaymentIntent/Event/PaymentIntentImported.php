@@ -64,11 +64,6 @@ final readonly class PaymentIntentImported implements SerializablePayload
             PaymentIntentStatus::from($payload['status']),
             PaymentInstrumentFactory::fromPayload($payload['instrument']),
             CaptureMethod::from($payload['capture_method']),
-            // Coerced rather than passed straight through: events written before
-            // the field was tightened carry null, and the store keeps them
-            // forever. Reading one back as the "no data" marker is what it always
-            // meant, and is the only alternative to failing every replay of a
-            // stream recorded under the old shape.
             $payload['billing_address'] !== null
                 ? BillingAddress::fromArray($payload['billing_address'])
                 : BillingAddress::unknown(),

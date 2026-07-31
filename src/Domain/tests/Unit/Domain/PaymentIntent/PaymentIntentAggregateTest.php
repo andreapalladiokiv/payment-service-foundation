@@ -1651,11 +1651,9 @@ it('finishes an intent imported as RequiresAction through the ordinary challenge
 });
 
 it('reads a legacy import that stored no billing address as the no-data marker', function () {
-    // Events written before the field was tightened carry null and the store
-    // keeps them forever, so fromPayload() coerces rather than failing. Note this
-    // only covers consumers that read through toPayload/fromPayload — a store
-    // whose events were written by a property normaliser reaches the constructor
-    // directly and has to have its nulls cleared out.
+    // Guards the coercion in fromPayload() and nothing wider than that: the
+    // event store serialises through a property normaliser, which reaches the
+    // constructor directly, so this path has no production caller.
     $legacy = [
         'amount' => '5000',
         'currency' => 'USD',
