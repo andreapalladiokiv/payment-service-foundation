@@ -14,9 +14,15 @@ final class SubscriptionNotActivatable extends \DomainException
         return new self("Subscription cannot be activated in status [{$status->value}].");
     }
 
-    public static function paymentIntentNotCharged(PaymentIntentStatus $status): self
+    /**
+     * Authorized, not charged: activation is what decides the money may be
+     * taken, so it must still be takeable. An intent charged inline at create
+     * moved the money before any of these checks ran, and the same one could
+     * then activate a second subscription with nothing left to refuse.
+     */
+    public static function paymentIntentNotAuthorized(PaymentIntentStatus $status): self
     {
-        return new self("Subscription activation requires a charged payment intent (got [{$status->value}]).");
+        return new self("Subscription activation requires an authorized payment intent (got [{$status->value}]).");
     }
 
     public static function amountMismatch(): self

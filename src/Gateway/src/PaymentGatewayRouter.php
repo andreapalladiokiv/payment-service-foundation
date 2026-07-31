@@ -26,6 +26,7 @@ use Techork\PaymentService\Gateway\Contract\ConvertedAmountProvider;
 use Techork\PaymentService\Gateway\Contract\TransactionMetadataProvider;
 use Techork\PaymentService\Gateway\Contract\VirtualCardResponseInterface;
 use Techork\PaymentService\Gateway\Contract\VirtualCardResult;
+use Techork\PaymentService\Gateway\Exception\UnsupportedByGateway;
 use Techork\PaymentService\Gateway\Logger\GatewayLoggerInterface;
 use Techork\PaymentService\Gateway\Logger\NullGatewayLogger;
 use Techork\PaymentService\Gateway\ValueObject\CardSpendCategory;
@@ -126,7 +127,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             'amount' => $amount,
             'instrument' => $instrument->toPayload(),
             'clientUniqueId' => $clientUniqueId,
-            'billingAddress' => $billingAddress->toArray(),
+            'billingAddress' => $billingAddress?->toArray(),
             'threeDS' => $threeDS,
             'statementDescription' => $statementDescription,
             'description' => $description,
@@ -415,6 +416,8 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             } else {
                 $result = VirtualCardResult::failed($response->getMessage() ?? 'Virtual card update failed.');
             }
+        } catch (UnsupportedByGateway $e) {
+            throw $e;
         } catch (Throwable $e) {
             $result = VirtualCardResult::failed($e->getMessage());
         }
@@ -482,6 +485,8 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             } else {
                 $result = VirtualCardResult::failed($response->getMessage() ?? 'Virtual card issuance failed.');
             }
+        } catch (UnsupportedByGateway $e) {
+            throw $e;
         } catch (Throwable $e) {
             $result = VirtualCardResult::failed($e->getMessage());
         }
@@ -503,7 +508,9 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
     /**
      * Builder for ops with no extra signals (capture / refund / cancel /
      * terminate). Failure can come from either an unsuccessful response or
-     * a thrown exception; both collapse to {@see GatewayResult::failed}.
+     * a thrown exception; both collapse to {@see GatewayResult::failed} —
+     * except {@see UnsupportedByGateway}, which is a wiring error rather than
+     * a payment outcome and is rethrown so it cannot be mistaken for a decline.
      *
      * @param callable(): ResponseInterface $request
      */
@@ -519,6 +526,8 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             }
 
             return GatewayResult::failed($response->getMessage() ?? 'Gateway returned an unsuccessful response.');
+        } catch (UnsupportedByGateway $e) {
+            throw $e;
         } catch (Throwable $e) {
             return GatewayResult::failed($e->getMessage());
         }
@@ -552,6 +561,8 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             }
 
             return AuthorizationResult::failed($response->getMessage() ?? 'Gateway returned an unsuccessful response.');
+        } catch (UnsupportedByGateway $e) {
+            throw $e;
         } catch (Throwable $e) {
             return AuthorizationResult::failed($e->getMessage());
         }
@@ -582,6 +593,8 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
                     ->withCustomerReference($customerReference),
                 $response,
             );
+        } catch (UnsupportedByGateway $e) {
+            throw $e;
         } catch (Throwable $e) {
             return RegistrationResult::failed($e->getMessage());
         }

@@ -26,7 +26,7 @@ ever called.
 
 | Method | Port | Guards | Success event / decline event |
 | --- | --- | --- | --- |
-| `create()` | `CreatePort` | positive amount, usable instrument | `PaymentIntentCharged` (Immediate) or `PaymentIntentAuthorized` / `PaymentIntentFailed` |
+| `create()` | `CreatePort` | positive amount, usable instrument, hosted ⇒ `Immediate` capture | `PaymentIntentCharged` (Immediate) or `PaymentIntentAuthorized` / `PaymentIntentFailed` |
 | `confirmChallenge()` | — | status `RequiresAction` | `PaymentIntentCharged` or `PaymentIntentAuthorized` / `PaymentIntentFailed` |
 | `capture()` | `CapturePort` | status `Authorized`, capture method not `Immediate` | `PaymentIntentCaptured` / `PaymentIntentFailed` |
 | `cancel()` | `CancelPort` | status `Authorized` or `RequiresAction` | `PaymentIntentCancelled` / `PaymentIntentFailed` |
@@ -37,6 +37,13 @@ ever called.
 `CaptureMethod::Immediate` charges inline at create; `Automatic` / `Manual`
 authorize first and settle via `capture()` (calling `capture()` on an
 Immediate intent throws `PaymentIntentCannotBeCaptured::immediate()`).
+
+A `HostedPayment` instrument therefore requires `Immediate`: the buyer pays on
+the gateway's own page, so we hold nothing to authorize now and capture later,
+and every gateway in the fleet implements hosted on the charge path only.
+`create()` rejects the other two capture methods with
+`InvalidPaymentIntent::hostedPaymentRequiresImmediateCapture()` rather than
+letting the port route to `authorize()` and return what looks like a decline.
 
 **Challenges (3DS / hosted redirect).** When `CreateOutcome::$challenge` is
 non-null the aggregate parks at `RequiresAction` and waits for
@@ -84,28 +91,98 @@ records from gateway exports or settlement files. The instrument is the open
 ## Checkout
 
 `CheckoutAggregate` — statuses `pending`, `charged`, `failed`, `cancelled`.
-`pay(PayCheckoutCommand)` requires a pending, unexpired checkout and a
-**Charged** `PaymentIntentAggregate` with the exact checkout amount, then
-records `CheckoutPaymentSubmitted`. A checkout created with a
+`pay(PayCheckoutCommand, Port\CheckoutCapturePort)` requires a pending,
+unexpired checkout and an **Authorized** `PaymentIntentAggregate` with the exact
+checkout amount; it then captures that intent through its own port and records
+`CheckoutPaymentSubmitted`. A checkout created with a
 `SubscriptionPlan` is a subscription checkout: `pay()` must then also receive
 the `SubscriptionAggregate` (plan and subscription both set or both null), the
 subscription must have no cancellation recorded — even a still-pending one
 blocks payment — and the payment intent must be the one
-bound to it (`lastPaymentIntentId()`). `cancel()` only from pending;
-`recordChargeFailure()` records `CheckoutFailed` with a reason.
+bound to it (`lastPaymentIntentId()`). `cancel()` only from pending.
+
+There is no failure path and no `Failed` status: a capture either moves the money
+or throws without recording anything, leaving the checkout `Pending` and payable
+again. A checkout that should not be retried is `Cancelled`.
+
+**Why authorized and not charged.** The checkout is what decides whether the
+money may be taken, so it must still be takeable when `pay()` runs. An intent
+charged inline at create (`CaptureMethod::Immediate`) has already moved the
+money before any checkout check ran, and the same intent could then be handed to
+a second checkout with nothing left to refuse. So a checkout payment is created
+with `Automatic` / `Manual` capture, and the checkout captures it after its
+checks pass. A captured intent lands in `Charged` — there is no separate
+`Captured` status.
+
+**One payment intent pays at most one checkout** falls out of that, rather than
+needing a rule of its own. Capture consumes the intent: the first checkout leaves
+it `Charged`, so a second one fails the `Authorized` check above and is refused
+before the acquirer is touched — not a rejected double charge, a double charge
+never requested. No read model, no projection, no cross-aggregate lookup: the
+shared resource enforces its own consumption.
+
+That holds **sequentially**, which is the double-submit case. It does not
+serialize two genuinely concurrent payments: each hydrates the intent and reads
+`Authorized` from its own copy, and the gateway capture happens before either
+event is appended, so the aggregate guard rejects the second set of bookkeeping
+after the money has already left twice. The domain has no way to close that —
+it belongs to the adapter, via the gateway's own idempotency key keyed on the
+intent (`"{paymentIntentId}:capture"`, the convention documented on
+`PaymentGatewayInterface`). Anything claiming the aggregate is a concurrency
+backstop is wrong.
+
+The checkout declares **its own** `Port\CheckoutCapturePort` rather than
+borrowing the payment intent's `CapturePort`, for the same reason each aggregate
+declares its own firewall port: it is typed to what this aggregate holds
+(`Port\Request\CheckoutCaptureRequest` — its own id, the intent it was handed,
+its own amount).
+
+It returns `void`, and there is no outcome to inspect, because **capture has no
+business failure mode**: the money was reserved when the intent was authorized.
+So there are two answers only — it returned and the money moved, or it threw and
+something infrastructural went wrong. On the throw `pay()` records nothing, which
+leaves the checkout Pending and makes the retry the same call again — burning the
+checkout over a lost connection would be the wrong trade, which is why the
+aggregate has no failure event to record in the first place.
+
+Two obligations sit with the implementation, and the guarantee above depends on
+the first:
+
+- **Capture through `PaymentIntentAggregate::capture()`**, not straight at the
+  gateway: its `Authorized`-only check is what stops the intent being consumed
+  twice, and a port that bypasses it satisfies the type while losing the
+  invariant.
+- **Commit the intent's `PaymentIntentCaptured` together with the checkout's
+  `CheckoutPaymentSubmitted`.** A captured intent with no paid checkout is a
+  charged customer holding an unpaid order.
 
 ## Subscription
 
 `SubscriptionAggregate` — statuses `trialing`, `active`, `cancelled`
 (`SubscriptionStatus`). `create()` records the `SubscriptionPlan` (amount,
 `BillingInterval` of N day/week/month/year, optional trial `DateInterval`) and
-a `PaymentMethodId`. `activate()` requires Trialing plus a Charged payment
-intent matching the plan amount; `renew()` starts the next `BillingPeriod`.
+a `PaymentMethodId`. `activate(ActivateSubscriptionCommand, Port\SubscriptionCapturePort)`
+requires Trialing plus an **Authorized** payment intent matching the plan amount,
+then captures it through the subscription's own port; `renew()` starts the next
+`BillingPeriod`.
 Cancellation is deferred: `cancel()` records the reason but `status()` keeps
 returning `Active` until `currentPeriodEnd()` passes — except on Trialing with
 no billing period, where it terminates immediately. `revertCancellation()`
 clears a still-pending cancellation. Renewal is refused while a cancellation is
 pending.
+
+Activation follows the checkout shape exactly — authorized intent → the checks
+this aggregate owns → capture through its own port — and gets the same property
+for the same reason: **one payment intent activates at most one subscription**,
+because capture consumes the intent and the second activation then fails the
+`Authorized` check. The same limit applies too: it holds sequentially, not for two
+concurrent activations (see `Port\SubscriptionCapturePort`).
+
+`Port\SubscriptionCapturePort` returns `void` for the same reason the checkout's
+does: capture has no business failure mode, so a failure propagates from the port
+untouched and `activate()` records nothing — the subscription stays in the status
+it already had (Trialing, or Cancelled if a cancellation had already terminated
+it) and a retry is the same call again.
 
 ## Persistence
 

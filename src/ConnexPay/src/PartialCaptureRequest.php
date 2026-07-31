@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Techork\PaymentService\ConnexPay;
 
 use GuzzleHttp\Exception\GuzzleException;
+use Techork\PaymentService\Common\ValueObject\HostedPayment;
+use Techork\PaymentService\Gateway\Exception\UnsupportedInstrument;
 
 /**
  * Captures less than the authorized amount — ConnexPay has no native
@@ -31,6 +33,22 @@ final class PartialCaptureRequest extends PurchaseRequest
         $this->validate('transactionReference');
 
         return parent::getData();
+    }
+
+    /**
+     * Refuses what the parent now builds. Inheriting `PurchaseRequest`'s hosted
+     * branch would turn a partial capture into a fresh hosted page — a redirect
+     * asking the buyer to pay again — instead of settling the existing auth.
+     *
+     * Unreachable today (a hosted intent is `Immediate` by invariant, so it is
+     * charged rather than authorized and never reaches capture), which is
+     * precisely why it is worth stating: the parent's behaviour changed under
+     * this class, and silence would let a later change to that invariant land
+     * here as a duplicate charge.
+     */
+    public function visitHostedPayment(HostedPayment $hosted): never
+    {
+        throw UnsupportedInstrument::forGateway('connexpay', 'partialCapture', $hosted);
     }
 
     public function sendData($data): PurchaseResponse

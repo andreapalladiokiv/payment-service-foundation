@@ -12,6 +12,8 @@ use Techork\PaymentService\Common\ValueObject\BillingAddress;
 use Techork\PaymentService\Common\ValueObject\Country;
 use Techork\PaymentService\Common\ValueObject\CreditCard\CheckResult;
 use Techork\PaymentService\Common\ValueObject\Email;
+use Techork\PaymentService\Common\ValueObject\HostedPayment;
+use Techork\PaymentService\Gateway\Exception\UnsupportedInstrument;
 use Techork\PaymentService\Gateway\Contract\CardChecksProvider;
 use Techork\PaymentService\Gateway\Contract\ConvertedAmountProvider;
 use Techork\PaymentService\Gateway\Contract\Gateway as GatewayContract;
@@ -429,4 +431,79 @@ it('returns failed VirtualCardResult when omnipay throws', function () {
 
     expect($result->success)->toBeFalse()
         ->and($result->message)->toBe('upstream timeout');
+});
+
+// ──────────────────────────────────────────────
+//  invariant violations are not payment outcomes
+// ──────────────────────────────────────────────
+
+function makeHostedInstrument(): HostedPayment
+{
+    return new HostedPayment('https://shop.test/paid', 'https://shop.test/cancelled');
+}
+
+function makeOmnipayRefusing(string $method, string $operation): GatewayContract
+{
+    $request = Mockery::mock(RequestInterface::class);
+    $request->shouldReceive('send')->andThrow(
+        UnsupportedInstrument::forGateway('test', $operation, makeHostedInstrument()),
+    );
+
+    $omnipay = Mockery::mock(GatewayContract::class);
+    $omnipay->shouldReceive($method)->andReturn($request);
+
+    return $omnipay;
+}
+
+it('rethrows an unsupported-instrument refusal from charge rather than reporting a decline', function () {
+    $router = makeRouter(omnipay: makeOmnipayRefusing('purchase', 'purchase'));
+
+    $router->charge(
+        GatewayId::generate(),
+        makeHostedInstrument(),
+        new Money(1000, new Currency('USD')),
+    );
+})->throws(UnsupportedInstrument::class, 'does not accept a "hosted" instrument on the "purchase" operation');
+
+it('rethrows an unsupported-instrument refusal from authorize', function () {
+    $router = makeRouter(omnipay: makeOmnipayRefusing('authorize', 'authorize'));
+
+    $router->authorize(
+        GatewayId::generate(),
+        makeHostedInstrument(),
+        new Money(1000, new Currency('USD')),
+    );
+})->throws(UnsupportedInstrument::class, 'on the "authorize" operation');
+
+it('rethrows an unsupported-instrument refusal from tokenize', function () {
+    $router = makeRouter(omnipay: makeOmnipayRefusing('createCard', 'createCard'));
+
+    $router->tokenize(GatewayId::generate(), makeHostedInstrument());
+})->throws(UnsupportedInstrument::class, 'on the "createCard" operation');
+
+it('rethrows an unsupported-instrument refusal from a plain outcome op', function () {
+    $piId = 'pi-' . uniqid();
+    $txRepo = Mockery::mock(GatewayTransactionRepository::class);
+    $txRepo->shouldReceive('findForPaymentIntent')->with($piId)->andReturn('auth_ref');
+
+    $router = makeRouter(omnipay: makeOmnipayRefusing('refund', 'retryRefund'), transactionRepo: $txRepo);
+
+    $router->refund(GatewayId::generate(), $piId, new Money(1000, new Currency('USD')));
+})->throws(UnsupportedInstrument::class, 'on the "retryRefund" operation');
+
+it('still folds an ordinary gateway exception into a failed result', function () {
+    $request = Mockery::mock(RequestInterface::class);
+    $request->shouldReceive('send')->andThrow(new RuntimeException('Connection timeout'));
+
+    $omnipay = Mockery::mock(GatewayContract::class);
+    $omnipay->shouldReceive('purchase')->andReturn($request);
+
+    $result = makeRouter(omnipay: $omnipay)->charge(
+        GatewayId::generate(),
+        makeHostedInstrument(),
+        new Money(1000, new Currency('USD')),
+    );
+
+    expect($result->success)->toBeFalse()
+        ->and($result->message)->toBe('Connection timeout');
 });

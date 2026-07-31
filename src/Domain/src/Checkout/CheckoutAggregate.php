@@ -6,14 +6,14 @@ namespace Techork\PaymentService\Domain\Checkout;
 
 use Techork\PaymentService\Domain\Checkout\Command\CreateCheckoutCommand;
 use Techork\PaymentService\Domain\Checkout\Command\PayCheckoutCommand;
-use Techork\PaymentService\Domain\Checkout\Command\RecordCheckoutChargeFailureCommand;
 use Techork\PaymentService\Domain\Checkout\Event\CheckoutCancelled;
 use Techork\PaymentService\Domain\Checkout\Event\CheckoutCreated;
-use Techork\PaymentService\Domain\Checkout\Event\CheckoutFailed;
 use Techork\PaymentService\Domain\Checkout\Event\CheckoutPaymentSubmitted;
 use Techork\PaymentService\Domain\Checkout\Exception\CheckoutCannotBeCancelled;
 use Techork\PaymentService\Domain\Checkout\Exception\CheckoutNotPayable;
 use Techork\PaymentService\Domain\Checkout\Exception\InvalidCheckoutPlan;
+use Techork\PaymentService\Domain\Checkout\Port\CheckoutCapturePort;
+use Techork\PaymentService\Domain\Checkout\Port\Request\CheckoutCaptureRequest;
 use Techork\PaymentService\Domain\Checkout\ValueObject\CheckoutId;
 use Techork\PaymentService\Domain\PaymentIntent\PaymentIntentStatus;
 use Techork\PaymentService\Domain\Subscription\SubscriptionStatus;
@@ -75,7 +75,29 @@ final class CheckoutAggregate implements AggregateRootWithSnapshotting
         return $self;
     }
 
-    public function pay(PayCheckoutCommand $command): void
+    /**
+     * Takes an **authorized** payment intent, runs every check the checkout is
+     * responsible for, and only then moves the money by capturing it.
+     *
+     * That ordering is what makes "one payment intent pays at most one checkout"
+     * true without any cross-checkout bookkeeping: capture is the step that
+     * consumes the intent, so the first checkout leaves it `Charged` and a second
+     * one fails the `Authorized` check below. Nothing here has to know that other
+     * checkouts exist.
+     *
+     * SEQUENTIALLY. Two concurrent payments both read `Authorized` from their own
+     * hydration of the intent, and the gateway capture happens before either
+     * event is appended, so both can take the money — the aggregate guard
+     * serializes the bookkeeping, not the charge. The domain cannot close that;
+     * see {@see CheckoutCapturePort} for where it has to be closed.
+     *
+     * @param  CheckoutCapturePort  $capturePort  The checkout's own port, reached
+     *   only after every check passes — a checkout that refuses locally never
+     *   touches the acquirer. It is also where the two writes this payment
+     *   implies (the intent's capture, this checkout's event) are made to commit
+     *   together; see the port's contract.
+     */
+    public function pay(PayCheckoutCommand $command, CheckoutCapturePort $capturePort): void
     {
         $this->status === CheckoutStatus::Pending || throw CheckoutNotPayable::withStatus($this->status);
         $this->expiresAt === null || $this->expiresAt >= new DateTimeImmutable || throw CheckoutNotPayable::expired();
@@ -93,18 +115,28 @@ final class CheckoutAggregate implements AggregateRootWithSnapshotting
             || $subscription->lastPaymentIntentId()?->equals($paymentIntent->aggregateRootId())
             || throw CheckoutNotPayable::paymentIntentSubscriptionMismatch();
 
-        $paymentIntent->status() === PaymentIntentStatus::Charged || throw CheckoutNotPayable::paymentIntentNotAuthorized($paymentIntent->status());
+        // Authorized, not Charged: the checkout is what decides whether the
+        // money may be taken, so it must still be takeable when we get here. An
+        // intent charged inline at create has already moved the money before any
+        // of these checks ran, and a second checkout could be handed the same
+        // one with nothing left to refuse.
+        $paymentIntent->status() === PaymentIntentStatus::Authorized || throw CheckoutNotPayable::paymentIntentNotAuthorized($paymentIntent->status());
         $paymentIntent->amount()->equals($this->amount) || throw CheckoutNotPayable::amountMismatch();
+
+        // Returns or throws, nothing in between: capture has no business failure
+        // mode, so there is no declined branch to record. A failure propagates and
+        // nothing is recorded, which leaves the checkout Pending and a retry as
+        // simply the same call again.
+        $capturePort->capture(new CheckoutCaptureRequest(
+            checkoutId: $this->aggregateRootId(),
+            paymentIntentId: $paymentIntent->aggregateRootId(),
+            amount: $this->amount,
+        ));
 
         $this->recordThat(new CheckoutPaymentSubmitted(
             paymentIntentId: $paymentIntent->aggregateRootId(),
             subscriptionId: $subscription?->aggregateRootId(),
         ));
-    }
-
-    public function recordChargeFailure(RecordCheckoutChargeFailureCommand $command): void
-    {
-        $this->recordThat(new CheckoutFailed($command->reason()));
     }
 
     public function cancel(): void
@@ -156,11 +188,6 @@ final class CheckoutAggregate implements AggregateRootWithSnapshotting
     protected function applyCheckoutPaymentSubmitted(CheckoutPaymentSubmitted $event): void
     {
         $this->status = CheckoutStatus::Charged;
-    }
-
-    protected function applyCheckoutFailed(CheckoutFailed $event): void
-    {
-        $this->status = CheckoutStatus::Failed;
     }
 
     protected function applyCheckoutCancelled(CheckoutCancelled $event): void

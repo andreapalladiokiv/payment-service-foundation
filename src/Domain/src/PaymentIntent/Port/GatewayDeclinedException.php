@@ -11,6 +11,13 @@ namespace Techork\PaymentService\Domain\PaymentIntent\Port;
  *
  * The aggregate catches this to record a {@see \Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentFailed}
  * event; everything outside the aggregate may let it propagate.
+ *
+ * Capture is the exception: {@see \Techork\PaymentService\Domain\PaymentIntent\PaymentIntentAggregate::capture}
+ * does NOT catch it. Capturing an existing authorization has no business failure
+ * mode — the money was reserved at authorization — so a refusal there is
+ * infrastructural, the caller retries, and burying the intent in `Failed` would
+ * assert something the aggregate cannot take back while the funds may still be
+ * held.
  */
 final class GatewayDeclinedException extends \DomainException
 {

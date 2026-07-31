@@ -9,6 +9,7 @@ use DateTimeImmutable;
 use Money\Currency;
 use Money\Money;
 use Techork\PaymentService\ConnexPay\Webhook\ServiceFeeFetcher;
+use Techork\PaymentService\ConnexPay\Webhook\SaleCorrelation;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 use Techork\PaymentService\Gateway\Webhook\Contract\HandlerOutcome;
 use Techork\PaymentService\Gateway\Webhook\Contract\TransactionIdResolver;
@@ -50,10 +51,11 @@ final readonly class SaleApprovedHandler implements WebhookEventHandler
             return HandlerOutcome::Skipped;
         }
 
-        $paymentIntentId = $this->resolver->resolvePaymentIntent($gatewayId, $saleGuid);
-        if ($paymentIntentId === null) {
+        $correlation = SaleCorrelation::resolve($this->resolver, $gatewayId, $saleGuid, $payload);
+        if (! $correlation->found()) {
             return HandlerOutcome::Delay;
         }
+        $paymentIntentId = $correlation->paymentIntentId;
 
         $fee = $this->feeFetcher->fetchSaleFee($gatewayId, $saleGuid);
         if ($fee === null) {

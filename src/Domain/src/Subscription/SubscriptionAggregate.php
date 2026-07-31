@@ -29,6 +29,8 @@ use Techork\PaymentService\Domain\Subscription\Event\SubscriptionRenewed;
 use Techork\PaymentService\Domain\Subscription\Exception\SubscriptionNotActivatable;
 use Techork\PaymentService\Domain\Subscription\Exception\SubscriptionNotCancellable;
 use Techork\PaymentService\Domain\Subscription\Exception\SubscriptionNotRenewable;
+use Techork\PaymentService\Domain\Subscription\Port\Request\SubscriptionCaptureRequest;
+use Techork\PaymentService\Domain\Subscription\Port\SubscriptionCapturePort;
 use Techork\PaymentService\Domain\Subscription\ValueObject\BillingInterval;
 use Techork\PaymentService\Domain\Subscription\ValueObject\BillingPeriod;
 use Techork\PaymentService\Domain\Subscription\ValueObject\SubscriptionId;
@@ -137,16 +139,44 @@ final class SubscriptionAggregate implements AggregateRootWithSnapshotting
         return $self;
     }
 
-    public function activate(ActivateSubscriptionCommand $command): void
+    /**
+     * Takes an **authorized** payment intent, runs the checks activation is
+     * responsible for, and only then moves the money by capturing it.
+     *
+     * Same shape as {@see \Techork\PaymentService\Domain\Checkout\CheckoutAggregate::pay},
+     * and for the same reason: capture is the step that happens once, so "one
+     * payment intent activates at most one subscription" follows from it instead
+     * of needing a rule of its own. The first activation leaves the intent
+     * `Charged`, so a second one on the same intent fails the `Authorized` check
+     * above — before the acquirer is touched.
+     *
+     * Sequential only. Two concurrent activations both read `Authorized` from
+     * their own hydration and can both capture; see {@see SubscriptionCapturePort}
+     * for why the domain cannot close that and where it has to be closed.
+     *
+     * @param  SubscriptionCapturePort  $capturePort  The subscription's own port,
+     *   reached only once every check has passed.
+     */
+    public function activate(ActivateSubscriptionCommand $command, SubscriptionCapturePort $capturePort): void
     {
         $this->status() === SubscriptionStatus::Trialing
             || throw SubscriptionNotActivatable::withStatus($this->status());
 
         $paymentIntent = $command->paymentIntent();
-        $paymentIntent->status() === PaymentIntentStatus::Charged
-            || throw SubscriptionNotActivatable::paymentIntentNotCharged($paymentIntent->status());
+        $paymentIntent->status() === PaymentIntentStatus::Authorized
+            || throw SubscriptionNotActivatable::paymentIntentNotAuthorized($paymentIntent->status());
         $paymentIntent->amount()->equals($this->amount)
             || throw SubscriptionNotActivatable::amountMismatch();
+
+        // Returns or throws, nothing in between: capture has no business failure
+        // mode, so there is no declined branch to record. A failure propagates and
+        // nothing is recorded, so the subscription stays in the status it already
+        // had and a retry is simply the same call again.
+        $capturePort->capture(new SubscriptionCaptureRequest(
+            subscriptionId: $this->aggregateRootId(),
+            paymentIntentId: $paymentIntent->aggregateRootId(),
+            amount: $this->amount,
+        ));
 
         $periodStart = $command->periodStart();
 

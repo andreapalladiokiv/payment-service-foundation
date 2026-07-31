@@ -26,6 +26,7 @@ the lifetime of the client instance.
 | `merchantGuid` | Required for virtual card issuance and Search/Sales lookups |
 | `environment` | `sandbox` (default) or `production` — switches both base URLs |
 | `accountCurrency` | Currency the merchant account is provisioned in (ConnexPay's "Accounting Currency"). Empty means `USD`. Only `USD`, `CAD`, `GBP`, `EUR` are accepted — see below |
+| `merchantName` | Storefront name shown to the buyer on the hosted payment page. Required by the hosted flow and unused elsewhere, so it may stay empty on a merchant that never takes hosted payments. Not the card-statement descriptor — that arrives per transaction as `statementDescription` |
 
 ### Why `accountCurrency` exists
 
@@ -56,6 +57,7 @@ issuing-only currency would reinstate exactly the mis-billing the guard prevents
 | `createCard()` | `CreateCardRequest` | `POST /api/v1/verify` | $0 verification; card GUID becomes the transaction reference |
 | `createPaymentMethod()` | `CreatePaymentMethodRequest` | `POST /api/v1/verify` | Re-verifies a stored card GUID together with `Card.Customer` so ConnexPay creates/links the customer and returns fresh AVS/CVV codes |
 | `purchase()` | `PurchaseRequest` | `POST /api/v1/sales` | `TenderType` `Credit` or `Cash` (`ExpectedPayments` 1 vs 5) |
+| `purchase()` (hosted) | `PurchaseRequest` | `POST /api/v1/HostedPaymentPageRequests` | A `HostedPayment` instrument switches to the hosted page and returns a `RedirectChallenge` — see below |
 | `authorize()` | `AuthorizeRequest` | `POST /api/v1/authonlys` | `/authonlys` rejects cash — a `Cash` instrument is transparently routed to `purchase()` |
 | `capture()` | `CaptureRequest` | `POST /api/v1/Captures` | Full amount only; the nested `sale` envelope is unwrapped because the **sale** GUID (not the capture GUID) is what later Returns/Void expect |
 | `capture()` (partial) | `PartialCaptureRequest` | void + `POST /api/v1/sales` | See below |
@@ -70,6 +72,49 @@ Transport failures on the API call never throw from `sendData()` — every
 request maps `GuzzleException` into a failed response carrying the message.
 The lazy token grant is the exception: an authentication failure surfaces
 as a `RuntimeException` from the client.
+
+### Hosted payment page
+
+`purchase()` with a
+`Techork\PaymentService\Common\ValueObject\HostedPayment` instrument asks
+ConnexPay for a hosted-page token instead of charging card data, and returns a
+`RedirectChallenge` pointing at ConnexPay's own page. The buyer pays there; the
+outcome arrives on the ordinary `sale.card.auth.*` webhook.
+
+The request shape is **not** what the public reference implies, and was
+established by probing the sandbox (pinned by a case in
+`tests/Integration/ConnexPaySandboxTest.php`, and reproducible from the unit
+test if ConnexPay ever changes it):
+
+- `Sale.Amount` and `Sale.DeviceGuid` are the fields that get read. Putting the
+  amount inside `ConnexpayTransaction` instead makes the API see 0 and reject it
+  against a 0.5 minimum; omitting the device guid there makes it substitute a
+  different device and fail the lookup.
+- `Sale.RiskData` is mandatory for `Credit` / `GooglePay` / `ApplePay`, so the
+  hosted flow requires a billing address and refuses without one.
+- `Sale.ConnexpayTransaction` is required but only as a presence check — an
+  empty object is accepted. Note the lower-case `p`, unlike
+  `ConnexPayTransaction` on `/api/v1/sales`.
+- `CancelUrl` exists and is honoured, so both URLs on the instrument map
+  directly. `Expiration` is honoured as sent and defaults to the end of the
+  following day, so the request sets 4 h explicitly.
+- `TenderTypeOptions` defaults to `['Credit']`, which is what we send. `ACH`
+  would additionally need `IncludeRiskAnalysis` and a `Customer` block.
+
+**The response carries no sale guid** — only a temp token, because the sale does
+not exist until somebody pays, and there is no endpoint to read the request back
+(`GET` by token and by id both 404). So the gateway reference recorded at
+redirect time is our own `OrderNumber` (the payment intent id), and the page URL
+is derived from the `otherUrl` host in the response rather than hardcoded —
+only the sandbox host is documented anywhere.
+
+Correlation on the way back therefore cannot be by guid: the webhook is the
+first time we see it. `Webhook\SaleCorrelation` tries the stored guid first and
+falls back to the `orderNumber` on the sale message, which ConnexPay documents
+as the "client provided transaction identifier" and which
+`withOrderNumber()` filled with the intent id. A `orderNumber` that is not
+shaped like one of our aggregate ids resolves to nothing — it is webhook input,
+not a trusted key.
 
 ### Partial capture
 

@@ -17,6 +17,7 @@ use Techork\PaymentService\Common\ValueObject\CreditCard;
 use Techork\PaymentService\Common\ValueObject\HostedPayment;
 use Techork\PaymentService\Common\ValueObject\PaymentMethod;
 use Techork\PaymentService\Common\ValueObject\Token;
+use Techork\PaymentService\Gateway\Exception\UnsupportedInstrument;
 
 /**
  * Registers a payment instrument as a reusable ConnexPay payment method via
@@ -138,6 +139,6 @@ final class CreatePaymentMethodRequest extends AbstractRequest implements Paymen
 
     public function visitHostedPayment(HostedPayment $hosted): never
     {
-        throw new \RuntimeException('Gateway does not support hosted-payment instruments.');
+        throw UnsupportedInstrument::forGateway('connexpay', 'createPaymentMethod', $hosted);
     }
 }

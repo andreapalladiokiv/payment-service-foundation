@@ -45,6 +45,24 @@ Behaviors worth knowing:
 - `capture` / `refund` / `issueVirtualCard` throw `RuntimeException` when no
   transaction reference is stored for the payment intent; `cancel` returns a
   failed result instead.
+- **Invariant violations are not payment outcomes** — the router folds any
+  thrown exception into a failed result, which downstream becomes
+  `GatewayDeclinedException` and a recorded `PaymentIntentFailed`, i.e. it
+  enters the event stream as an acquirer decline. Anything implementing
+  `Exception\UnsupportedByGateway` is exempt: it is rethrown from all five
+  builders. Use it when the gateway structurally cannot do what was asked, so
+  a wiring mistake never masquerades as a decline.
+  - `Exception\UnsupportedInstrument` — instrument the gateway has no product
+    for on that operation (a `HostedPayment` to an acquirer with no hosted
+    page, raw card data to a hosted-only gateway). Thrown from the `visit*()`
+    branch that would otherwise have to invent a payload.
+  - `Exception\UnsupportedOperation` — operation the gateway does not have at
+    all, whatever the instrument.
+  - Not everything unsupported is an invariant: the per-package
+    `UnsupportedPaynetOperation` and Revolut's `UnsupportedOperationException`
+    stay unmarked on purpose, because the refund-retry path above *depends* on
+    an unsupported operation degrading into a failed `GatewayResult` mid-saga
+    rather than throwing.
 
 ### Results and response capabilities
 

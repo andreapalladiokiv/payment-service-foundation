@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Techork\PaymentService\ConnexPay\Webhook\Handler;
 
 use ArrayObject;
+use Techork\PaymentService\ConnexPay\Webhook\SaleCorrelation;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 use Techork\PaymentService\Gateway\Webhook\Contract\HandlerOutcome;
 use Techork\PaymentService\Gateway\Webhook\Contract\TransactionIdResolver;
@@ -36,10 +37,11 @@ final readonly class SaleDeclinedHandler implements WebhookEventHandler
             return HandlerOutcome::Skipped;
         }
 
-        $paymentIntentId = $this->resolver->resolvePaymentIntent($gatewayId, $saleGuid);
-        if ($paymentIntentId === null) {
+        $correlation = SaleCorrelation::resolve($this->resolver, $gatewayId, $saleGuid, $payload);
+        if (! $correlation->found()) {
             return HandlerOutcome::Delay;
         }
+        $paymentIntentId = $correlation->paymentIntentId;
 
         $reason = (string) ($payload['processorMessage'] ?? $payload['processorResponseMessage'] ?? 'Sale declined at gateway');
 

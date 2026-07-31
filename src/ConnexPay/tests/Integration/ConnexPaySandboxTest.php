@@ -28,6 +28,8 @@ use Techork\PaymentService\ConnexPay\VoidRequest;
 use Techork\PaymentService\Common\ValueObject\ExpiresAt;
 use Techork\PaymentService\Common\ValueObject\Token;
 use Techork\PaymentService\Common\ValueObject\TokenId;
+use Techork\PaymentService\Common\ValueObject\Challenge\RedirectChallenge;
+use Techork\PaymentService\Common\ValueObject\HostedPayment;
 use Techork\PaymentService\Gateway\Contract\GatewayCredential;
 use Techork\PaymentService\Gateway\Contract\GatewayInstrumentRepository;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
@@ -329,4 +331,45 @@ it('voids a held auth', function () {
     $response = $request->send();
 
     expect($response->isSuccessful())->toBeTrue($response->getMessage() ?? 'void failed');
+})->skip(! connexpaySandboxConfigured(), CONNEXPAY_SANDBOX_SKIP);
+
+/**
+ * Pins the hosted-payment-page payload against the live API. Worth having as an
+ * integration test rather than only a unit one: the field placement this
+ * exercises is not documented anywhere — `Amount` and `DeviceGuid` are read off
+ * `Sale` and ignored inside `ConnexpayTransaction`, `RiskData` is mandatory for
+ * card tenders, and `ConnexpayTransaction` is required but unread. All of it was
+ * established by probing, so only a live call notices if ConnexPay changes it.
+ *
+ * Stops at the token: completing the payment needs a human on ConnexPay's page,
+ * so whether `OrderNumber` reaches the sale webhook stays unverified here.
+ */
+it('creates a hosted payment page and returns a redirect challenge', function () {
+    $paymentIntentId = '01991234-0000-7000-8000-'.substr(bin2hex(random_bytes(6)), 0, 12);
+
+    $request = new PurchaseRequest(new OmnipayClient, new HttpRequest);
+    $request->initialize([
+        'money' => new Money(1099, new Currency('USD')),
+        'instrument' => new HostedPayment(
+            successUrl: 'https://foundation-tests.example/paid',
+            cancelUrl: 'https://foundation-tests.example/cancelled',
+        ),
+        'gateway' => connexpaySandboxCredential(),
+        'billingAddress' => connexpaySandboxBilling(),
+        'merchantName' => 'Foundation Tests',
+        'clientUniqueId' => $paymentIntentId,
+        'deviceGuid' => connexpaySandboxDeviceGuid(),
+        'connexPayClient' => connexpaySandboxClient(),
+    ]);
+
+    $response = $request->send();
+    $challenge = $response->getChallenge();
+
+    expect($challenge)->toBeInstanceOf(RedirectChallenge::class, $response->getMessage() ?? 'hosted page request failed')
+        ->and($challenge->url)->toContain('/HostedPaymentPage/')
+        // The reference the sale webhook will have to correlate on, since the
+        // response carries no sale guid.
+        ->and($challenge->transactionId)->toBe($paymentIntentId)
+        ->and($response->getTransactionReference())->toBe($paymentIntentId)
+        ->and($response->isSuccessful())->toBeFalse();
 })->skip(! connexpaySandboxConfigured(), CONNEXPAY_SANDBOX_SKIP);

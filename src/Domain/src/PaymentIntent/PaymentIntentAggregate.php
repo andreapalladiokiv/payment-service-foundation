@@ -16,6 +16,7 @@ use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
 use Techork\PaymentService\Common\ValueObject\Challenge\ThreeDSChallenge;
 use Techork\PaymentService\Common\ValueObject\CreditCard\CardSummaryExtractor;
+use Techork\PaymentService\Common\ValueObject\HostedPayment;
 use Techork\PaymentService\Common\ValueObject\MerchantDescriptor;
 use Techork\PaymentService\Common\ValueObject\PaymentInstrumentFactory;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSResult;
@@ -203,6 +204,15 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         $command->amount()->isPositive() || throw InvalidPaymentIntent::nonPositiveAmount();
         $command->instrument()->isValid() || throw InvalidPaymentIntent::unusablePaymentSource();
 
+        // A hosted payment is a redirect to the gateway's own page, so there is
+        // no instrument on our side to authorize now and capture later. Left
+        // unchecked this reaches the port, which routes every non-Immediate
+        // capture method to `authorize()` — a path no gateway implements for
+        // hosted — and the refusal comes back looking like an acquirer decline.
+        if ($command->instrument() instanceof HostedPayment && $command->captureMethod() !== CaptureMethod::Immediate) {
+            throw InvalidPaymentIntent::hostedPaymentRequiresImmediateCapture($command->captureMethod()->value);
+        }
+
         $self = new self($command->paymentIntentId());
 
         // Inspect before spending a gateway call: a rejected payment never
@@ -328,16 +338,16 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         $this->status === PaymentIntentStatus::Authorized || throw PaymentIntentCannotBeCaptured::withStatus($this->status);
         $this->captureMethod !== CaptureMethod::Immediate || throw PaymentIntentCannotBeCaptured::immediate();
 
-        try {
-            $outcome = $port->capture(new CaptureRequest(
-                paymentIntentId: $this->aggregateRootId(),
-                amount: $command->amount(),
-            ));
-        } catch (GatewayDeclinedException $e) {
-            $this->recordThat($this->failedFromState($e->reason));
-
-            return;
-        }
+        // No catch, unlike create / confirmChallenge / cancel. Capturing an
+        // authorization has no business failure mode — the money was reserved
+        // when it was authorized — so a failure here is infrastructural and the
+        // answer is to retry, not to bury the intent in `Failed`. Recording a
+        // failure would also be a lie the aggregate cannot take back: the funds
+        // may well still be held.
+        $outcome = $port->capture(new CaptureRequest(
+            paymentIntentId: $this->aggregateRootId(),
+            amount: $command->amount(),
+        ));
 
         $this->recordThat(new PaymentIntentCaptured($command->amount(), $outcome->convertedAmount));
     }

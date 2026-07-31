@@ -46,6 +46,21 @@ trait ConnexPayRequestParameters
         return $this->setParameter('deviceGuid', $value);
     }
 
+    /**
+     * Storefront name for the hosted payment page, inherited from the gateway's
+     * `merchant_name` credential through createRequest's parameter merge. Only
+     * the hosted path reads it.
+     */
+    public function getMerchantName(): string
+    {
+        return (string) ($this->getParameter('merchantName') ?? '');
+    }
+
+    public function setMerchantName(string $value): self
+    {
+        return $this->setParameter('merchantName', $value);
+    }
+
     public function setMoney(Money $value): self
     {
         return $this->setParameter('money', $value);

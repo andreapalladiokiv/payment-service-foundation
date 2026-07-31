@@ -38,7 +38,28 @@ final class ConnexPayGateway extends AbstractGateway implements Gateway
             'merchantGuid' => '',
             'environment' => 'sandbox',
             'accountCurrency' => '',
+            'merchantName' => '',
         ];
+    }
+
+    /**
+     * Display name shown to the buyer on ConnexPay's hosted payment page, from
+     * the `merchant_name` credential. Required by
+     * `POST /api/v1/HostedPaymentPageRequests` and used nowhere else, so it may
+     * stay empty on a merchant that never takes hosted payments — the hosted
+     * path itself refuses loudly rather than sending a blank name.
+     *
+     * This is a storefront name, not the card-statement descriptor: statement
+     * text arrives per-transaction as `statementDescription`.
+     */
+    public function getMerchantName(): string
+    {
+        return $this->getParameter('merchantName') ?? '';
+    }
+
+    public function setMerchantName(string $value): static
+    {
+        return $this->setParameter('merchantName', $value);
     }
 
     public function getUsername(): string

@@ -7,6 +7,7 @@ namespace Techork\PaymentService\ConnexPay;
 use Techork\PaymentService\Gateway\Concern\InstrumentParameters;
 use Techork\PaymentService\ConnexPay\Concern\ConnexPayRequestParameters;
 use Techork\PaymentService\Gateway\Contract\GatewayCredential;
+use Techork\PaymentService\Gateway\Exception\UnsupportedInstrument;
 use GuzzleHttp\Exception\GuzzleException;
 use Money\Money;
 use Omnipay\Common\Message\AbstractRequest;
@@ -130,6 +131,6 @@ final class AuthorizeRequest extends AbstractRequest implements PaymentInstrumen
 
     public function visitHostedPayment(HostedPayment $hosted): never
     {
-        throw new \RuntimeException('Gateway does not support hosted-payment instruments.');
+        throw UnsupportedInstrument::forGateway('connexpay', 'authorize', $hosted);
     }
 }

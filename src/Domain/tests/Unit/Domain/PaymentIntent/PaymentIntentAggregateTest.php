@@ -113,6 +113,11 @@ function makeInstrument(): PaymentInstrument
     );
 }
 
+function makeHostedPaymentForPI(): HostedPayment
+{
+    return new HostedPayment('https://shop.test/paid', 'https://shop.test/cancelled');
+}
+
 function makeUnusableInstrument(): PaymentInstrument
 {
     static $instance = null;
@@ -771,6 +776,43 @@ it('throws InvalidPaymentIntent for unusable instrument', function () {
     );
 })->throws(InvalidPaymentIntent::class, 'Payment source is not usable');
 
+it('throws InvalidPaymentIntent for a hosted payment with a deferred capture method', function (CaptureMethod $captureMethod) {
+    $id = $this->aggregateRootId();
+
+    PaymentIntentAggregate::create(
+        makeCreatePiCommand($id, $captureMethod, instrument: makeHostedPaymentForPI()),
+        makePaySuccessPort(),
+        StubPaymentIntentFirewall::allowing(),
+    );
+})->with([
+    CaptureMethod::Automatic,
+    CaptureMethod::Manual,
+])->throws(InvalidPaymentIntent::class, 'only immediate capture is possible');
+
+it('accepts a hosted payment with immediate capture', function () {
+    /** @var PaymentIntentId $id */
+    $id = $this->aggregateRootId();
+
+    $aggregate = PaymentIntentAggregate::create(
+        makeCreatePiCommand($id, CaptureMethod::Immediate, instrument: makeHostedPaymentForPI()),
+        makePaySuccessPort(),
+        StubPaymentIntentFirewall::allowing(),
+    );
+    $this->persistAggregateRoot($aggregate);
+
+    expect($aggregate->status())->toBe(PaymentIntentStatus::Charged);
+
+    then(new PaymentIntentCharged(
+        makeAmount(),
+        makeHostedPaymentForPI(),
+        CaptureMethod::Immediate,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+    ));
+});
+
 // ──────────────────────────────────────────────
 //  confirmChallenge — success branches
 // ──────────────────────────────────────────────
@@ -1091,7 +1133,14 @@ it('records PaymentIntentCaptured with partial amount', function () {
     then(new PaymentIntentCaptured($partial));
 });
 
-it('records PaymentIntentFailed on capture + GatewayDeclined', function () {
+/**
+ * The inverse of what this asserted before. Unlike create / confirmChallenge /
+ * cancel, capture does not convert a refusal into `PaymentIntentFailed`:
+ * capturing an existing authorization has no business failure mode, so a refusal
+ * is infrastructural, the caller retries, and recording a failure would assert
+ * something untrue while the funds may still be held.
+ */
+it('lets a refused capture propagate instead of recording PaymentIntentFailed', function () {
     /** @var PaymentIntentId $id */
     $id = $this->aggregateRootId();
 
@@ -1107,9 +1156,13 @@ it('records PaymentIntentFailed on capture + GatewayDeclined', function () {
 
     $aggregate = $this->retrieveAggregateRoot($id);
     $aggregate->capture(makeCapturePiCommand($id), makeCaptureDeclinedPort('issuer_unavailable'));
-    $this->persistAggregateRoot($aggregate);
+})->throws(GatewayDeclinedException::class, 'issuer_unavailable');
 
-    then(new PaymentIntentFailed(
+it('records nothing and stays authorized when a capture is refused', function () {
+    /** @var PaymentIntentId $id */
+    $id = $this->aggregateRootId();
+
+    given(new PaymentIntentAuthorized(
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Manual,
@@ -1117,8 +1170,21 @@ it('records PaymentIntentFailed on capture + GatewayDeclined', function () {
         [],
         makeMerchantDescriptor(),
         '',
-        'issuer_unavailable',
     ));
+
+    $aggregate = $this->retrieveAggregateRoot($id);
+
+    try {
+        $aggregate->capture(makeCapturePiCommand($id), makeCaptureDeclinedPort('issuer_unavailable'));
+    } catch (GatewayDeclinedException) {
+        // asserted by the sibling test; the point here is that a retry is possible
+    }
+
+    expect($aggregate->status())->toBe(PaymentIntentStatus::Authorized);
+
+    $this->persistAggregateRoot($aggregate);
+
+    then();
 });
 
 it('throws PaymentIntentCannotBeCaptured on capture from Charged', function () {

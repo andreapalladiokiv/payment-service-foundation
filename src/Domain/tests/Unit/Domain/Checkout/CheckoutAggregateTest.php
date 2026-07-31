@@ -8,13 +8,13 @@ use Techork\PaymentService\Tests\Support\StubPaymentIntentFirewall;
 use Techork\PaymentService\Domain\Checkout\CheckoutAggregate;
 use Techork\PaymentService\Domain\Checkout\Command\CreateCheckoutCommand;
 use Techork\PaymentService\Domain\Checkout\Command\PayCheckoutCommand;
-use Techork\PaymentService\Domain\Checkout\Command\RecordCheckoutChargeFailureCommand;
 use Techork\PaymentService\Domain\Checkout\Event\CheckoutCancelled;
 use Techork\PaymentService\Domain\Checkout\Event\CheckoutCreated;
-use Techork\PaymentService\Domain\Checkout\Event\CheckoutFailed;
 use Techork\PaymentService\Domain\Checkout\Event\CheckoutPaymentSubmitted;
 use Techork\PaymentService\Domain\Checkout\Exception\CheckoutCannotBeCancelled;
 use Techork\PaymentService\Domain\Checkout\Exception\CheckoutNotPayable;
+use Techork\PaymentService\Domain\Checkout\Port\CheckoutCapturePort;
+use Techork\PaymentService\Domain\Checkout\Port\Request\CheckoutCaptureRequest;
 use Techork\PaymentService\Domain\Checkout\Exception\InvalidCheckoutPlan;
 use Techork\PaymentService\Domain\Checkout\ValueObject\CheckoutId;
 use Techork\PaymentService\Domain\Subscription\Command\CreateSubscriptionCommand;
@@ -28,10 +28,15 @@ use Techork\PaymentService\Domain\PaymentIntent\CaptureMethod;
 use Techork\PaymentService\Domain\PaymentIntent\PaymentInitiation;
 use Techork\PaymentService\Domain\PaymentIntent\Command\CapturePaymentIntentCommand;
 use Techork\PaymentService\Domain\PaymentIntent\Command\CreatePaymentIntentCommand;
+use Techork\PaymentService\Domain\PaymentIntent\Exception\PaymentIntentCannotBeCaptured;
+use Techork\PaymentService\Domain\PaymentIntent\PaymentIntentStatus;
 use Techork\PaymentService\Domain\PaymentIntent\PaymentIntentAggregate;
 use Techork\PaymentService\Common\Contract\Challenge;
 use Techork\PaymentService\Domain\PaymentIntent\Port\CreateOutcome;
 use Techork\PaymentService\Domain\PaymentIntent\Port\CreatePort;
+use Techork\PaymentService\Domain\PaymentIntent\Port\CapturePort;
+use Techork\PaymentService\Domain\PaymentIntent\Port\CaptureOutcome;
+use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CaptureRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CreateRequest;
 use Techork\PaymentService\Domain\PaymentIntent\ValueObject\PaymentIntentId;
 use Techork\PaymentService\Domain\Subscription\SubscriptionAggregate;
@@ -178,7 +183,12 @@ function makeCheckoutPiSuccessPort(): CreatePort
     };
 }
 
-function makeChargedPiAggregate(): PaymentIntentAggregate
+/**
+ * An intent the checkout can still act on: authorized, not charged. A
+ * capture method other than Immediate is what leaves it that way, and it is
+ * also what `PaymentIntentAggregate::capture()` requires.
+ */
+function makeAuthorizedPiAggregate(): PaymentIntentAggregate
 {
     $piId = makeCheckoutPaymentIntentId();
 
@@ -189,7 +199,7 @@ function makeChargedPiAggregate(): PaymentIntentAggregate
         public function paymentIntentId(): PaymentIntentId { return $this->id; }
         public function amount(): Money { return makeCheckoutAmount(); }
         public function instrument(): PaymentInstrument { static $i = null; return $i ??= new Token(TokenId::fromString('01961f5a-0000-7000-8000-000000000001'), new CreditCard(new Number('424242', '4242', CardBrand::Visa), Expiration::fromMonthAndYear(12, 2030), new Holder('Test'), new Cvc), ExpiresAt::fromDateTime(new DateTimeImmutable('+1 hour'))); }
-        public function captureMethod(): CaptureMethod { return CaptureMethod::Immediate; }
+        public function captureMethod(): CaptureMethod { return CaptureMethod::Automatic; }
         public function billingAddress(): BillingAddress { return new BillingAddress(firstName: 'Test', lastName: 'User', line: '1 St', city: 'NYC', country: new Country('US'), postalCode: '10001'); }
         public function merchantDescriptor(): MerchantDescriptor { return new MerchantDescriptor('CHECKOUT TEST'); }
         public function description(): string { return ''; }
@@ -205,7 +215,7 @@ function makeChargedPiAggregate(): PaymentIntentAggregate
 
 function makePayCheckoutCommand(CheckoutId $id, ?PaymentIntentAggregate $pi = null, ?SubscriptionAggregate $subscription = null): PayCheckoutCommand
 {
-    $pi ??= makeChargedPiAggregate();
+    $pi ??= makeAuthorizedPiAggregate();
 
     return new readonly class($id, $pi, $subscription) implements PayCheckoutCommand
     {
@@ -216,20 +226,78 @@ function makePayCheckoutCommand(CheckoutId $id, ?PaymentIntentAggregate $pi = nu
     };
 }
 
-function makeRecordCheckoutChargeFailureCommand(CheckoutId $id): RecordCheckoutChargeFailureCommand
+function makeCheckoutCapturePort(): CheckoutCapturePort
 {
-    return new readonly class($id) implements RecordCheckoutChargeFailureCommand
+    return new readonly class implements CheckoutCapturePort
     {
-        public function __construct(private CheckoutId $checkoutId) {}
+        public function capture(CheckoutCaptureRequest $request): void {}
+    };
+}
 
-        public function checkoutId(): CheckoutId
+/**
+ * The only way a capture fails: it throws. There is no declined outcome to
+ * return, so an adapter with a broken connection surfaces exactly this.
+ */
+function makeFailingCheckoutCapturePort(string $reason = 'Connection to gateway lost'): CheckoutCapturePort
+{
+    return new readonly class($reason) implements CheckoutCapturePort
+    {
+        public function __construct(private string $reason) {}
+
+        public function capture(CheckoutCaptureRequest $request): void
         {
-            return $this->checkoutId;
+            throw new RuntimeException($this->reason);
         }
+    };
+}
 
-        public function reason(): string
+/**
+ * Fails the test if the acquirer is reached at all — pins that every refusal the
+ * checkout can decide for itself happens before the capture.
+ */
+function makeUntouchedCapturePort(): CheckoutCapturePort
+{
+    return new readonly class implements CheckoutCapturePort
+    {
+        public function capture(CheckoutCaptureRequest $request): void
         {
-            return 'Card declined';
+            throw new RuntimeException('CheckoutCapturePort must not be reached when a local check already refuses.');
+        }
+    };
+}
+
+/**
+ * What a host implementation has to do: capture *through the payment intent
+ * aggregate*, so the intent's own Authorized-only invariant is what refuses a
+ * second capture. A port that went straight to the gateway would pass these tests
+ * while throwing the uniqueness guarantee away, which is why the realistic stub
+ * is the one used wherever that guarantee is under test.
+ */
+function makeIntentCapturingPort(PaymentIntentAggregate $paymentIntent): CheckoutCapturePort
+{
+    return new readonly class($paymentIntent) implements CheckoutCapturePort
+    {
+        public function __construct(private PaymentIntentAggregate $paymentIntent) {}
+
+        public function capture(CheckoutCaptureRequest $request): void
+        {
+            $command = new readonly class($request->paymentIntentId, $request->amount) implements CapturePaymentIntentCommand
+            {
+                public function __construct(private PaymentIntentId $id, private Money $amount) {}
+
+                public function paymentIntentId(): PaymentIntentId { return $this->id; }
+
+                public function amount(): Money { return $this->amount; }
+            };
+
+            $gatewayCapture = new readonly class implements CapturePort
+            {
+                public function capture(CaptureRequest $request): CaptureOutcome { return new CaptureOutcome; }
+            };
+
+            // Lets the intent's own refusal propagate: there is no declined
+            // outcome to translate it into any more.
+            $this->paymentIntent->capture($command, $gatewayCapture);
         }
     };
 }
@@ -275,7 +343,7 @@ it('records CheckoutPaymentSubmitted on pay from pending', function () {
     given(makeCheckoutCreated());
 
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->pay(makePayCheckoutCommand($id));
+    $aggregate->pay(makePayCheckoutCommand($id), makeCheckoutCapturePort());
     $this->persistAggregateRoot($aggregate);
 
     then(makeCheckoutPaymentSubmitted());
@@ -291,7 +359,7 @@ it('throws CheckoutNotPayable when paying a non-pending checkout', function () {
     );
 
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->pay(makePayCheckoutCommand($id));
+    $aggregate->pay(makePayCheckoutCommand($id), makeCheckoutCapturePort());
 })->throws(CheckoutNotPayable::class);
 
 it('throws CheckoutNotPayable when payment intent amount does not match checkout amount', function () {
@@ -309,7 +377,8 @@ it('throws CheckoutNotPayable when payment intent amount does not match checkout
         public function paymentIntentId(): PaymentIntentId { return $this->id; }
         public function amount(): Money { return $this->amount; }
         public function instrument(): PaymentInstrument { static $i = null; return $i ??= new Token(TokenId::fromString('01961f5a-0000-7000-8000-000000000001'), new CreditCard(new Number('424242', '4242', CardBrand::Visa), Expiration::fromMonthAndYear(12, 2030), new Holder('Test'), new Cvc), ExpiresAt::fromDateTime(new DateTimeImmutable('+1 hour'))); }
-        public function captureMethod(): CaptureMethod { return CaptureMethod::Immediate; }
+        // Authorized, so the amount is what this test trips on and not the state.
+        public function captureMethod(): CaptureMethod { return CaptureMethod::Automatic; }
         public function billingAddress(): BillingAddress { return new BillingAddress(firstName: 'Test', lastName: 'User', line: '1 St', city: 'NYC', country: new Country('US'), postalCode: '10001'); }
         public function merchantDescriptor(): MerchantDescriptor { return new MerchantDescriptor('CHECKOUT TEST'); }
         public function description(): string { return ''; }
@@ -325,10 +394,17 @@ it('throws CheckoutNotPayable when payment intent amount does not match checkout
     $cmd = makePayCheckoutCommand($id, $pi);
 
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->pay($cmd);
+    $aggregate->pay($cmd, makeCheckoutCapturePort());
 })->throws(CheckoutNotPayable::class, 'amount does not match');
 
-it('throws CheckoutNotPayable when payment intent is not charged', function () {
+/**
+ * The inverse of what this asserted before the checkout started capturing for
+ * itself. An `Immediate` intent has already moved the money at create, before
+ * any checkout check ran, so there is nothing left for the checkout to decide —
+ * and the same intent could be handed to a second checkout with nothing to
+ * refuse it. Now it is the unusable state, and `Authorized` is the required one.
+ */
+it('throws CheckoutNotPayable when the payment intent was already charged inline', function () {
     /** @var CheckoutId $id */
     $id = $this->aggregateRootId();
 
@@ -341,7 +417,7 @@ it('throws CheckoutNotPayable when payment intent is not charged', function () {
         public function paymentIntentId(): PaymentIntentId { return $this->id; }
         public function amount(): Money { return makeCheckoutAmount(); }
         public function instrument(): PaymentInstrument { static $i = null; return $i ??= new Token(TokenId::fromString('01961f5a-0000-7000-8000-000000000001'), new CreditCard(new Number('424242', '4242', CardBrand::Visa), Expiration::fromMonthAndYear(12, 2030), new Holder('Test'), new Cvc), ExpiresAt::fromDateTime(new DateTimeImmutable('+1 hour'))); }
-        public function captureMethod(): CaptureMethod { return CaptureMethod::Manual; }
+        public function captureMethod(): CaptureMethod { return CaptureMethod::Immediate; }
         public function billingAddress(): BillingAddress { return new BillingAddress(firstName: 'Test', lastName: 'User', line: '1 St', city: 'NYC', country: new Country('US'), postalCode: '10001'); }
         public function merchantDescriptor(): MerchantDescriptor { return new MerchantDescriptor('CHECKOUT TEST'); }
         public function description(): string { return ''; }
@@ -356,8 +432,8 @@ it('throws CheckoutNotPayable when payment intent is not charged', function () {
     $cmd = makePayCheckoutCommand($id, $pi);
 
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->pay($cmd);
-})->throws(CheckoutNotPayable::class, 'not authorized');
+    $aggregate->pay($cmd, makeUntouchedCapturePort());
+})->throws(CheckoutNotPayable::class, 'not authorized (status: charged)');
 
 it('throws CheckoutNotPayable when paying an expired checkout', function () {
     /** @var CheckoutId $id */
@@ -366,25 +442,8 @@ it('throws CheckoutNotPayable when paying an expired checkout', function () {
     given(makeCheckoutCreated(new DateTimeImmutable('-1 hour')));
 
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->pay(makePayCheckoutCommand($id));
+    $aggregate->pay(makePayCheckoutCommand($id), makeCheckoutCapturePort());
 })->throws(CheckoutNotPayable::class, 'expired');
-
-// ──────────────────────────────────────────────
-//  Failure
-// ──────────────────────────────────────────────
-
-it('records CheckoutFailed on recordChargeFailure', function () {
-    /** @var CheckoutId $id */
-    $id = $this->aggregateRootId();
-
-    given(makeCheckoutCreated());
-
-    $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->recordChargeFailure(makeRecordCheckoutChargeFailureCommand($id));
-    $this->persistAggregateRoot($aggregate);
-
-    then(new CheckoutFailed('Card declined'));
-});
 
 // ──────────────────────────────────────────────
 //  Cancel
@@ -453,16 +512,6 @@ it('CheckoutPaymentSubmitted survives serialization roundtrip', function () {
     $restored = CheckoutPaymentSubmitted::fromPayload($payload);
 
     expect($restored->paymentIntentId->toString())->toBe('00000000-0000-0000-0000-000000000001');
-
-    then();
-});
-
-it('CheckoutFailed survives serialization roundtrip', function () {
-    $event = new CheckoutFailed('Insufficient funds');
-    $payload = $event->toPayload();
-    $restored = CheckoutFailed::fromPayload($payload);
-
-    expect($restored->reason)->toBe('Insufficient funds');
 
     then();
 });
@@ -541,21 +590,6 @@ it('snapshot state roundtrip restores charged checkout', function () {
     expect($reconstitutedState['status'])->toBe('charged');
 });
 
-it('snapshot state roundtrip restores failed checkout', function () {
-    /** @var CheckoutId $id */
-    $id = $this->aggregateRootId();
-
-    given(
-        makeCheckoutCreated(),
-        new CheckoutFailed('Card declined'),
-    );
-
-    $aggregate = $this->retrieveAggregateRoot($id);
-    $snapshotState = (fn () => $this->createSnapshotState())->call($aggregate);
-
-    expect($snapshotState['status'])->toBe('failed');
-});
-
 it('snapshot state roundtrip restores cancelled checkout', function () {
     /** @var CheckoutId $id */
     $id = $this->aggregateRootId();
@@ -626,7 +660,7 @@ it('throws CheckoutNotPayable when plan is set but subscription is missing', fun
     given(new CheckoutCreated(makeCheckoutAmount(), null, null, null, [], $plan));
 
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->pay(makePayCheckoutCommand($id));
+    $aggregate->pay(makePayCheckoutCommand($id), makeCheckoutCapturePort());
 })->throws(CheckoutNotPayable::class, 'both be set or both be null');
 
 it('throws CheckoutNotPayable when subscription is provided but plan is missing', function () {
@@ -637,7 +671,7 @@ it('throws CheckoutNotPayable when subscription is provided but plan is missing'
     given(makeCheckoutCreated());
 
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->pay(makePayCheckoutCommand($id, subscription: $subscription));
+    $aggregate->pay(makePayCheckoutCommand($id, subscription: $subscription), makeCheckoutCapturePort());
 })->throws(CheckoutNotPayable::class, 'both be set or both be null');
 
 it('records CheckoutPaymentSubmitted with subscription id when both plan and subscription are present', function () {
@@ -649,7 +683,7 @@ it('records CheckoutPaymentSubmitted with subscription id when both plan and sub
     given(new CheckoutCreated(makeCheckoutAmount(), null, null, null, [], $plan));
 
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->pay(makePayCheckoutCommand($id, subscription: $subscription));
+    $aggregate->pay(makePayCheckoutCommand($id, subscription: $subscription), makeCheckoutCapturePort());
     $this->persistAggregateRoot($aggregate);
 
     then(new CheckoutPaymentSubmitted(
@@ -670,16 +704,128 @@ it('throws CheckoutNotPayable when subscription is cancelled', function () {
     given(new CheckoutCreated(makeCheckoutAmount(), null, null, null, [], $plan));
 
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->pay(makePayCheckoutCommand($id, subscription: $subscription));
+    $aggregate->pay(makePayCheckoutCommand($id, subscription: $subscription), makeCheckoutCapturePort());
 })->throws(CheckoutNotPayable::class, 'cancelled subscription');
 
+// ──────────────────────────────────────────────
+//  One payment intent pays one checkout
+// ──────────────────────────────────────────────
+
+it('captures the payment intent it was handed', function () {
+    /** @var CheckoutId $id */
+    $id = $this->aggregateRootId();
+    $paymentIntent = makeAuthorizedPiAggregate();
+
+    given(makeCheckoutCreated());
+
+    $aggregate = $this->retrieveAggregateRoot($id);
+    $aggregate->pay(makePayCheckoutCommand($id, $paymentIntent), makeIntentCapturingPort($paymentIntent));
+    $this->persistAggregateRoot($aggregate);
+
+    // The money moved as part of paying, not before it.
+    expect($paymentIntent->status())->toBe(PaymentIntentStatus::Charged);
+
+    then(new CheckoutPaymentSubmitted(
+        paymentIntentId: makeCheckoutPaymentIntentId(),
+        subscriptionId: null,
+    ));
+});
+
+/**
+ * The point of taking an authorized intent and capturing it here: capture
+ * happens once, so the second checkout has nothing left to take. Note the
+ * untouched capture port — the second checkout is refused before the acquirer is
+ * reached, so this is not "the gateway rejected a double charge", it is "we never
+ * asked for one".
+ *
+ * This exercises the checkout's own guard, which is what an ordinary sequential
+ * second attempt hits. The intent's own refusal, were a caller to get past that
+ * guard, propagates from the port as `PaymentIntentCannotBeCaptured` — covered in
+ * PaymentIntentAggregateTest: 'throws PaymentIntentCannotBeCaptured on capture
+ * from Charged'. It is not a concurrency backstop, and nothing here should be read
+ * as claiming one.
+ */
 it('refuses to pay two checkouts with the same payment intent', function () {
-    // Known limitation: domain-level uniqueness without back-references requires
-    // either an async bridge flow (see planned task #29) or application-level
-    // read-model uniqueness. Documented as a placeholder; expected to fail.
-    expect(true)->toBeTrue();
-    return;
-})->skip('Pending: async Checkout bridge (task #29) — current domain accepts reuse, application must guard.');
+    /** @var CheckoutId $id */
+    $id = $this->aggregateRootId();
+    $paymentIntent = makeAuthorizedPiAggregate();
+
+    $firstCheckoutId = CheckoutId::fromString('00000000-0000-0000-0000-0000000000aa');
+    $firstCheckout = CheckoutAggregate::create(makeCreateCheckoutCommand($firstCheckoutId));
+    $firstCheckout->pay(makePayCheckoutCommand($firstCheckoutId, $paymentIntent), makeIntentCapturingPort($paymentIntent));
+
+    given(makeCheckoutCreated());
+
+    $aggregate = $this->retrieveAggregateRoot($id);
+    $aggregate->pay(makePayCheckoutCommand($id, $paymentIntent), makeUntouchedCapturePort());
+})->throws(CheckoutNotPayable::class, 'not authorized (status: charged)');
+
+it('records no event on the second checkout when the intent is already spent', function () {
+    /** @var CheckoutId $id */
+    $id = $this->aggregateRootId();
+    $paymentIntent = makeAuthorizedPiAggregate();
+
+    $firstCheckoutId = CheckoutId::fromString('00000000-0000-0000-0000-0000000000aa');
+    $firstCheckout = CheckoutAggregate::create(makeCreateCheckoutCommand($firstCheckoutId));
+    $firstCheckout->pay(makePayCheckoutCommand($firstCheckoutId, $paymentIntent), makeIntentCapturingPort($paymentIntent));
+
+    given(makeCheckoutCreated());
+
+    $aggregate = $this->retrieveAggregateRoot($id);
+
+    try {
+        $aggregate->pay(makePayCheckoutCommand($id, $paymentIntent), makeUntouchedCapturePort());
+    } catch (CheckoutNotPayable) {
+        // asserted by the sibling test; the point here is the absence below
+    }
+
+    $this->persistAggregateRoot($aggregate);
+
+    then();
+});
+
+/**
+ * Capture has no declined branch to record, so a failure propagates untouched and
+ * the checkout stays Pending — which is what makes the retry just the same call
+ * again. Burning the checkout over what is most likely a lost connection would be
+ * the wrong trade, which is why there is no failure event to record.
+ */
+it('lets a failed capture propagate and records nothing', function () {
+    /** @var CheckoutId $id */
+    $id = $this->aggregateRootId();
+    $paymentIntent = makeAuthorizedPiAggregate();
+
+    given(makeCheckoutCreated());
+
+    $aggregate = $this->retrieveAggregateRoot($id);
+
+    try {
+        $aggregate->pay(
+            makePayCheckoutCommand($id, $paymentIntent),
+            makeFailingCheckoutCapturePort('Connection to gateway lost'),
+        );
+        $this->fail('the capture failure should have propagated');
+    } catch (RuntimeException $e) {
+        expect($e->getMessage())->toBe('Connection to gateway lost');
+    }
+
+    // No public status accessor here, but the empty `then()` is the stronger
+    // statement anyway: status only ever moves via an event, and none was
+    // recorded, so the checkout is still Pending and payable.
+    $this->persistAggregateRoot($aggregate);
+
+    then();
+});
+
+it('does not reach the acquirer when a local check already refuses', function () {
+    /** @var CheckoutId $id */
+    $id = $this->aggregateRootId();
+
+    given(makeCheckoutCreated(), new CheckoutCancelled);
+
+    $aggregate = $this->retrieveAggregateRoot($id);
+    $aggregate->pay(makePayCheckoutCommand($id), makeUntouchedCapturePort());
+})->throws(CheckoutNotPayable::class, 'cannot be paid in status [cancelled]');
 
 it('throws CheckoutNotPayable when payment intent is not the one bound to the subscription', function () {
     /** @var CheckoutId $id */
@@ -705,7 +851,7 @@ it('throws CheckoutNotPayable when payment intent is not the one bound to the su
     given(new CheckoutCreated(makeCheckoutAmount(), null, null, null, [], $plan));
 
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->pay(makePayCheckoutCommand($id, subscription: $subscription));
+    $aggregate->pay(makePayCheckoutCommand($id, subscription: $subscription), makeCheckoutCapturePort());
 })->throws(CheckoutNotPayable::class, 'not the one bound to the subscription');
 
 it('CheckoutCreated reconstitutes plan from payload', function () {

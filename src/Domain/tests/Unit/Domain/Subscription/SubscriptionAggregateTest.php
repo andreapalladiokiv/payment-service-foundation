@@ -9,6 +9,12 @@ use Techork\PaymentService\Domain\PaymentIntent\CaptureMethod;
 use Techork\PaymentService\Domain\PaymentIntent\PaymentInitiation;
 use Techork\PaymentService\Domain\PaymentIntent\Command\CreatePaymentIntentCommand;
 use Techork\PaymentService\Common\Contract\Challenge;
+use Techork\PaymentService\Domain\PaymentIntent\Command\CapturePaymentIntentCommand;
+use Techork\PaymentService\Domain\PaymentIntent\Exception\PaymentIntentCannotBeCaptured;
+use Techork\PaymentService\Domain\PaymentIntent\PaymentIntentStatus;
+use Techork\PaymentService\Domain\PaymentIntent\Port\CaptureOutcome;
+use Techork\PaymentService\Domain\PaymentIntent\Port\CapturePort;
+use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CaptureRequest;
 use Techork\PaymentService\Domain\PaymentIntent\PaymentIntentAggregate;
 use Techork\PaymentService\Domain\PaymentIntent\Port\CreateOutcome;
 use Techork\PaymentService\Domain\PaymentIntent\Port\CreatePort;
@@ -27,6 +33,8 @@ use Techork\PaymentService\Domain\Subscription\Event\SubscriptionRenewed;
 use Techork\PaymentService\Domain\Subscription\Exception\SubscriptionNotActivatable;
 use Techork\PaymentService\Domain\Subscription\Exception\SubscriptionNotCancellable;
 use Techork\PaymentService\Domain\Subscription\Exception\SubscriptionNotRenewable;
+use Techork\PaymentService\Domain\Subscription\Port\Request\SubscriptionCaptureRequest;
+use Techork\PaymentService\Domain\Subscription\Port\SubscriptionCapturePort;
 use Techork\PaymentService\Domain\Subscription\SubscriptionAggregate;
 use Techork\PaymentService\Domain\Subscription\SubscriptionStatus;
 use Techork\PaymentService\Domain\Subscription\ValueObject\BillingInterval;
@@ -113,7 +121,12 @@ function makeCreateSubscriptionCommand(SubscriptionId $id, ?SubscriptionPlan $pl
     };
 }
 
-function makeChargedPiForSubscription(?Money $amount = null): PaymentIntentAggregate
+/**
+ * An intent activation can still act on: authorized, not charged. A capture
+ * method other than Immediate is what leaves it that way, and it is also what
+ * `PaymentIntentAggregate::capture()` requires.
+ */
+function makeAuthorizedPiForSubscription(?Money $amount = null): PaymentIntentAggregate
 {
     $piId = makeSubscriptionPaymentIntentId();
     $piAmount = $amount ?? makeSubscriptionAmount();
@@ -137,7 +150,7 @@ function makeChargedPiForSubscription(?Money $amount = null): PaymentIntentAggre
                 new BillingAddress(firstName: 'Test', lastName: 'User', line: '1 St', city: 'NYC', country: new Country('US'), postalCode: '10001'),
             );
         }
-        public function captureMethod(): CaptureMethod { return CaptureMethod::Immediate; }
+        public function captureMethod(): CaptureMethod { return CaptureMethod::Automatic; }
         public function billingAddress(): BillingAddress
         {
             return new BillingAddress(firstName: 'Test', lastName: 'User', line: '1 St', city: 'NYC', country: new Country('US'), postalCode: '10001');
@@ -171,7 +184,7 @@ function makeActivationPeriodStart(): DateTimeImmutable
 
 function makeActivateCommand(SubscriptionId $id, ?PaymentIntentAggregate $pi = null): ActivateSubscriptionCommand
 {
-    $pi ??= makeChargedPiForSubscription();
+    $pi ??= makeAuthorizedPiForSubscription();
 
     return new readonly class($id, $pi) implements ActivateSubscriptionCommand
     {
@@ -180,6 +193,82 @@ function makeActivateCommand(SubscriptionId $id, ?PaymentIntentAggregate $pi = n
         public function subscriptionId(): SubscriptionId { return $this->subscriptionId; }
         public function periodStart(): DateTimeImmutable { return makeActivationPeriodStart(); }
         public function paymentIntent(): PaymentIntentAggregate { return $this->pi; }
+    };
+}
+
+function makeSubscriptionCapturePort(): SubscriptionCapturePort
+{
+    return new readonly class implements SubscriptionCapturePort
+    {
+        public function capture(SubscriptionCaptureRequest $request): void {}
+    };
+}
+
+/**
+ * The only way a capture fails: it throws. There is no declined outcome to
+ * return, so an adapter with a broken connection surfaces exactly this.
+ */
+function makeFailingSubscriptionCapturePort(string $reason = 'Connection to gateway lost'): SubscriptionCapturePort
+{
+    return new readonly class($reason) implements SubscriptionCapturePort
+    {
+        public function __construct(private string $reason) {}
+
+        public function capture(SubscriptionCaptureRequest $request): void
+        {
+            throw new RuntimeException($this->reason);
+        }
+    };
+}
+
+/**
+ * Fails the test if the acquirer is reached — pins that every refusal activation
+ * can decide for itself happens before the capture.
+ */
+function makeUntouchedSubscriptionCapturePort(): SubscriptionCapturePort
+{
+    return new readonly class implements SubscriptionCapturePort
+    {
+        public function capture(SubscriptionCaptureRequest $request): void
+        {
+            throw new RuntimeException('SubscriptionCapturePort must not be reached when a local check already refuses.');
+        }
+    };
+}
+
+/**
+ * What a host implementation has to do: capture *through the payment intent
+ * aggregate*, so the intent's own Authorized-only check is what rejects a second
+ * activation. A port that went straight to the gateway would satisfy the type and
+ * lose the guarantee, which is why this is the stub used wherever the guarantee
+ * is under test.
+ */
+function makeIntentCapturingSubscriptionPort(PaymentIntentAggregate $paymentIntent): SubscriptionCapturePort
+{
+    return new readonly class($paymentIntent) implements SubscriptionCapturePort
+    {
+        public function __construct(private PaymentIntentAggregate $paymentIntent) {}
+
+        public function capture(SubscriptionCaptureRequest $request): void
+        {
+            $command = new readonly class($request->paymentIntentId, $request->amount) implements CapturePaymentIntentCommand
+            {
+                public function __construct(private PaymentIntentId $id, private Money $amount) {}
+
+                public function paymentIntentId(): PaymentIntentId { return $this->id; }
+
+                public function amount(): Money { return $this->amount; }
+            };
+
+            $gatewayCapture = new readonly class implements CapturePort
+            {
+                public function capture(CaptureRequest $request): CaptureOutcome { return new CaptureOutcome; }
+            };
+
+            // Lets the intent's own refusal propagate: there is no declined
+            // outcome to translate it into any more.
+            $this->paymentIntent->capture($command, $gatewayCapture);
+        }
     };
 }
 
@@ -263,26 +352,100 @@ it('records SubscriptionCreated on create', function () {
 //  Activate
 // ──────────────────────────────────────────────
 
-it('records SubscriptionActivated on activate from trialing with charged PI', function () {
+it('records SubscriptionActivated on activate from trialing with an authorized PI', function () {
     /** @var SubscriptionId $id */
     $id = $this->aggregateRootId();
 
     given(makeSubscriptionCreated());
 
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->activate(makeActivateCommand($id));
+    $aggregate->activate(makeActivateCommand($id), makeSubscriptionCapturePort());
     $this->persistAggregateRoot($aggregate);
 
     then(makeSubscriptionActivated());
 });
 
-it('throws SubscriptionNotActivatable when payment intent is not charged', function () {
+it('captures the payment intent it is activated with', function () {
+    /** @var SubscriptionId $id */
+    $id = $this->aggregateRootId();
+    $paymentIntent = makeAuthorizedPiForSubscription();
+
+    given(makeSubscriptionCreated());
+
+    $aggregate = $this->retrieveAggregateRoot($id);
+    $aggregate->activate(makeActivateCommand($id, $paymentIntent), makeIntentCapturingSubscriptionPort($paymentIntent));
+    $this->persistAggregateRoot($aggregate);
+
+    // The first period's money moved as part of activating, not before it.
+    expect($paymentIntent->status())->toBe(PaymentIntentStatus::Charged);
+
+    then(makeSubscriptionActivated());
+});
+
+/**
+ * The same mechanism as the checkout's: capture happens once, so a second
+ * subscription has nothing left to take. The untouched port is the point — the
+ * second activation is refused before the acquirer is reached, so this is not a
+ * gateway rejecting a double charge, it is one never being requested.
+ *
+ * Sequential only. Two concurrent activations both read Authorized from their own
+ * hydration; see SubscriptionCapturePort for why the domain cannot close that.
+ */
+it('refuses to activate two subscriptions with the same payment intent', function () {
+    /** @var SubscriptionId $id */
+    $id = $this->aggregateRootId();
+    $paymentIntent = makeAuthorizedPiForSubscription();
+
+    $firstId = SubscriptionId::fromString('00000000-0000-0000-0000-0000000000bb');
+    $first = SubscriptionAggregate::create(makeCreateSubscriptionCommand($firstId));
+    $first->activate(makeActivateCommand($firstId, $paymentIntent), makeIntentCapturingSubscriptionPort($paymentIntent));
+
+    given(makeSubscriptionCreated());
+
+    $aggregate = $this->retrieveAggregateRoot($id);
+    $aggregate->activate(makeActivateCommand($id, $paymentIntent), makeUntouchedSubscriptionCapturePort());
+})->throws(SubscriptionNotActivatable::class, 'requires an authorized payment intent (got [charged])');
+
+/**
+ * Capture has no declined branch to record, so a failure propagates untouched and
+ * the subscription stays in the status it already had — which is what makes the
+ * retry just the same call again.
+ */
+it('lets a failed capture propagate, staying trialing and recording nothing', function () {
     /** @var SubscriptionId $id */
     $id = $this->aggregateRootId();
 
     given(makeSubscriptionCreated());
 
-    // Build an Authorized (Manual capture) PI, not Charged.
+    $aggregate = $this->retrieveAggregateRoot($id);
+
+    try {
+        $aggregate->activate(makeActivateCommand($id), makeFailingSubscriptionCapturePort('Connection to gateway lost'));
+        $this->fail('the capture failure should have propagated');
+    } catch (RuntimeException $e) {
+        expect($e->getMessage())->toBe('Connection to gateway lost');
+    }
+
+    expect($aggregate->status())->toBe(SubscriptionStatus::Trialing);
+
+    $this->persistAggregateRoot($aggregate);
+
+    then();
+});
+
+/**
+ * The inverse of what this asserted before activation started capturing for
+ * itself. An `Immediate` intent moved the money at create, before any of the
+ * activation checks ran, and the same one could then activate a second
+ * subscription with nothing left to refuse. Now it is the unusable state.
+ */
+it('throws SubscriptionNotActivatable when the payment intent was already charged inline', function () {
+    /** @var SubscriptionId $id */
+    $id = $this->aggregateRootId();
+
+    given(makeSubscriptionCreated());
+
+    // Build a Charged (Immediate capture) PI — nothing left to capture.
     $piId = makeSubscriptionPaymentIntentId();
     $piCmd = new readonly class($piId) implements CreatePaymentIntentCommand
     {
@@ -302,7 +465,7 @@ it('throws SubscriptionNotActivatable when payment intent is not charged', funct
                 new BillingAddress(firstName: 'Test', lastName: 'User', line: '1 St', city: 'NYC', country: new Country('US'), postalCode: '10001'),
             );
         }
-        public function captureMethod(): CaptureMethod { return CaptureMethod::Manual; }
+        public function captureMethod(): CaptureMethod { return CaptureMethod::Immediate; }
         public function billingAddress(): BillingAddress
         {
             return new BillingAddress(firstName: 'Test', lastName: 'User', line: '1 St', city: 'NYC', country: new Country('US'), postalCode: '10001');
@@ -318,8 +481,8 @@ it('throws SubscriptionNotActivatable when payment intent is not charged', funct
     $pi = PaymentIntentAggregate::create($piCmd, makeSubscriptionPiSuccessPort(), StubPaymentIntentFirewall::allowing());
 
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->activate(makeActivateCommand($id, $pi));
-})->throws(SubscriptionNotActivatable::class, 'requires a charged payment intent');
+    $aggregate->activate(makeActivateCommand($id, $pi), makeUntouchedSubscriptionCapturePort());
+})->throws(SubscriptionNotActivatable::class, 'requires an authorized payment intent (got [charged])');
 
 it('throws SubscriptionNotActivatable when payment intent amount does not match plan', function () {
     /** @var SubscriptionId $id */
@@ -327,10 +490,10 @@ it('throws SubscriptionNotActivatable when payment intent amount does not match 
 
     given(makeSubscriptionCreated());
 
-    $pi = makeChargedPiForSubscription(new Money(9999, new Currency('USD')));
+    $pi = makeAuthorizedPiForSubscription(new Money(9999, new Currency('USD')));
 
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->activate(makeActivateCommand($id, $pi));
+    $aggregate->activate(makeActivateCommand($id, $pi), makeSubscriptionCapturePort());
 })->throws(SubscriptionNotActivatable::class, 'does not match subscription plan amount');
 
 it('throws SubscriptionNotActivatable when already active', function () {
@@ -343,7 +506,7 @@ it('throws SubscriptionNotActivatable when already active', function () {
     );
 
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->activate(makeActivateCommand($id));
+    $aggregate->activate(makeActivateCommand($id), makeSubscriptionCapturePort());
 })->throws(SubscriptionNotActivatable::class);
 
 // ──────────────────────────────────────────────
@@ -512,7 +675,7 @@ it('refuses activate after cancel on trialing', function () {
     );
 
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->activate(makeActivateCommand($id));
+    $aggregate->activate(makeActivateCommand($id), makeSubscriptionCapturePort());
 })->throws(SubscriptionNotActivatable::class);
 
 // ──────────────────────────────────────────────
