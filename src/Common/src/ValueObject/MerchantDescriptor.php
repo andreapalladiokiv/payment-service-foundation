@@ -37,7 +37,18 @@ final readonly class MerchantDescriptor implements JsonSerializable, Stringable
 {
     public const int MAX_LENGTH = 25;
 
-    private const string FORBIDDEN = '<>\\"\'';
+    /**
+     * Printable ASCII, space through tilde. Excludes control characters and
+     * anything multi-byte, both of which the networks reject.
+     *
+     * Public so the edge can enforce the same rule before a gateway is called:
+     * this object is built from a stored row, by which point the money has
+     * moved, so a descriptor that fails only here fails too late.
+     */
+    public const string PRINTABLE_ASCII_REGEX = '/^[\x20-\x7E]*$/';
+
+    /** The five characters the networks refuse outright. */
+    public const string FORBIDDEN_REGEX = '/[<>\\\\"\']/';
 
     public function __construct(private string $descriptor)
     {
@@ -59,13 +70,11 @@ final readonly class MerchantDescriptor implements JsonSerializable, Stringable
         mb_strlen($this->descriptor) <= self::MAX_LENGTH
             || throw new RuntimeException('Merchant descriptor exceeds '.self::MAX_LENGTH.' characters');
 
-        // Printable ASCII, space through tilde. Excludes control characters and
-        // anything multi-byte, both of which the networks reject.
-        preg_match('/^[\x20-\x7E]*$/', $this->descriptor) === 1
+        preg_match(self::PRINTABLE_ASCII_REGEX, $this->descriptor) === 1
             || throw new RuntimeException('Merchant descriptor must be printable ASCII');
 
-        strpbrk($this->descriptor, self::FORBIDDEN) === false
-            || throw new RuntimeException('Merchant descriptor must not contain any of '.self::FORBIDDEN);
+        preg_match(self::FORBIDDEN_REGEX, $this->descriptor) === 0
+            || throw new RuntimeException('Merchant descriptor must not contain any of < > \\ " \'');
     }
 
     #[Override]
