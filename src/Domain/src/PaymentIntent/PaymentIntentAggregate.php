@@ -408,6 +408,14 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
             return;
         }
 
+        // Coherent before acted upon. A result claiming success without the artefact
+        // that makes it successful is nobody's refusal, so it must not be recorded as
+        // one — but neither may it be charged on, because what would be stored as the
+        // evidence for the liability shift proves nothing. Thrown, and before the port.
+        if (($missing = $result->accept(new MissingChallengeEvidenceExtractor)) !== null) {
+            throw InvalidPaymentIntent::challengeResultCarriesNoEvidence($missing);
+        }
+
         try {
             $outcome = $port->confirm(new ConfirmChallengeRequest(
                 paymentIntentId: $this->aggregateRootId(),
@@ -420,14 +428,6 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
             ));
         } catch (GatewayDeclinedException $e) {
             $this->recordThat($this->failedFromState($e->reason, $result));
-
-            return;
-        }
-
-        // The gateway asks for an authentication of its own on top of the one just
-        // resolved. Park again and wait for that one.
-        if ($outcome->challenge !== null) {
-            $this->recordThat($this->requiresActionFromState($outcome->challenge));
 
             return;
         }
@@ -545,10 +545,20 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
             : new ThreeDSChallenge(transactionId: $command->paymentIntentId()->toString());
     }
 
+    /**
+     * Whether a result handed in with the payment already claims the liability shift, in
+     * which case inspection has nothing left to gain.
+     *
+     * Coherence is part of the question here rather than a separate refusal: an
+     * incoherent result simply is not a successful authentication, and answering false
+     * runs the firewall — the safe direction. Throwing instead would turn a caller's
+     * malformed evidence into a failure to create the payment at all.
+     */
     private function hasSuccessfulThreeDS(?ChallengeResult $result): bool
     {
         return $result instanceof ThreeDSResult
-            && $result->accept(new ChallengeFailureReasonExtractor) === null;
+            && $result->accept(new ChallengeFailureReasonExtractor) === null
+            && $result->accept(new MissingChallengeEvidenceExtractor) === null;
     }
 
     private function chargeOrAuthorize(
@@ -572,25 +582,6 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         }
     }
 
-    /**
-     * Parks the payment on a further challenge, built from state rather than from
-     * a command — which is what {@see confirmChallenge()} has and {@see create()}
-     * does not, the latter running before any state exists.
-     */
-    private function requiresActionFromState(Challenge $challenge): PaymentIntentRequiresAction
-    {
-        return new PaymentIntentRequiresAction(
-            $this->amount,
-            $this->instrument,
-            $this->captureMethod,
-            $this->billingAddress,
-            $this->metadata,
-            $this->merchantDescriptor(),
-            $this->description,
-            $challenge,
-            $this->initiation,
-        );
-    }
 
     private function failedFromState(string $reason, ?ChallengeResult $challengeResult = null): PaymentIntentFailed
     {

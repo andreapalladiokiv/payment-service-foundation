@@ -38,4 +38,9 @@ final class InvalidPaymentIntent extends \DomainException
         ));
     }
 
+
+    public static function challengeResultCarriesNoEvidence(string $reason): self
+    {
+        return new self("Cannot confirm a challenge on an incoherent result: {$reason}.");
+    }
 }

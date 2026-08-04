@@ -302,7 +302,7 @@ function makeExternallyCompletedConfirmPort(): ConfirmChallengePort
 {
     return new readonly class implements ConfirmChallengePort
     {
-        public function confirm(ConfirmChallengeRequest $request): ConfirmChallengeOutcome { return new ConfirmChallengeOutcome(); }
+        public function confirm(ConfirmChallengeRequest $request): ConfirmChallengeOutcome { return ConfirmChallengeOutcome::placed(); }
     };
 }
 
@@ -315,7 +315,7 @@ function makeConfirmSuccessPort(?Money $convertedAmount = null): ConfirmChalleng
     return new readonly class($convertedAmount) implements ConfirmChallengePort
     {
         public function __construct(private ?Money $convertedAmount) {}
-        public function confirm(ConfirmChallengeRequest $request): ConfirmChallengeOutcome { return new ConfirmChallengeOutcome(convertedAmount: $this->convertedAmount); }
+        public function confirm(ConfirmChallengeRequest $request): ConfirmChallengeOutcome { return ConfirmChallengeOutcome::placed($this->convertedAmount); }
     };
 }
 
@@ -325,15 +325,6 @@ function makeConfirmDeclinedPort(string $reason): ConfirmChallengePort
     {
         public function __construct(private string $reason) {}
         public function confirm(ConfirmChallengeRequest $request): ConfirmChallengeOutcome { throw new GatewayDeclinedException($this->reason); }
-    };
-}
-
-function makeConfirmChallengePort(Challenge $challenge): ConfirmChallengePort
-{
-    return new readonly class($challenge) implements ConfirmChallengePort
-    {
-        public function __construct(private Challenge $challenge) {}
-        public function confirm(ConfirmChallengeRequest $request): ConfirmChallengeOutcome { return new ConfirmChallengeOutcome(challenge: $this->challenge); }
     };
 }
 
@@ -1107,7 +1098,7 @@ it('forwards the resolved authentication to the gateway as the payment evidence'
         {
             $this->request = $request;
 
-            return new ConfirmChallengeOutcome();
+            return ConfirmChallengeOutcome::placed();
         }
     };
 
@@ -1165,40 +1156,6 @@ it('records PaymentIntentFailed when the gateway declines the authenticated paym
         '',
         'insufficient funds',
         $result,
-    ));
-});
-
-it('parks again when the gateway answers the authenticated payment with a challenge of its own', function () {
-    /** @var PaymentIntentId $id */
-    $id = $this->aggregateRootId();
-
-    given(new PaymentIntentRequiresAction(
-        makeAmount(),
-        makeInstrument(),
-        CaptureMethod::Automatic,
-        makeBillingAddress(),
-        [],
-        makeMerchantDescriptor(),
-        '',
-        makeThreeDSChallenge(),
-    ));
-
-    $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->confirmChallenge(makePiThreeDSResult(), makeConfirmChallengePort(makeRedirectChallenge()));
-    $this->persistAggregateRoot($aggregate);
-
-    expect($aggregate->status())->toBe(PaymentIntentStatus::RequiresAction)
-        ->and($aggregate->challenge())->toEqual(makeRedirectChallenge());
-
-    then(new PaymentIntentRequiresAction(
-        makeAmount(),
-        makeInstrument(),
-        CaptureMethod::Automatic,
-        makeBillingAddress(),
-        [],
-        makeMerchantDescriptor(),
-        '',
-        makeRedirectChallenge(),
     ));
 });
 
@@ -2473,4 +2430,88 @@ it('tells the port what was held and what it was held on, not just what to captu
         // it was not: only `amount` is the caller's to choose.
         ->and($seen->authorizedAmount)->toBe($authorized)
         ->and($seen->instrument)->toBe($instrument);
+});
+
+// ──────────────────────────────────────────────
+//  a result must carry what makes it successful
+//
+//  Status alone used to decide: `Y` with no authentication value passed as a success,
+//  and the aggregate charged on it, storing as the evidence for the liability shift an
+//  artefact that proves nothing. The two call sites want opposite answers, which is why
+//  the coherence question is asked separately from the status one.
+// ──────────────────────────────────────────────
+
+it('refuses to confirm a challenge on a success status with no authentication value', function (ThreeDSStatus $status) {
+    /** @var PaymentIntentId $id */
+    $id = $this->aggregateRootId();
+
+    given(new PaymentIntentRequiresAction(
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Automatic,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        makeThreeDSChallenge(),
+    ));
+
+    $aggregate = $this->retrieveAggregateRoot($id);
+
+    // Not PaymentIntentFailed: nobody refused anything. Recording a decline here would
+    // tell operators the issuer said no to an authentication it never answered.
+    expect(fn () => $aggregate->confirmChallenge(
+        new ThreeDSResult($status, null, ECICode::VisaSuccessful, 'ds-txn', 'acs-txn'),
+        makeExternallyCompletedConfirmPort(),
+    ))->toThrow(InvalidPaymentIntent::class, 'without an authentication value');
+})->with([
+    ThreeDSStatus::Successful,
+    ThreeDSStatus::NotAvailable,
+    ThreeDSStatus::Info,
+]);
+
+it('still records a failure when the issuer actually refused, cryptogram or not', function () {
+    /** @var PaymentIntentId $id */
+    $id = $this->aggregateRootId();
+
+    given(new PaymentIntentRequiresAction(
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Automatic,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        makeThreeDSChallenge(),
+    ));
+
+    $aggregate = $this->retrieveAggregateRoot($id);
+    // A refusal carries no authentication value either, and that is what a refusal looks
+    // like — the coherence check must not swallow it.
+    $aggregate->confirmChallenge(
+        new ThreeDSResult(ThreeDSStatus::NotAuthenticated, null, null, 'ds-txn', 'acs-txn'),
+        makeExternallyCompletedConfirmPort(),
+    );
+
+    expect($aggregate->status())->toBe(PaymentIntentStatus::Failed);
+});
+
+it('inspects rather than throwing when an incoherent result arrives with the payment', function () {
+    // The other call site, and the opposite answer. At create() the result is optional
+    // evidence, and an incoherent one simply is not a successful authentication — so the
+    // firewall runs instead of the payment failing outright.
+    $firewall = StubPaymentIntentFirewall::denying();
+
+    $aggregate = PaymentIntentAggregate::create(
+        makeCreatePiCommand(
+            PaymentIntentId::generate(),
+            CaptureMethod::Immediate,
+            challengeResult: new ThreeDSResult(ThreeDSStatus::Successful, null, null, 'ds-txn', 'acs-txn'),
+        ),
+        makePaySuccessPort(),
+        $firewall,
+    );
+
+    expect($firewall->received)->not->toBeNull()
+        ->and($aggregate->status())->toBe(PaymentIntentStatus::RequiresAction);
 });
