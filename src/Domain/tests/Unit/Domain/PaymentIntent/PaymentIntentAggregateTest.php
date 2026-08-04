@@ -57,12 +57,15 @@ use Techork\PaymentService\Domain\PaymentIntent\PaymentIntentStatus;
 use Techork\PaymentService\Domain\PaymentIntent\Port\CancelPort;
 use Techork\PaymentService\Domain\PaymentIntent\Port\CaptureOutcome;
 use Techork\PaymentService\Domain\PaymentIntent\Port\CapturePort;
+use Techork\PaymentService\Domain\PaymentIntent\Port\ConfirmChallengeOutcome;
+use Techork\PaymentService\Domain\PaymentIntent\Port\ConfirmChallengePort;
 use Techork\PaymentService\Domain\PaymentIntent\Port\CreateOutcome;
 use Techork\PaymentService\Domain\PaymentIntent\Port\CreatePort;
 use Techork\PaymentService\Domain\PaymentIntent\Port\FirewallDecision;
 use Techork\PaymentService\Domain\PaymentIntent\Port\GatewayDeclinedException;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CancelRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CaptureRequest;
+use Techork\PaymentService\Domain\PaymentIntent\Port\Request\ConfirmChallengeRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CreateRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Refund\Command\CreateRefundCommand;
 use Techork\PaymentService\Domain\PaymentIntent\Refund\Command\RecordRefundFeeCommand;
@@ -285,6 +288,67 @@ function makePayChallengePort(Challenge $challenge): CreatePort
     {
         public function __construct(private Challenge $challenge) {}
         public function create(CreateRequest $request): CreateOutcome { return new CreateOutcome(challenge: $this->challenge); }
+    };
+}
+
+/**
+ * The webhook flow's {@see ConfirmChallengePort}: the gateway raised the
+ * authentication against a payment it had already opened and settled it itself, so
+ * completing it costs no call. Stands in for
+ * `Laravel\Webhook\Service\Port\ExternallyCompletedConfirmChallengePort`, which
+ * this package cannot reach.
+ */
+function makeExternallyCompletedConfirmPort(): ConfirmChallengePort
+{
+    return new readonly class implements ConfirmChallengePort
+    {
+        public function confirm(ConfirmChallengeRequest $request): ConfirmChallengeOutcome { return new ConfirmChallengeOutcome(); }
+    };
+}
+
+/**
+ * The live {@see ConfirmChallengePort}: places the payment inspection would not
+ * let through unauthenticated, now that the cardholder has answered.
+ */
+function makeConfirmSuccessPort(?Money $convertedAmount = null): ConfirmChallengePort
+{
+    return new readonly class($convertedAmount) implements ConfirmChallengePort
+    {
+        public function __construct(private ?Money $convertedAmount) {}
+        public function confirm(ConfirmChallengeRequest $request): ConfirmChallengeOutcome { return new ConfirmChallengeOutcome(convertedAmount: $this->convertedAmount); }
+    };
+}
+
+function makeConfirmDeclinedPort(string $reason): ConfirmChallengePort
+{
+    return new readonly class($reason) implements ConfirmChallengePort
+    {
+        public function __construct(private string $reason) {}
+        public function confirm(ConfirmChallengeRequest $request): ConfirmChallengeOutcome { throw new GatewayDeclinedException($this->reason); }
+    };
+}
+
+function makeConfirmChallengePort(Challenge $challenge): ConfirmChallengePort
+{
+    return new readonly class($challenge) implements ConfirmChallengePort
+    {
+        public function __construct(private Challenge $challenge) {}
+        public function confirm(ConfirmChallengeRequest $request): ConfirmChallengeOutcome { return new ConfirmChallengeOutcome(challenge: $this->challenge); }
+    };
+}
+
+/**
+ * A {@see ConfirmChallengePort} that fails the test if it is called — for the
+ * paths that must not reach a gateway at all.
+ */
+function makeUnreachableConfirmPort(): ConfirmChallengePort
+{
+    return new readonly class implements ConfirmChallengePort
+    {
+        public function confirm(ConfirmChallengeRequest $request): ConfirmChallengeOutcome
+        {
+            throw new RuntimeException('ConfirmChallengePort::confirm() must not be reached here.');
+        }
     };
 }
 
@@ -684,7 +748,7 @@ it('keeps the descriptor and description across the challenge confirmation', fun
         makePayChallengePort(makeRedirectChallenge()),
         StubPaymentIntentFirewall::allowing(),
     );
-    $aggregate->confirmChallenge(makePiThreeDSResult());
+    $aggregate->confirmChallenge(makePiThreeDSResult(), makeExternallyCompletedConfirmPort());
 
     expect($aggregate->status())->toBe(PaymentIntentStatus::Charged)
         ->and($aggregate->merchantDescriptor())->toEqual(new MerchantDescriptor('ACME STORE'))
@@ -833,7 +897,7 @@ it('records PaymentIntentAuthorized on confirmChallenge after RequiresAction wit
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->confirmChallenge(makePiThreeDSResult());
+    $aggregate->confirmChallenge(makePiThreeDSResult(), makeExternallyCompletedConfirmPort());
     $this->persistAggregateRoot($aggregate);
 
     then(new PaymentIntentAuthorized(
@@ -864,7 +928,7 @@ it('records PaymentIntentCharged on confirmChallenge after RequiresAction with I
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->confirmChallenge(makePiThreeDSResult());
+    $aggregate->confirmChallenge(makePiThreeDSResult(), makeExternallyCompletedConfirmPort());
     $this->persistAggregateRoot($aggregate);
 
     then(new PaymentIntentCharged(
@@ -896,7 +960,7 @@ it('treats ThreeDSStatus::NotAvailable as success (liability shift)', function (
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->confirmChallenge($result);
+    $aggregate->confirmChallenge($result, makeExternallyCompletedConfirmPort());
     $this->persistAggregateRoot($aggregate);
 
     then(new PaymentIntentAuthorized(
@@ -928,7 +992,7 @@ it('treats ThreeDSStatus::Info as success (data share only, not a refusal)', fun
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->confirmChallenge($result);
+    $aggregate->confirmChallenge($result, makeExternallyCompletedConfirmPort());
     $this->persistAggregateRoot($aggregate);
 
     then(new PaymentIntentAuthorized(
@@ -960,7 +1024,7 @@ it('treats RedirectResult as success', function () {
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->confirmChallenge($result);
+    $aggregate->confirmChallenge($result, makeExternallyCompletedConfirmPort());
     $this->persistAggregateRoot($aggregate);
 
     then(new PaymentIntentAuthorized(
@@ -972,6 +1036,169 @@ it('treats RedirectResult as success', function () {
         makeMerchantDescriptor(),
         '',
         $result,
+    ));
+});
+
+// ──────────────────────────────────────────────
+//  confirmChallenge — through a CreatePort that places the payment
+// ──────────────────────────────────────────────
+
+it('places the payment on confirmChallenge when the gateway never received it', function () {
+    // The other implementation of the same port. Inspection parks the payment
+    // before any gateway call is spent, so clearing the challenge is what places
+    // it. The FX figure is what proves the port was asked: nothing in the
+    // aggregate's own state could have produced it.
+    /** @var PaymentIntentId $id */
+    $id = $this->aggregateRootId();
+    $converted = new Money(1142, new Currency('EUR'));
+
+    given(new PaymentIntentRequiresAction(
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Immediate,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        makeThreeDSChallenge(),
+    ));
+
+    $aggregate = $this->retrieveAggregateRoot($id);
+    $aggregate->confirmChallenge(makePiThreeDSResult(), makeConfirmSuccessPort($converted));
+    $this->persistAggregateRoot($aggregate);
+
+    then(new PaymentIntentCharged(
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Immediate,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        makePiThreeDSResult(),
+        $converted,
+    ));
+});
+
+it('forwards the resolved authentication to the gateway as the payment evidence', function () {
+    // What the liability shift is claimed with. An authentication that is run and
+    // then not forwarded leaves the issuer seeing an unauthenticated payment,
+    // which is the whole reason for running it.
+    /** @var PaymentIntentId $id */
+    $id = $this->aggregateRootId();
+    $result = makePiThreeDSResult();
+
+    given(new PaymentIntentRequiresAction(
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Manual,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        makeThreeDSChallenge(),
+    ));
+
+    $port = new class implements ConfirmChallengePort
+    {
+        public ?ConfirmChallengeRequest $request = null;
+
+        public function confirm(ConfirmChallengeRequest $request): ConfirmChallengeOutcome
+        {
+            $this->request = $request;
+
+            return new ConfirmChallengeOutcome();
+        }
+    };
+
+    $aggregate = $this->retrieveAggregateRoot($id);
+    $aggregate->confirmChallenge($result, $port);
+    $this->persistAggregateRoot($aggregate);
+
+    expect($port->request)->not->toBeNull()
+        ->and($port->request->challengeResult)->toBe($result)
+        ->and($port->request->paymentIntentId->toString())->toBe($id->toString())
+        ->and($port->request->amount)->toEqual(makeAmount())
+        ->and($port->request->instrument)->toEqual(makeInstrument())
+        ->and($port->request->captureMethod)->toBe(CaptureMethod::Manual)
+        ->and($port->request->billingAddress)->toEqual(makeBillingAddress());
+
+    then(new PaymentIntentAuthorized(
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Manual,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        $result,
+    ));
+});
+
+it('records PaymentIntentFailed when the gateway declines the authenticated payment', function () {
+    /** @var PaymentIntentId $id */
+    $id = $this->aggregateRootId();
+    $result = makePiThreeDSResult();
+
+    given(new PaymentIntentRequiresAction(
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Immediate,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        makeThreeDSChallenge(),
+    ));
+
+    $aggregate = $this->retrieveAggregateRoot($id);
+    $aggregate->confirmChallenge($result, makeConfirmDeclinedPort('insufficient funds'));
+    $this->persistAggregateRoot($aggregate);
+
+    then(new PaymentIntentFailed(
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Immediate,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        'insufficient funds',
+        $result,
+    ));
+});
+
+it('parks again when the gateway answers the authenticated payment with a challenge of its own', function () {
+    /** @var PaymentIntentId $id */
+    $id = $this->aggregateRootId();
+
+    given(new PaymentIntentRequiresAction(
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Automatic,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        makeThreeDSChallenge(),
+    ));
+
+    $aggregate = $this->retrieveAggregateRoot($id);
+    $aggregate->confirmChallenge(makePiThreeDSResult(), makeConfirmChallengePort(makeRedirectChallenge()));
+    $this->persistAggregateRoot($aggregate);
+
+    expect($aggregate->status())->toBe(PaymentIntentStatus::RequiresAction)
+        ->and($aggregate->challenge())->toEqual(makeRedirectChallenge());
+
+    then(new PaymentIntentRequiresAction(
+        makeAmount(),
+        makeInstrument(),
+        CaptureMethod::Automatic,
+        makeBillingAddress(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+        makeRedirectChallenge(),
     ));
 });
 
@@ -996,7 +1223,7 @@ it('records PaymentIntentFailed on confirmChallenge with NotAuthenticated', func
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->confirmChallenge($result);
+    $aggregate->confirmChallenge($result, makeUnreachableConfirmPort());
     $this->persistAggregateRoot($aggregate);
 
     then(new PaymentIntentFailed(
@@ -1029,7 +1256,7 @@ it('records PaymentIntentFailed on confirmChallenge with Rejected', function () 
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->confirmChallenge($result);
+    $aggregate->confirmChallenge($result, makeUnreachableConfirmPort());
     $this->persistAggregateRoot($aggregate);
 
     then(new PaymentIntentFailed(
@@ -1060,7 +1287,7 @@ it('throws PaymentIntentChallengeNotPending when confirmChallenge called outside
     ));
 
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->confirmChallenge(makePiThreeDSResult());
+    $aggregate->confirmChallenge(makePiThreeDSResult(), makeUnreachableConfirmPort());
 })->throws(PaymentIntentChallengeNotPending::class);
 
 // ──────────────────────────────────────────────
@@ -1635,7 +1862,7 @@ it('finishes an intent imported as RequiresAction through the ordinary challenge
     /** @var PaymentIntentId $id */
     $id = $this->aggregateRootId();
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->confirmChallenge(new RedirectResult('pi_123'));
+    $aggregate->confirmChallenge(new RedirectResult('pi_123'), makeExternallyCompletedConfirmPort());
     $this->persistAggregateRoot($aggregate);
 
     then(new PaymentIntentAuthorized(

@@ -40,12 +40,14 @@ use Techork\PaymentService\Domain\PaymentIntent\Exception\PaymentIntentChallenge
 use Techork\PaymentService\Domain\PaymentIntent\Exception\PaymentIntentRefundExceedsAmount;
 use Techork\PaymentService\Domain\PaymentIntent\Port\CancelPort;
 use Techork\PaymentService\Domain\PaymentIntent\Port\CapturePort;
+use Techork\PaymentService\Domain\PaymentIntent\Port\ConfirmChallengePort;
 use Techork\PaymentService\Domain\PaymentIntent\Port\CreatePort;
 use Techork\PaymentService\Domain\PaymentIntent\Port\FirewallDecision;
 use Techork\PaymentService\Domain\PaymentIntent\Port\GatewayDeclinedException;
 use Techork\PaymentService\Domain\PaymentIntent\Port\PaymentIntentFirewallPort;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CancelRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CaptureRequest;
+use Techork\PaymentService\Domain\PaymentIntent\Port\Request\ConfirmChallengeRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CreateRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\PaymentIntentFirewallRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Refund\Command\CreateRefundCommand;
@@ -368,7 +370,25 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         $this->recordThat(new PaymentIntentCancelled($command->reason()));
     }
 
-    public function confirmChallenge(ChallengeResult $result): void
+    /**
+     * Resolves the authentication this payment was parked on, and completes the
+     * payment with it.
+     *
+     * Takes a port for the same reason every other operation here does: completing
+     * the payment may cost a gateway call, and whether it does is the port's
+     * business rather than the aggregate's. The two cases are two implementations
+     * of {@see ConfirmChallengePort} — the gateway raised the challenge and
+     * settled it itself, or we raised it and only now is there a payment to place.
+     *
+     * Not {@see CreatePort}: where the gateway raised the challenge it had already
+     * opened the payment, and there is nothing to create. Before the port was a
+     * parameter this method could only record, so the case where we raise the
+     * challenge booked a charge the gateway had never been asked for.
+     *
+     * The billing address is not null here: the only states this runs in were
+     * reached by an event that carries a required one.
+     */
+    public function confirmChallenge(ChallengeResult $result, ConfirmChallengePort $port): void
     {
         $this->status === PaymentIntentStatus::RequiresAction || throw PaymentIntentChallengeNotPending::withStatus($this->status);
 
@@ -380,8 +400,30 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
             return;
         }
 
-        // Challenge succeeded — rejoin the original pay() flow with the
-        // result attached, as if the gateway had settled inline.
+        try {
+            $outcome = $port->confirm(new ConfirmChallengeRequest(
+                paymentIntentId: $this->aggregateRootId(),
+                challengeResult: $result,
+                amount: $this->amount,
+                instrument: $this->instrument,
+                captureMethod: $this->captureMethod,
+                billingAddress: $this->billingAddress,
+                initiation: $this->initiation,
+            ));
+        } catch (GatewayDeclinedException $e) {
+            $this->recordThat($this->failedFromState($e->reason, $result));
+
+            return;
+        }
+
+        // The gateway asks for an authentication of its own on top of the one just
+        // resolved. Park again and wait for that one.
+        if ($outcome->challenge !== null) {
+            $this->recordThat($this->requiresActionFromState($outcome->challenge));
+
+            return;
+        }
+
         $this->chargeOrAuthorize(
             $this->captureMethod,
             $this->amount,
@@ -392,6 +434,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
             $this->description,
             $result,
             $this->initiation,
+            $outcome->convertedAmount,
         );
     }
 
@@ -522,6 +565,26 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
             // occurred yet — the converted amount surfaces on capture.
             $this->recordThat(new PaymentIntentAuthorized($amount, $instrument, $captureMethod, $billingAddress, $metadata, $merchantDescriptor, $description, $challengeResult, $initiation));
         }
+    }
+
+    /**
+     * Parks the payment on a further challenge, built from state rather than from
+     * a command — which is what {@see confirmChallenge()} has and {@see create()}
+     * does not, the latter running before any state exists.
+     */
+    private function requiresActionFromState(Challenge $challenge): PaymentIntentRequiresAction
+    {
+        return new PaymentIntentRequiresAction(
+            $this->amount,
+            $this->instrument,
+            $this->captureMethod,
+            $this->billingAddress,
+            $this->metadata,
+            $this->merchantDescriptor(),
+            $this->description,
+            $challenge,
+            $this->initiation,
+        );
     }
 
     private function failedFromState(string $reason, ?ChallengeResult $challengeResult = null): PaymentIntentFailed
