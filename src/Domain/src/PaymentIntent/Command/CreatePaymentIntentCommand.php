@@ -67,6 +67,26 @@ interface CreatePaymentIntentCommand
     public function connection(): ?ConnectionContext;
 
     /**
+     * The payment whose authorization began this instrument's stored-credential
+     * series — the "genesis" — or null when this payment is not continuing one.
+     *
+     * A domain identity, deliberately, not a gateway reference: the acquirers that
+     * demand an anchor each name it differently (Nuvei's relatedTransactionId,
+     * ConnexPay's initial Sale Guid) and a stream carrying one of those would be
+     * both unportable and a breach of the promise below. The port resolves this id
+     * to whatever the chosen gateway wants, through the same lookup capture and
+     * refund already use.
+     *
+     * Null is not "no series". It means this payment does not claim to continue
+     * one — which is the truth for a first payment, and a lie for a renewal. The
+     * foundation cannot tell the difference, because whether a stored credential
+     * has a prior transaction is a fact about the acquirer's records, not about
+     * this aggregate. Supplying it is the caller's job; see the note on
+     * {@see initiation()} for the other half of the same contract.
+     */
+    public function genesisPaymentIntentId(): ?PaymentIntentId;
+
+    /**
      * The gateway this payment will run through, when routing has already chosen
      * one, so a rule can be scoped to it.
      *

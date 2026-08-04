@@ -161,6 +161,7 @@ function makeAuthorizedPiForSubscription(?Money $amount = null): PaymentIntentAg
         public function challengeResult(): ?\Techork\PaymentService\Common\Contract\ChallengeResult { return null; }
         public function initiation(): PaymentInitiation { return PaymentInitiation::CardholderInitiated; }
         public function connection(): ?ConnectionContext { return null; }
+        public function genesisPaymentIntentId(): ?PaymentIntentId { return null; }
         public function gatewayId(): ?string { return null; }
     };
 
@@ -476,6 +477,7 @@ it('throws SubscriptionNotActivatable when the payment intent was already charge
         public function challengeResult(): ?\Techork\PaymentService\Common\Contract\ChallengeResult { return null; }
         public function initiation(): PaymentInitiation { return PaymentInitiation::CardholderInitiated; }
         public function connection(): ?ConnectionContext { return null; }
+        public function genesisPaymentIntentId(): ?PaymentIntentId { return null; }
         public function gatewayId(): ?string { return null; }
     };
     $pi = PaymentIntentAggregate::create($piCmd, makeSubscriptionPiSuccessPort(), StubPaymentIntentFirewall::allowing());

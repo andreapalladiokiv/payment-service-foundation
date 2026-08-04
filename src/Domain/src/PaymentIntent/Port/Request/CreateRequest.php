@@ -22,5 +22,6 @@ final readonly class CreateRequest
         public BillingAddress $billingAddress,
         public ?ChallengeResult $challengeResult = null,
         public PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated,
+        public ?PaymentIntentId $genesisPaymentIntentId = null,
     ) {}
 }

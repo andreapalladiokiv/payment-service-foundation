@@ -37,4 +37,12 @@ final class InvalidPaymentIntent extends \DomainException
             $captureMethod,
         ));
     }
+
+    public static function cannotBeItsOwnGenesis(AggregateRootId $id): self
+    {
+        return new self(sprintf(
+            'PaymentIntent "%s" cannot be the genesis of its own stored-credential series.',
+            $id->toString(),
+        ));
+    }
 }

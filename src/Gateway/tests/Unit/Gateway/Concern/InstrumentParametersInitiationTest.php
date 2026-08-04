@@ -61,3 +61,21 @@ it('reads back what the setter was given', function () {
 it('defaults to cardholder-initiated rather than returning null', function () {
     expect(initiationRequest()->getInitiation())->toBe(PaymentInitiation::CardholderInitiated);
 });
+
+it('binds the stored-credential reference from an Omnipay parameter array', function () {
+    $request = initiationRequest();
+    $request->initialize(['storedCredentialReference' => '1110000000123456']);
+
+    expect($request->getStoredCredentialReference())->toBe('1110000000123456');
+});
+
+/**
+ * The mirror image of getInitiation()'s default, and deliberately so. There is a
+ * safe answer for "was the cardholder present" and none for "which transaction
+ * began this series": an adapter handed nothing must omit the field, because a
+ * wrong anchor is refused by the acquirer while a missing one merely goes
+ * unchained.
+ */
+it('has no default for the anchor, unlike the initiation', function () {
+    expect(initiationRequest()->getStoredCredentialReference())->toBeNull();
+});

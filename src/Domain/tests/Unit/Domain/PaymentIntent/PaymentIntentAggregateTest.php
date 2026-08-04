@@ -209,8 +209,9 @@ function makeCreatePiCommand(
     PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated,
     ?MerchantDescriptor $merchantDescriptor = null,
     string $description = '',
+    ?PaymentIntentId $genesisPaymentIntentId = null,
 ): CreatePaymentIntentCommand {
-    return new readonly class($id, $captureMethod, $amount ?? makeAmount(), $instrument ?? makeInstrument(), $challengeResult, $initiation, $merchantDescriptor ?? makeMerchantDescriptor(), $description) implements CreatePaymentIntentCommand
+    return new readonly class($id, $captureMethod, $amount ?? makeAmount(), $instrument ?? makeInstrument(), $challengeResult, $initiation, $merchantDescriptor ?? makeMerchantDescriptor(), $description, $genesisPaymentIntentId) implements CreatePaymentIntentCommand
     {
         public function __construct(
             private PaymentIntentId $paymentIntentId,
@@ -221,6 +222,7 @@ function makeCreatePiCommand(
             private PaymentInitiation $initiation,
             private MerchantDescriptor $merchantDescriptor,
             private string $description,
+            private ?PaymentIntentId $genesisPaymentIntentId,
         ) {}
 
         public function paymentIntentId(): PaymentIntentId { return $this->paymentIntentId; }
@@ -233,6 +235,7 @@ function makeCreatePiCommand(
         public function metadata(): array { return []; }
         public function challengeResult(): ?ChallengeResult { return $this->challengeResult; }
         public function initiation(): PaymentInitiation { return $this->initiation; }
+        public function genesisPaymentIntentId(): ?PaymentIntentId { return $this->genesisPaymentIntentId; }
         public function connection(): ?ConnectionContext { return null; }
         public function gatewayId(): ?string { return null; }
     };
@@ -2425,4 +2428,71 @@ it('refuses an accept whose chain was degraded', function () {
     );
 
     expect($aggregate->status())->toBe(PaymentIntentStatus::RequiresAction);
+});
+
+// ──────────────────────────────────────────────
+//  the stored-credential genesis
+//
+//  The domain names the transaction that began the series by our own id and hands
+//  it to the port, which resolves it to whatever reference the chosen acquirer
+//  wants. Nuvei requires it on every subsequent MIT, so a renewal that carries no
+//  genesis is a renewal the acquirer cannot place in a chain.
+// ──────────────────────────────────────────────
+
+function makeGenesisCapturingPort(?PaymentIntentId &$seen): CreatePort
+{
+    return new class($seen) implements CreatePort
+    {
+        public function __construct(private ?PaymentIntentId &$seen) {}
+
+        public function create(CreateRequest $request): CreateOutcome
+        {
+            $this->seen = $request->genesisPaymentIntentId;
+
+            return new CreateOutcome;
+        }
+    };
+}
+
+it('hands the genesis payment intent to the port', function () {
+    $genesis = PaymentIntentId::generate();
+    $seen = null;
+
+    PaymentIntentAggregate::create(
+        makeCreatePiCommand(
+            PaymentIntentId::generate(),
+            CaptureMethod::Immediate,
+            initiation: PaymentInitiation::MerchantRecurring,
+            genesisPaymentIntentId: $genesis,
+        ),
+        makeGenesisCapturingPort($seen),
+        StubPaymentIntentFirewall::allowing(),
+    );
+
+    expect($seen)->toBe($genesis);
+});
+
+it('leaves the genesis absent when the caller names none', function () {
+    $seen = null;
+
+    PaymentIntentAggregate::create(
+        makeCreatePiCommand(PaymentIntentId::generate(), CaptureMethod::Immediate),
+        makeGenesisCapturingPort($seen),
+        StubPaymentIntentFirewall::allowing(),
+    );
+
+    expect($seen)->toBeNull();
+});
+
+it('refuses an intent named as its own genesis, before any port is spent', function () {
+    $id = PaymentIntentId::generate();
+    $seen = null;
+
+    expect(fn () => PaymentIntentAggregate::create(
+        makeCreatePiCommand($id, CaptureMethod::Immediate, genesisPaymentIntentId: $id),
+        makeGenesisCapturingPort($seen),
+        StubPaymentIntentFirewall::allowing(),
+    ))->toThrow(InvalidPaymentIntent::class, 'cannot be the genesis of its own stored-credential series')
+        // The guard sits before the port, so nothing was asked of the gateway.
+        ->and($seen)->toBeNull();
 });

@@ -93,4 +93,21 @@ trait InstrumentParameters
     {
         return $this->getParameter('initiation') ?? PaymentInitiation::CardholderInitiated;
     }
+
+    public function setStoredCredentialReference(?string $value): self
+    {
+        return $this->setParameter('storedCredentialReference', $value);
+    }
+
+    /**
+     * Nullable, unlike {@see getInitiation}, and for the opposite reason: there is
+     * no safe default for "which transaction began this series". Absent means the
+     * caller named no genesis, and an adapter must then omit the field rather than
+     * invent one — a wrong anchor is worse than none, since the acquirer rejects a
+     * reference it does not recognise.
+     */
+    public function getStoredCredentialReference(): ?string
+    {
+        return $this->getParameter('storedCredentialReference');
+    }
 }

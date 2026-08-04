@@ -615,3 +615,32 @@ it('defaults the initiation to cardholder-initiated when a caller omits it', fun
 
     expect($seen['initiation'])->toBe(PaymentInitiation::CardholderInitiated);
 });
+
+it('puts the resolved stored-credential reference in the request parameters', function () {
+    $seen = null;
+    $router = makeRouter(omnipay: captureOmnipayParams('purchase', $seen));
+
+    $router->charge(
+        GatewayId::generate(),
+        initiationInstrument(),
+        new Money(1000, new Currency('USD')),
+        initiation: PaymentInitiation::MerchantRecurring,
+        storedCredentialReference: '1110000000123456',
+    );
+
+    expect($seen)->toHaveKey('storedCredentialReference')
+        ->and($seen['storedCredentialReference'])->toBe('1110000000123456');
+});
+
+it('sends the anchor as absent, not as an empty string, when there is none', function () {
+    $seen = null;
+    $router = makeRouter(omnipay: captureOmnipayParams('authorize', $seen));
+
+    $router->authorize(
+        GatewayId::generate(),
+        initiationInstrument(),
+        new Money(1000, new Currency('USD')),
+    );
+
+    expect($seen['storedCredentialReference'])->toBeNull();
+});

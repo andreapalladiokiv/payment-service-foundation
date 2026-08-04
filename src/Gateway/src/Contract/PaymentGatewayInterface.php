@@ -31,6 +31,13 @@ use Techork\PaymentService\Common\ValueObject\CardBrand;
  * ({@see updateVirtualCard}, {@see terminateVirtualCard}) the parameter is
  * intentionally omitted — those rely on natural HTTP idempotency at the
  * gateway endpoint instead.
+ *
+ * `$storedCredentialReference` on {@see authorize} / {@see charge} is the gateway's
+ * own reference for the transaction that began this instrument's stored-credential
+ * series, already resolved. The domain names that transaction by its own id and the
+ * port resolves it, so a provider identifier appears here for the first time and
+ * goes no further back. Each adapter maps it to the field its acquirer asks for —
+ * Nuvei's `relatedTransactionId`, and whatever ConnexPay eventually documents.
  */
 interface PaymentGatewayInterface
 {
@@ -38,9 +45,9 @@ interface PaymentGatewayInterface
 
     public function createPaymentMethod(GatewayId $gatewayId, PaymentInstrument $instrument, ?BillingAddress $billingAddress = null, ?string $clientUniqueId = null): RegistrationResult;
 
-    public function authorize(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated): AuthorizationResult;
+    public function authorize(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated, ?string $storedCredentialReference = null): AuthorizationResult;
 
-    public function charge(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated): AuthorizationResult;
+    public function charge(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated, ?string $storedCredentialReference = null): AuthorizationResult;
 
     /**
      * @param  ?Money  $authorizedAmount  The originally authorized amount.
