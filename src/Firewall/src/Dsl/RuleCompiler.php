@@ -139,13 +139,30 @@ final readonly class RuleCompiler
     }
 
     /**
-     * Only the path's ROOT is checked here — that is the sandbox boundary. The
-     * dot-path beneath it is free, so a schema need not enumerate every fact.
+     * A fact path, checked twice over.
+     *
+     * SHAPE FIRST, and this is the part that is load-bearing. A path is emitted
+     * into the expression verbatim — it is the one thing here that cannot be
+     * encoded as a literal, exactly as an identifier cannot be bound as a query
+     * parameter — so it must be an identifier and nothing else. Without this,
+     * `card.country == "XX" or true or card.x` is a legal "field name" that
+     * compiles to a catch-all, passes {@see RuleEvaluator::validate()} in
+     * silence, and makes a rule match transactions its author never wrote it
+     * for. The narrow grammar this class documents is only narrow because of
+     * this check.
+     *
+     * THEN THE ROOT, against the schema — the sandbox boundary. The dot-path
+     * beneath it is still free of the schema, so a schema need not enumerate
+     * every fact; free in shape it is not.
      */
     private function field(mixed $field): string
     {
         if (! is_string($field) || $field === '') {
             throw new InvalidArgumentException('Firewall rule matcher is missing a field.');
+        }
+
+        if (! preg_match('/^[a-zA-Z_]\w*(\.[a-zA-Z_]\w*)*$/', $field)) {
+            throw new InvalidArgumentException("Malformed firewall rule fact path: {$field}");
         }
 
         $root = explode('.', $field, 2)[0];

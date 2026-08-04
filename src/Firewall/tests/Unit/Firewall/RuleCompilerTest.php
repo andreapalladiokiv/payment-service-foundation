@@ -133,3 +133,48 @@ it('treats only null and an empty string as an absent bound', function () {
     expect($this->compiler->compile(['order.amount' => ['min' => null, 'max' => null]]))->toBe('true')
         ->and($this->compiler->compile(['order.amount' => ['min' => '', 'max' => '']]))->toBe('true');
 });
+
+it('rejects a fact path carrying expression text', function (string $field, array $matcher) {
+    // A path is the one thing emitted verbatim — an identifier cannot be encoded
+    // as a literal any more than it can be bound as a query parameter — so its
+    // shape is the only thing standing between a field name and injected logic.
+    // Each of these once compiled, and passed validation, silently.
+    $this->compiler->compile([$field => $matcher]);
+})->with([
+    // Rewrites a targeted rule into a catch-all: matches every transaction.
+    ['card.country == "XX" or true or card.x', ['values' => ['GB']]],
+    // Balances the compiler's own parentheses to neutralise the rule instead —
+    // a deny line that quietly stops denying.
+    ['card.country) and (false) and (card.x', ['values' => ['FR']]],
+    // Negation distributes over the injected text just as happily.
+    ['card.country != "" and false or card.x', ['not' => true, 'values' => ['ZZ']]],
+    // Ranges are the same channel; nothing about bounds makes them safer.
+    ['order.amount) or (1', ['min' => 999999]],
+])->throws(InvalidArgumentException::class, 'Malformed firewall rule fact path');
+
+it('rejects a path that is not an identifier chain', function (string $field) {
+    $this->compiler->compile([$field => ['values' => ['x']]]);
+})->with([
+    'card.',
+    '.card',
+    'card..country',
+    'card.2country',
+    'card.coun try',
+    'card.country ',
+])->throws(InvalidArgumentException::class, 'Malformed firewall rule fact path');
+
+it('still accepts ordinary fact paths', function () {
+    expect($this->compiler->compile(['card' => ['values' => ['x']]]))
+        ->toBe('((card == "x"))')
+        ->and($this->compiler->compile(['card.deeply.nested.thing_2' => ['values' => ['x']]]))
+        ->toBe('((card.deeply.nested.thing_2 == "x"))')
+        ->and($this->compiler->compile(['order._private' => ['values' => ['x']]]))
+        ->toBe('((order._private == "x"))');
+});
+
+it('reports a malformed path before an unknown root', function () {
+    // Shape is the stricter complaint and the more useful one: "unknown root
+    // ssn" would send an author looking at the schema for a problem that is in
+    // their field name.
+    $this->compiler->compile(['ssn.x == 1 or true' => ['values' => ['x']]]);
+})->throws(InvalidArgumentException::class, 'Malformed firewall rule fact path');
