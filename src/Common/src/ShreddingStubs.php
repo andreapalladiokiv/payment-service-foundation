@@ -64,7 +64,7 @@ interface ShreddingStubs
     /**
      * RFC 2606 + RFC 6761 reserved TLDs that must never appear in real user
      * input. Use to extend FormRequest email validation, e.g.
-     * `'doesnt_end_with:'.implode(',', ShreddingStubs::reservedEmailDomains())`.
+     * `'doesnt_end_with:'.implode(',', ShreddingStubs::RESERVED_EMAIL_DOMAINS)`.
      *
      * @return list<string>
      */

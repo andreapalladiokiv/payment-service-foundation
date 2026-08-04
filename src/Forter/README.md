@@ -51,11 +51,12 @@ reference.
 
 **Fail-soft:** `screen()` never throws. Any transport failure (timeout,
 connection error) or unrecognizable response yields an `Errored` verdict, so
-the decision layer (`RiskDecisionPort`) can apply its fail-open / fail-closed
+the decision layer can apply its fail-open / fail-closed
 policy uniformly. A `Decline` is the provider's opinion, not the final action
 — the decision layer combines it with operator rules to decide on 3DS step-up.
-In the composed system, screening only runs for cardholder-initiated payments
-(the Laravel `FraudScreeningCreatePort` decorator skips MIT).
+In the composed system, the verdict reaches the flow as facts under the
+`screening` root (`ForterFactSupplier`), which the payment-intent firewall chain
+weighs.
 
 ## Payload notes
 

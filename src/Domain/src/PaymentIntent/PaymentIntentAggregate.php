@@ -90,9 +90,9 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
     private CaptureMethod $captureMethod;
 
     /**
-     * Nullable to accommodate hosted-flow imports where no merchant-side
-     * billing record exists. Domain operations (create/charge/authorize) always
-     * supply one, so post-Imported states still have it.
+     * Nullable only so a snapshot written before `billing_address` was required
+     * still reconstitutes. Every event that opens an intent supplies one,
+     * imports included, so live states always have it.
      */
     private ?BillingAddress $billingAddress = null;
 
@@ -100,10 +100,12 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
     private array $metadata = [];
 
     /**
-     * Both default to empty rather than staying uninitialised: every event that
-     * opens an intent carries them, but {@see failedFromState()} can build a
-     * failure off a partially-applied aggregate, and reading an uninitialised
-     * typed property there would throw instead of recording the failure.
+     * Every event that opens an intent carries them, but {@see failedFromState()}
+     * can build a failure off a partially-applied aggregate, where reading an
+     * uninitialised typed property would throw instead of recording the failure.
+     * So `$description` defaults to empty, and `$merchantDescriptor` is read only
+     * through {@see merchantDescriptor()}, which lazily defaults it — never read
+     * `$this->merchantDescriptor` directly.
      */
     private MerchantDescriptor $merchantDescriptor;
 
@@ -180,8 +182,8 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
     }
 
     /**
-     * Remaining amount available for refund. Computed: amount minus the
-     * sum of every refund that has settled successfully.
+     * Remaining amount available for refund. Computed: the amount actually
+     * captured minus the sum of every refund that has settled successfully.
      */
     public function refundableAmount(): Money
     {
@@ -492,9 +494,6 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         $this->recordThat(new PaymentIntentFeeRecorded($command->fee(), $command->observedAt()));
     }
 
-    /**
-     * @param  array<string, mixed>  $metadata
-     */
     /**
      * Put the payment through its firewall chain and, when the decision does not
      * permit it, return the challenge to park on. Null means proceed.

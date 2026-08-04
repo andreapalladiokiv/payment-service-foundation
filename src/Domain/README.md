@@ -5,7 +5,7 @@ service, built on [EventSauce](https://eventsauce.io). Three aggregates
 (`PaymentIntentAggregate`, `CheckoutAggregate`, `SubscriptionAggregate`) plus
 the driven ports the payment flows call out through. Pure PHP, no framework and
 no I/O: gateways plug in behind port interfaces, and the Laravel package
-supplies the port adapters (`OmnipayCreatePort`, `FraudScreeningCreatePort`,
+supplies the port adapters (`OmnipayCreatePort`, `OmnipayRebillingCreatePort`,
 ...), repositories, snapshots and event-sourcing glue.
 
 Each aggregate namespace has the same shape: `Command/` (interfaces the
@@ -27,8 +27,8 @@ ever called.
 | Method | Port | Guards | Success event / decline event |
 | --- | --- | --- | --- |
 | `create()` | `CreatePort` | positive amount, usable instrument, hosted ⇒ `Immediate` capture | `PaymentIntentCharged` (Immediate) or `PaymentIntentAuthorized` / `PaymentIntentFailed` |
-| `confirmChallenge()` | — | status `RequiresAction` | `PaymentIntentCharged` or `PaymentIntentAuthorized` / `PaymentIntentFailed` |
-| `capture()` | `CapturePort` | status `Authorized`, capture method not `Immediate` | `PaymentIntentCaptured` / `PaymentIntentFailed` |
+| `confirmChallenge()` | `ConfirmChallengePort` | status `RequiresAction` | `PaymentIntentCharged` or `PaymentIntentAuthorized` / `PaymentIntentFailed` |
+| `capture()` | `CapturePort` | status `Authorized`, capture method not `Immediate` | `PaymentIntentCaptured` (no decline event — `GatewayDeclinedException` propagates out of `capture()` instead of being recorded) |
 | `cancel()` | `CancelPort` | status `Authorized` or `RequiresAction` | `PaymentIntentCancelled` / `PaymentIntentFailed` |
 | `refund()` | `RefundPort` | status `Charged`, positive amount, same currency, ≤ `refundableAmount()` | `RefundProcessed` / `RefundFailed` |
 | `recordFee()` | — | none (out-of-band signal, any status) | `PaymentIntentFeeRecorded` |
@@ -70,14 +70,17 @@ MIT carrying a `ThreeDSResult` is ordinary. Note also that
 checkout is CIT too — so an acquirer that wants the initiating transaction of a
 stored-credential series flagged needs a distinction this enum does not draw.
 
-**Risk.** `RiskDecisionPort::decide(RiskAssessmentRequest): RiskOutcome` is
-defined here but consulted by the application flow, not the aggregate. The card
-is screened at two `RiskPhase`s: `Registration` (zero amount, when the payment
-method is stored) and `Authorization` (real amount, with the target
-`gatewayId`). The resulting `RiskAction` is `Require3ds`, `Skip3ds` or `Allow`
-— risk never blocks a payment on its own, it routes to stronger
-authentication. Implementations must not throw for business outcomes and own
-the fail-open/fail-closed policy. `fraudReference` links the two screenings.
+**Firewall.** `PaymentIntentFirewallPort::evaluate(PaymentIntentFirewallRequest):
+FirewallDecision` is defined here and consulted by
+`PaymentIntentAggregate::create()` itself, not by the application flow, before
+the gateway call is spent. A chain answers with a `FirewallVerdict` of `Allow`,
+`Deny` or `NoMatch`, plus a `degraded` flag for a rule that could not be
+evaluated; only `FirewallDecision::permits()` — an explicit `Allow` on a
+non-degraded chain — proceeds, and everything else parks the payment on a
+`ThreeDSChallenge` at `RequiresAction`: the firewall never blocks a payment on
+its own, it routes to stronger authentication. Implementations must not throw for
+business outcomes and must not pick the fail-open/fail-closed default themselves
+— that is the caller's. The default `NullPaymentIntentFirewall` denies.
 
 **Refunds.** `Refund` is a child aggregate on the same event stream (the
 parent uses EventSauce's `AggregateRootWithAggregates`), keyed by `RefundId`;
@@ -94,11 +97,13 @@ Authorize-only flows have no converted amount — it surfaces at capture.
 **Imports.** `PaymentIntentImported` and `RefundImported` replay existing
 records from gateway exports or settlement files. The instrument is the open
 `PaymentInstrument` contract so hosted-page imports can carry a
-`HostedPayment` marker; `billingAddress` is nullable for the same reason.
+`HostedPayment` marker; `billingAddress` is required, and an import with no
+address on file passes `BillingAddress::unknown()` rather than null, so the rest
+of the lifecycle's address requirement still holds.
 
 ## Checkout
 
-`CheckoutAggregate` — statuses `pending`, `charged`, `failed`, `cancelled`.
+`CheckoutAggregate` — statuses `pending`, `charged`, `cancelled`.
 `pay(PayCheckoutCommand, Port\CheckoutCapturePort)` requires a pending,
 unexpired checkout and an **Authorized** `PaymentIntentAggregate` with the exact
 checkout amount; it then captures that intent through its own port and records

@@ -84,7 +84,8 @@ shared contract in this kernel.
 Interim challenges: `ThreeDSChallenge` (`acsUrl` + `creq` for direct MPI, or
 `clientSecret` for gateway SDKs like Stripe.js) and `RedirectChallenge`
 (`url` + `formFields` the browser POSTs to reach a hosted page). Terminal
-results: `ThreeDSResult` (`ThreeDSStatus` Y/A/N/U/R, `authenticationValue`,
+results: `ThreeDSResult` (`ThreeDSStatus` Y/A/N/U/R/I — `I` being informational
+/ data-share-only, counted as a completed authentication — `authenticationValue`,
 `ECICode`, DS/ACS transaction ids, `ThreeDSVersion`) — the liability-shift
 evidence forwarded to acquiring gateways — and `RedirectResult`, which carries
 only the transaction id because the outcome arrives via webhook.

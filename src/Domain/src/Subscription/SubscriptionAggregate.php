@@ -44,9 +44,12 @@ final class SubscriptionAggregate implements AggregateRootWithSnapshotting
     use SnapshottingBehaviour;
 
     /**
-     * Stored status only ever holds Trialing or Active. Cancelled is a
+     * Stored status normally holds Trialing or Active, and Cancelled is a
      * computed result — it materialises once the current period ends
-     * after a SubscriptionCancelled event. See {@see self::status()}.
+     * after a SubscriptionCancelled event. The exception is a subscription
+     * cancelled before it was ever activated: with no period end to compute
+     * against, Cancelled goes straight into the stored status.
+     * See {@see self::status()} and {@see self::applySubscriptionCancelled()}.
      */
     private SubscriptionStatus $storedStatus = SubscriptionStatus::Trialing;
 
@@ -81,9 +84,11 @@ final class SubscriptionAggregate implements AggregateRootWithSnapshotting
     }
 
     /**
-     * Cancellation is recorded as an event but only takes effect at the
-     * end of the current period. Until then the subscription remains
-     * Active for the customer.
+     * Cancellation is recorded as an event but, while a billing period is under
+     * way, only takes effect at the end of it. Until then the subscription keeps
+     * for the customer the status it already had, Trialing or Active. One
+     * cancelled before activation has no period to wait out and is Cancelled
+     * immediately.
      */
     public function status(): SubscriptionStatus
     {

@@ -20,12 +20,12 @@ use Techork\PaymentService\Domain\PaymentIntent\Port\Request\ConfirmChallengeReq
  *    to place, and the result goes with it as the evidence that claims the
  *    liability shift.
  *
- * The implemented case is the first one, which is the only kind of challenge that
- * exists so far: every one of them is the gateway's, and the port that answers it
- * makes no call at all. The second arrives with the flow that raises challenges of
- * our own, and brings its own implementation — an adapter is free to answer both
- * interfaces where the two calls happen to coincide, but nothing here assumes one
- * does.
+ * Both kinds of challenge exist by now, but only the first has a shipped adapter
+ * — `ExternallyCompletedConfirmChallengePort`, which makes no call at all. The
+ * second is already raised, by `PaymentIntentAggregate::firewallRefusal()` when
+ * inspection does not permit the payment, and still awaits an implementation that
+ * actually places it — an adapter is free to answer both interfaces where the two
+ * calls happen to coincide, but nothing here assumes one does.
  */
 interface ConfirmChallengePort
 {

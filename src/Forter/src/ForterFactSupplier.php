@@ -53,8 +53,9 @@ final class ForterFactSupplier implements FactSupplier
     }
 
     /**
-     * The verdict this supplier obtained, or null when screening has not run or
-     * could not complete. Screening happens at most once per instance.
+     * The verdict this supplier obtained, performing the screening call if it
+     * has not run yet (at most once per instance); null when the call could not
+     * complete.
      */
     public function verdict(): ?FraudVerdict
     {

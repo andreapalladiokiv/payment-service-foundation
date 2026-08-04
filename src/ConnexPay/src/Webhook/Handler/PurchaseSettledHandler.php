@@ -16,7 +16,7 @@ use Techork\PaymentService\Gateway\Webhook\Recorder\RecorderOutcome;
 
 /**
  * ConnexPay `purchase.card.auth.settled`. The virtual-card purchase has
- * settled at the recipient processor — fee Nuvei booked is finalized;
+ * settled at the recipient processor — the fee ConnexPay booked is finalized;
  * we fetch it from the Purchases API and write it onto the local VC
  * row.
  *

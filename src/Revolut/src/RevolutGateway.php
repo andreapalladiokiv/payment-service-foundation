@@ -51,10 +51,10 @@ final class RevolutGateway extends AbstractGateway implements Gateway
 
     public function setCustomerRepository(CustomerRepository $repository): void
     {
-        // Revolut cards are issued against a team-member holder, not a
-        // stored payment customer — the contract method exists for
-        // cross-gateway uniformity and the repository is intentionally
-        // ignored.
+        // These cards are auto-issued with no holder at all (Revolut wants a
+        // `product` code instead), so there is no payment customer to look up
+        // — the contract method exists for cross-gateway uniformity and the
+        // repository is intentionally ignored.
     }
 
     public function getDefaultParameters(): array

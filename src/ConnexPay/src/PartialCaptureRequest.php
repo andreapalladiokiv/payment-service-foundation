@@ -22,9 +22,10 @@ use Techork\PaymentService\Gateway\Exception\UnsupportedInstrument;
  * Failure semantics match the legacy two-step: a failed void leaves the
  * auth intact and reports a failed capture; a failed sale after a
  * successful void also reports a failed capture, with the hold already
- * released (the retry simply runs a new sale — the void of an already
- * voided auth never happens because the stored reference is only replaced
- * on success).
+ * released (the retry repeats the whole two-step — because the stored
+ * reference is only replaced on success, it voids the already voided
+ * AuthOnly again and only then runs the new sale; the void is not
+ * skipped).
  */
 final class PartialCaptureRequest extends PurchaseRequest
 {

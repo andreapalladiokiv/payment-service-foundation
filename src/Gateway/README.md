@@ -42,9 +42,10 @@ Behaviors worth knowing:
   was given, the router calls `retryRefund` (ConnexPay Return with
   ReturnRetryCard, Nuvei Payout). Gateways without the method surface a
   failed `GatewayResult` through the catch — never an exception.
-- `capture` / `refund` / `issueVirtualCard` throw `RuntimeException` when no
-  transaction reference is stored for the payment intent; `cancel` returns a
-  failed result instead.
+- `issueVirtualCard` throws `RuntimeException` when no transaction reference is
+  stored for the payment intent; `capture` / `cancel` / `refund` take the
+  acquirer's `$transactionReference` straight from the caller and never look one
+  up — that resolution, and its missing-row failure, live in the Laravel ports.
 - **Invariant violations are not payment outcomes** — the router folds any
   thrown exception into a failed result, which downstream becomes
   `GatewayDeclinedException` and a recorded `PaymentIntentFailed`, i.e. it
@@ -59,10 +60,12 @@ Behaviors worth knowing:
   - `Exception\UnsupportedOperation` — operation the gateway does not have at
     all, whatever the instrument.
   - Not everything unsupported is an invariant: the per-package
-    `UnsupportedPaynetOperation` and Revolut's `UnsupportedOperationException`
-    stay unmarked on purpose, because the refund-retry path above *depends* on
-    an unsupported operation degrading into a failed `GatewayResult` mid-saga
-    rather than throwing.
+    `UnsupportedPaynetOperation` stays unmarked on purpose, and only on `void()`
+    because that backs `cancel()` — an unsupported operation has to degrade into
+    a failed `GatewayResult` mid-saga rather than throwing, the same way the
+    refund-retry path above *depends* on it. Revolut's
+    `UnsupportedOperationException` does carry the marker, on every operation it
+    throws for: Revolut acquires nothing and has no `retryRefund` to degrade.
 
 ### Results and response capabilities
 

@@ -1,12 +1,14 @@
 # Firewall — rule-driven risk policy
 
 `techork/payment-service-firewall` is the optional rule engine behind
-`Techork\PaymentService\Domain\Firewall\FirewallPort`. It is the adapter between
+`Techork\PaymentService\Domain\PaymentIntent\Port\PaymentIntentFirewallPort`
+(one typed port per aggregate). It is the adapter between
 the domain and its risk signals: rules are authored in the DSL it defines, and
 risk providers contribute what rules match on through its `FactSupplier` seam.
 
 Install it and a chain becomes evaluable. Leave it out and the domain falls back
-to `NullFirewall`, which denies — fail-closed, like `iptables -P INPUT DROP`.
+to `NullPaymentIntentFirewall`, which denies — fail-closed, like
+`iptables -P INPUT DROP`.
 
 ## The two sides
 
@@ -26,7 +28,7 @@ Inside, that work reduces to one chain walk against one fact tree, which is what
 `Chain\ChainEvaluator` does — and why it deals in a chain *name* plus an
 `array $facts`, with rule loading behind `Rule\FirewallRuleSource`. Nothing in
 this package learns a vendor's vocabulary; facts arrive through
-`Fact\FactSupplier`.
+`Common\Contract\FactSupplier`.
 
 ## The rule grammar
 
@@ -88,7 +90,7 @@ per tenant or per phase.
 | `Chain\ChainEvaluator` | walks a chain against a fact tree, first match wins, tracks degradation |
 | `Rule\FirewallRule` | one rule: verdict + conditions + optional raw expression + id |
 | `Rule\FirewallRuleSource` | supplies a chain's rules in order — the seam that keeps storage out of the engine |
-| `Fact\FactSupplier` | contributes a slice of the fact tree; no arguments, so this package learns no vendor vocabulary |
+| `Common\Contract\FactSupplier` (shared kernel, not this package) | contributes a slice of the fact tree; no arguments, so this package learns no vendor vocabulary |
 | `Fact\FactCollector` | merges suppliers and isolates their failures — a supplier that throws contributes nothing |
 | `Dsl\RuleCompiler` | the only place the DSL becomes expression text |
 | `Dsl\RuleEvaluator` | sandboxed evaluation and save-time validation |
