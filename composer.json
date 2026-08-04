@@ -106,6 +106,9 @@
                 "Techork\\PaymentService\\Paynet\\Webhook\\PaynetWebhookSubscriber",
                 "Techork\\PaymentService\\Nuvei\\Webhook\\NuveiWebhookSubscriber",
                 "Techork\\PaymentService\\ConnexPay\\Webhook\\ConnexPayWebhookSubscriber"
+            ],
+            "firewall": [
+                "Techork\\PaymentService\\Firewall\\PaymentIntent\\PaymentIntentFactSchema"
             ]
         }
     },

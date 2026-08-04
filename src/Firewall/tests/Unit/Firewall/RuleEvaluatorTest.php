@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use Psr\Cache\CacheItemInterface;
+use Symfony\Component\Cache\Adapter\ArrayAdapter;
 use Symfony\Component\ExpressionLanguage\SyntaxError;
 use Techork\PaymentService\Firewall\Dsl\FactSchema;
 use Techork\PaymentService\Firewall\Dsl\FieldType;
@@ -125,4 +127,72 @@ it('offers the whitelisted helpers', function () {
     expect($this->evaluator->matches(null, $facts, 'includes(card.country, "G")'))->toBeTrue()
         ->and($this->evaluator->matches(null, $facts, 'is_empty(card.note)'))->toBeTrue()
         ->and($this->evaluator->matches(null, $facts, 'is_not_empty(card.country)'))->toBeTrue();
+});
+
+it('parses an expression once per pool, not once per evaluator', function () {
+    // The pool is what turns per-request parsing into per-deploy parsing, so the
+    // property under test is that a SECOND evaluator sharing the pool never
+    // reaches the parser. Counting saves is the direct proof: a parse always
+    // writes its tree back. The regression this guards is silent — a pool that
+    // never hits still evaluates every rule correctly, just slowly.
+    $schema = new class implements FactSchema
+    {
+        public function roots(): array
+        {
+            return ['card'];
+        }
+
+        public function typeOf(string $path): FieldType
+        {
+            return FieldType::Text;
+        }
+    };
+
+    $pool = new class extends ArrayAdapter
+    {
+        public int $saves = 0;
+
+        public function save(CacheItemInterface $item): bool
+        {
+            $this->saves++;
+
+            return parent::save($item);
+        }
+    };
+
+    $conditions = ['card.country' => ['values' => ['GB']]];
+    $facts = ['card' => ['country' => 'GB']];
+
+    $first = new RuleEvaluator(new RuleCompiler($schema), $schema, $pool);
+    $first->matches($conditions, $facts);
+    $first->matches($conditions, $facts);
+
+    expect($pool->saves)->toBe(1);
+
+    // A fresh evaluator stands in for the next request: same pool, no reparse.
+    (new RuleEvaluator(new RuleCompiler($schema), $schema, $pool))->matches($conditions, $facts);
+
+    expect($pool->saves)->toBe(1);
+});
+
+it('evaluates without a pool, since the pool is an optimisation only', function () {
+    // The pool must never be load-bearing: omitting it costs a reparse per
+    // request and nothing else. Every other test here runs this path.
+    $schema = new class implements FactSchema
+    {
+        public function roots(): array
+        {
+            return ['card'];
+        }
+
+        public function typeOf(string $path): FieldType
+        {
+            return FieldType::Text;
+        }
+    };
+
+    $evaluator = new RuleEvaluator(new RuleCompiler($schema), $schema);
+
+    expect($evaluator->matches(['card.country' => ['values' => ['GB']]], ['card' => ['country' => 'GB']]))
+        ->toBeTrue();
 });

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Firewall\Dsl;
 
+use Psr\Cache\CacheItemPoolInterface;
 use Symfony\Component\ExpressionLanguage\ExpressionLanguage;
 
 /**
@@ -21,16 +22,35 @@ use Symfony\Component\ExpressionLanguage\ExpressionLanguage;
  *     strips value objects and closures, so an authored rule cannot call a
  *     method on a domain object and reach behaviour. Do not "optimise" the
  *     round-trip away.
+ *
+ * PARSING IS THE EXPENSIVE PART, and it is cached rather than avoided. Every
+ * evaluation hands ExpressionLanguage a compiled string, which it lexes and
+ * parses into its own node tree; on a chain of any size that dominates the cost
+ * of evaluating the tree by an order of magnitude. ExpressionLanguage keys that
+ * tree by expression text and caches it in the pool given here, so supplying a
+ * pool that OUTLIVES THE REQUEST is what turns per-request parsing into
+ * per-deploy parsing. Passing none keeps Symfony's default in-memory pool, which
+ * dies with the request and therefore never hits — correct, just not fast.
+ *
+ * Choose a LOCAL pool: filesystem, APCu, or anything else that answers without
+ * leaving the box. ExpressionLanguage looks up one cache key per expression, so
+ * a chain of N rules is N lookups; against a networked pool that is N round
+ * trips per payment, which costs more than the parsing it saves.
  */
 final class RuleEvaluator
 {
     private ExpressionLanguage $expressionLanguage;
 
+    /**
+     * @param  CacheItemPoolInterface|null  $parseCache  local, request-outliving
+     *                                                   pool for parsed expressions
+     */
     public function __construct(
         private readonly RuleCompiler $compiler,
         private readonly FactSchema $schema,
+        ?CacheItemPoolInterface $parseCache = null,
     ) {
-        $this->expressionLanguage = new ExpressionLanguage;
+        $this->expressionLanguage = new ExpressionLanguage($parseCache);
 
         foreach (ExpressionFunctions::all() as $function) {
             $this->expressionLanguage->addFunction($function);
