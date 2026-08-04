@@ -532,13 +532,12 @@ it('still folds an ordinary gateway exception into a failed result', function ()
 });
 
 // ──────────────────────────────────────────────
-//  the stored-credential indicator reaches the request
+//  the stored-credential series reaches the request
 //
-//  The router is the only implementer of PaymentGatewayInterface, so if the
-//  initiation does not make it into the parameter array here it reaches no
-//  adapter at all — which is what happened for as long as CIT/MIT existed only
-//  in the domain. Asserting the key rather than adapter behaviour keeps this a
-//  test of the seam: what each provider maps it to is its own test's business.
+//  The router is the only implementer of PaymentGatewayInterface, so a series fact
+//  that does not make it into the parameter array here reaches no adapter at all.
+//  These assert the keys rather than adapter behaviour: what each provider maps them
+//  to is its own test's business.
 // ──────────────────────────────────────────────
 
 function captureOmnipayParams(string $method, ?array &$seen): GatewayContract
@@ -565,74 +564,47 @@ function initiationInstrument(): PaymentInstrument
     return $instrument;
 }
 
-it('puts the initiation in the parameters it hands the charge request', function (PaymentInitiation $initiation) {
-    $seen = null;
-    $router = makeRouter(omnipay: captureOmnipayParams('purchase', $seen));
-
-    $router->charge(
-        GatewayId::generate(),
-        initiationInstrument(),
-        new Money(1000, new Currency('USD')),
-        initiation: $initiation,
-    );
-
-    expect($seen)->toHaveKey('initiation')
-        ->and($seen['initiation'])->toBe($initiation);
-})->with([
-    PaymentInitiation::CardholderInitiated,
-    PaymentInitiation::MerchantRecurring,
-    PaymentInitiation::MerchantUnscheduled,
-]);
-
-it('puts the initiation in the parameters it hands the authorize request', function (PaymentInitiation $initiation) {
+it('announces the series to the adapter, since Omnipay has no other way to say it', function () {
     $seen = null;
     $router = makeRouter(omnipay: captureOmnipayParams('authorize', $seen));
 
-    $router->authorize(
+    $router->authorizeStoredCredential(
         GatewayId::generate(),
         initiationInstrument(),
         new Money(1000, new Currency('USD')),
-        initiation: $initiation,
+        PaymentInitiation::MerchantRecurring,
+        '1110000000123456',
     );
 
-    expect($seen)->toHaveKey('initiation')
-        ->and($seen['initiation'])->toBe($initiation);
-})->with([
-    PaymentInitiation::CardholderInitiated,
-    PaymentInitiation::MerchantRecurring,
-    PaymentInitiation::MerchantUnscheduled,
-]);
-
-it('defaults the initiation to cardholder-initiated when a caller omits it', function () {
-    $seen = null;
-    $router = makeRouter(omnipay: captureOmnipayParams('purchase', $seen));
-
-    $router->charge(
-        GatewayId::generate(),
-        initiationInstrument(),
-        new Money(1000, new Currency('USD')),
-    );
-
-    expect($seen['initiation'])->toBe(PaymentInitiation::CardholderInitiated);
-});
-
-it('puts the resolved stored-credential reference in the request parameters', function () {
-    $seen = null;
-    $router = makeRouter(omnipay: captureOmnipayParams('purchase', $seen));
-
-    $router->charge(
-        GatewayId::generate(),
-        initiationInstrument(),
-        new Money(1000, new Currency('USD')),
-        initiation: PaymentInitiation::MerchantRecurring,
-        storedCredentialReference: '1110000000123456',
-    );
-
-    expect($seen)->toHaveKey('storedCredentialReference')
+    // The flag IS the method choice crossing the parameter bag. Without it an
+    // adapter cannot tell a series payment from an ordinary authorization, because
+    // the other two fields do not separate them.
+    expect($seen['inStoredCredentialSeries'])->toBeTrue()
+        ->and($seen['initiation'])->toBe(PaymentInitiation::MerchantRecurring)
         ->and($seen['storedCredentialReference'])->toBe('1110000000123456');
 });
 
-it('sends the anchor as absent, not as an empty string, when there is none', function () {
+it('carries an absent genesis as absent, which inside a series means this payment opens it', function (PaymentInitiation $initiation) {
+    $seen = null;
+    $router = makeRouter(omnipay: captureOmnipayParams('authorize', $seen));
+
+    $router->authorizeStoredCredential(
+        GatewayId::generate(),
+        initiationInstrument(),
+        new Money(1000, new Currency('USD')),
+        $initiation,
+    );
+
+    expect($seen['inStoredCredentialSeries'])->toBeTrue()
+        ->and($seen['storedCredentialReference'])->toBeNull()
+        ->and($seen['initiation'])->toBe($initiation);
+})->with([
+    // Both open a series. Keying the position on CIT/MIT would get the second wrong.
+    PaymentInitiation::CardholderInitiated,
+    PaymentInitiation::MerchantUnscheduled,
+]);
+
+it('leaves an ordinary authorization with no series facts at all', function () {
     $seen = null;
     $router = makeRouter(omnipay: captureOmnipayParams('authorize', $seen));
 
@@ -642,5 +614,24 @@ it('sends the anchor as absent, not as an empty string, when there is none', fun
         new Money(1000, new Currency('USD')),
     );
 
-    expect($seen['storedCredentialReference'])->toBeNull();
+    // Not false, not null: absent. A one-off payment has no position to declare, and
+    // charge()/authorize() went back to saying nothing about series once the
+    // scenario got its own operation.
+    expect($seen)->not->toHaveKey('inStoredCredentialSeries')
+        ->and($seen)->not->toHaveKey('storedCredentialReference')
+        ->and($seen)->not->toHaveKey('initiation');
+});
+
+it('leaves an ordinary charge with no series facts either', function () {
+    $seen = null;
+    $router = makeRouter(omnipay: captureOmnipayParams('purchase', $seen));
+
+    $router->charge(
+        GatewayId::generate(),
+        initiationInstrument(),
+        new Money(1000, new Currency('USD')),
+    );
+
+    expect($seen)->not->toHaveKey('inStoredCredentialSeries')
+        ->and($seen)->not->toHaveKey('initiation');
 });

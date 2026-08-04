@@ -79,3 +79,11 @@ it('binds the stored-credential reference from an Omnipay parameter array', func
 it('has no default for the anchor, unlike the initiation', function () {
     expect(initiationRequest()->getStoredCredentialReference())->toBeNull();
 });
+
+it('binds the series flag, and defaults it to false', function () {
+    $request = initiationRequest();
+    expect($request->isInStoredCredentialSeries())->toBeFalse();
+
+    $request->initialize(['inStoredCredentialSeries' => true]);
+    expect($request->isInStoredCredentialSeries())->toBeTrue();
+});

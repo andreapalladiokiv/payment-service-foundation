@@ -117,7 +117,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         return $result;
     }
 
-    public function authorize(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated, ?string $storedCredentialReference = null): AuthorizationResult
+    public function authorize(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null): AuthorizationResult
     {
         $credential = $this->credentialRepository->findOrFail($gatewayId);
         $omnipay = $this->gatewayFactory->createForCredential($credential);
@@ -132,8 +132,6 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             'threeDS' => $threeDS,
             'statementDescription' => $statementDescription,
             'description' => $description,
-            'initiation' => $initiation->value,
-            'storedCredentialReference' => $storedCredentialReference,
         ]);
 
         $result = $this->buildAuthorization(fn () => $omnipay->authorize([
@@ -147,8 +145,6 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             'threeDS' => $threeDS,
             'statementDescription' => $statementDescription,
             'description' => $description,
-            'initiation' => $initiation,
-            'storedCredentialReference' => $storedCredentialReference,
         ])->send());
 
         $this->logger->log('Gateway authorize response', [
@@ -166,7 +162,70 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         return $result;
     }
 
-    public function charge(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated, ?string $storedCredentialReference = null): AuthorizationResult
+    public function authorizeStoredCredential(
+        GatewayId $gatewayId,
+        PaymentInstrument $instrument,
+        Money $amount,
+        PaymentInitiation $initiation,
+        ?string $genesisReference = null,
+        ?string $clientUniqueId = null,
+        ?BillingAddress $billingAddress = null,
+        ?ThreeDSResult $threeDS = null,
+        ?string $statementDescription = null,
+        ?string $description = null,
+    ): AuthorizationResult {
+        $credential = $this->credentialRepository->findOrFail($gatewayId);
+        $omnipay = $this->gatewayFactory->createForCredential($credential);
+
+        $this->logger->log('Gateway authorizeStoredCredential request', [
+            'gatewayId' => $gatewayId->toString(),
+            'gatewayName' => $credential->getGatewayName(),
+            'amount' => $amount,
+            'instrument' => $instrument->toPayload(),
+            'clientUniqueId' => $clientUniqueId,
+            'billingAddress' => $billingAddress?->toArray(),
+            'threeDS' => $threeDS,
+            'statementDescription' => $statementDescription,
+            'description' => $description,
+            'initiation' => $initiation->value,
+            'genesisReference' => $genesisReference,
+        ]);
+
+        // The same Omnipay `authorize` request the ordinary path uses. The series
+        // facts ride in the parameter bag rather than in a second request class,
+        // because for every acquirer here this is the same endpoint with extra
+        // fields — Nuvei's /payment either carries the rebilling block or does not.
+        // An adapter that ignores them behaves exactly as it did before, which is
+        // why this is additive rather than a new code path per provider.
+        $result = $this->buildAuthorization(fn () => $omnipay->authorize([
+            'money' => $amount,
+            'instrument' => $instrument,
+            'gateway' => $credential,
+            'decrypter' => $this->decrypter,
+            'referenceResolver' => $this->referenceRepository,
+            'clientUniqueId' => $clientUniqueId,
+            'billingAddress' => $billingAddress,
+            'threeDS' => $threeDS,
+            'statementDescription' => $statementDescription,
+            'description' => $description,
+            'initiation' => $initiation,
+            'storedCredentialReference' => $genesisReference,
+            'inStoredCredentialSeries' => true,
+        ])->send());
+
+        $this->logger->log('Gateway authorizeStoredCredential response', [
+            'clientUniqueId' => $clientUniqueId,
+            'success' => $result->success,
+            'reference' => $result->reference,
+            'message' => $result->message,
+            'requiresAction' => $result->isRequiresAction(),
+            'challenge' => $result->challenge,
+        ]);
+
+        return $result;
+    }
+
+    public function charge(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null): AuthorizationResult
     {
         $credential = $this->credentialRepository->findOrFail($gatewayId);
         $omnipay = $this->gatewayFactory->createForCredential($credential);
@@ -181,8 +240,6 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             'threeDS' => $threeDS,
             'statementDescription' => $statementDescription,
             'description' => $description,
-            'initiation' => $initiation->value,
-            'storedCredentialReference' => $storedCredentialReference,
         ]);
 
         $result = $this->buildAuthorization(fn () => $omnipay->purchase([
@@ -196,8 +253,6 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             'threeDS' => $threeDS,
             'statementDescription' => $statementDescription,
             'description' => $description,
-            'initiation' => $initiation,
-            'storedCredentialReference' => $storedCredentialReference,
         ])->send());
 
         $this->logger->log('Gateway charge response', [

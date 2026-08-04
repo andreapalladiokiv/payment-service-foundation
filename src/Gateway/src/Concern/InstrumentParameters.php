@@ -110,4 +110,28 @@ trait InstrumentParameters
     {
         return $this->getParameter('storedCredentialReference');
     }
+
+    public function setInStoredCredentialSeries(bool $value): self
+    {
+        return $this->setParameter('inStoredCredentialSeries', $value);
+    }
+
+    /**
+     * Whether this request is a payment inside a stored-credential series.
+     *
+     * Set only by {@see \Techork\PaymentService\Gateway\PaymentGatewayRouter::authorizeStoredCredential},
+     * so it is the method choice crossing Omnipay's parameter bag rather than a
+     * decision of its own — Omnipay has no other way for a distinct operation to
+     * announce itself to a shared request class.
+     *
+     * It cannot be inferred from the other two. A subscription opened by a present
+     * cardholder is cardholder-initiated with no anchor, exactly like a standalone
+     * checkout; only the caller's choice of operation separates them. Defaults to
+     * false, so an adapter reading it understates a series rather than promising an
+     * acquirer renewals of every one-off sale.
+     */
+    public function isInStoredCredentialSeries(): bool
+    {
+        return (bool) $this->getParameter('inStoredCredentialSeries');
+    }
 }

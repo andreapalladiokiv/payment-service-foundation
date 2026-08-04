@@ -32,12 +32,10 @@ use Techork\PaymentService\Common\ValueObject\CardBrand;
  * intentionally omitted — those rely on natural HTTP idempotency at the
  * gateway endpoint instead.
  *
- * `$storedCredentialReference` on {@see authorize} / {@see charge} is the gateway's
- * own reference for the transaction that began this instrument's stored-credential
- * series, already resolved. The domain names that transaction by its own id and the
- * port resolves it, so a provider identifier appears here for the first time and
- * goes no further back. Each adapter maps it to the field its acquirer asks for —
- * Nuvei's `relatedTransactionId`, and whatever ConnexPay eventually documents.
+ * {@see authorizeStoredCredential} is the one operation that is not simply another
+ * verb: it places a payment belonging to a stored-credential series, which is a
+ * different request from an ordinary authorization rather than the same one with
+ * flags. See its own note.
  */
 interface PaymentGatewayInterface
 {
@@ -45,9 +43,9 @@ interface PaymentGatewayInterface
 
     public function createPaymentMethod(GatewayId $gatewayId, PaymentInstrument $instrument, ?BillingAddress $billingAddress = null, ?string $clientUniqueId = null): RegistrationResult;
 
-    public function authorize(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated, ?string $storedCredentialReference = null): AuthorizationResult;
+    public function authorize(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null): AuthorizationResult;
 
-    public function charge(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated, ?string $storedCredentialReference = null): AuthorizationResult;
+    public function charge(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null): AuthorizationResult;
 
     /**
      * @param  ?Money  $authorizedAmount  The originally authorized amount.
@@ -55,6 +53,48 @@ interface PaymentGatewayInterface
      *  a partial request and fall back to void + a fresh sale with
      *  `$instrument`. Gateways with native partial capture ignore both.
      */
+    /**
+     * Authorizes a payment that belongs to a stored-credential series — a
+     * subscription's first charge, or any of its renewals.
+     *
+     * A separate operation rather than arguments on {@see authorize}, because a
+     * series payment carries a POSITION and an ordinary one has none. The acquirer
+     * needs that position: the first payment carries the indicator opening the
+     * chain, every later one the reference back to it. Nuvei words the field on
+     * position rather than on who initiated the payment — "0 – For the first
+     * rebilling payment. 1 – For all subsequent rebilling transactions" — and also
+     * narrows the instrument, asking that subsequent payments "use only
+     * userPaymentOptionId".
+     *
+     * Calling this at all is what says "part of a series". No field can say it: a
+     * subscription opened by a present cardholder is indistinguishable from a
+     * standalone checkout, both being cardholder-initiated with nothing before them.
+     *
+     * `$genesisReference` is the acquirer's own reference for the payment that opened
+     * the series, already resolved by the caller. Null means THIS payment opens it —
+     * not that there is no series, which is why the distinction needs a method
+     * rather than a nullable argument on a general one.
+     *
+     * Authorize-only by domain condition, not by preference:
+     * {@see \Techork\PaymentService\Domain\Subscription\SubscriptionAggregate::activate}
+     * requires an `Authorized` intent and captures it, and that split is what makes
+     * "one payment intent activates at most one subscription" true without a rule of
+     * its own. So there is no capture method to pass; capture follows through
+     * {@see capture}.
+     */
+    public function authorizeStoredCredential(
+        GatewayId $gatewayId,
+        PaymentInstrument $instrument,
+        Money $amount,
+        PaymentInitiation $initiation,
+        ?string $genesisReference = null,
+        ?string $clientUniqueId = null,
+        ?BillingAddress $billingAddress = null,
+        ?ThreeDSResult $threeDS = null,
+        ?string $statementDescription = null,
+        ?string $description = null,
+    ): AuthorizationResult;
+
     public function capture(GatewayId $gatewayId, string $paymentIntentId, Money $amount, ?string $clientUniqueId = null, ?Money $authorizedAmount = null, ?PaymentInstrument $instrument = null): GatewayResult;
 
     public function cancel(GatewayId $gatewayId, string $paymentIntentId, ?string $clientUniqueId = null): GatewayResult;
