@@ -532,7 +532,7 @@ it('still folds an ordinary gateway exception into a failed result', function ()
 });
 
 // ──────────────────────────────────────────────
-//  the stored-credential series reaches the request
+//  the rebilling series reaches the request
 //
 //  The router is the only implementer of PaymentGatewayInterface, so a series fact
 //  that does not make it into the parameter array here reaches no adapter at all.
@@ -568,7 +568,7 @@ it('announces the series to the adapter, since Omnipay has no other way to say i
     $seen = null;
     $router = makeRouter(omnipay: captureOmnipayParams('authorize', $seen));
 
-    $router->authorizeStoredCredential(
+    $router->authorizeRebilling(
         GatewayId::generate(),
         initiationInstrument(),
         new Money(1000, new Currency('USD')),
@@ -579,24 +579,24 @@ it('announces the series to the adapter, since Omnipay has no other way to say i
     // The flag IS the method choice crossing the parameter bag. Without it an
     // adapter cannot tell a series payment from an ordinary authorization, because
     // the other two fields do not separate them.
-    expect($seen['inStoredCredentialSeries'])->toBeTrue()
+    expect($seen['rebilling'])->toBeTrue()
         ->and($seen['initiation'])->toBe(PaymentInitiation::MerchantRecurring)
-        ->and($seen['storedCredentialReference'])->toBe('1110000000123456');
+        ->and($seen['rebillingReference'])->toBe('1110000000123456');
 });
 
 it('carries an absent genesis as absent, which inside a series means this payment opens it', function (PaymentInitiation $initiation) {
     $seen = null;
     $router = makeRouter(omnipay: captureOmnipayParams('authorize', $seen));
 
-    $router->authorizeStoredCredential(
+    $router->authorizeRebilling(
         GatewayId::generate(),
         initiationInstrument(),
         new Money(1000, new Currency('USD')),
         $initiation,
     );
 
-    expect($seen['inStoredCredentialSeries'])->toBeTrue()
-        ->and($seen['storedCredentialReference'])->toBeNull()
+    expect($seen['rebilling'])->toBeTrue()
+        ->and($seen['rebillingReference'])->toBeNull()
         ->and($seen['initiation'])->toBe($initiation);
 })->with([
     // Both open a series. Keying the position on CIT/MIT would get the second wrong.
@@ -614,12 +614,12 @@ it('leaves an ordinary authorization with no series facts at all', function () {
         new Money(1000, new Currency('USD')),
     );
 
-    // Not false, not null: absent. A one-off payment has no position to declare, and
-    // charge()/authorize() went back to saying nothing about series once the
-    // scenario got its own operation.
-    expect($seen)->not->toHaveKey('inStoredCredentialSeries')
-        ->and($seen)->not->toHaveKey('storedCredentialReference')
-        ->and($seen)->not->toHaveKey('initiation');
+    // The initiation still travels — it is a fact about any payment, and Stripe's
+    // off_session decision hangs on it. What an ordinary authorization has none of is
+    // a POSITION: no series flag, no anchor.
+    expect($seen['initiation'])->toBe(PaymentInitiation::CardholderInitiated)
+        ->and($seen)->not->toHaveKey('rebilling')
+        ->and($seen)->not->toHaveKey('rebillingReference');
 });
 
 it('leaves an ordinary charge with no series facts either', function () {
@@ -632,6 +632,6 @@ it('leaves an ordinary charge with no series facts either', function () {
         new Money(1000, new Currency('USD')),
     );
 
-    expect($seen)->not->toHaveKey('inStoredCredentialSeries')
-        ->and($seen)->not->toHaveKey('initiation');
+    expect($seen['initiation'])->toBe(PaymentInitiation::CardholderInitiated)
+        ->and($seen)->not->toHaveKey('rebilling');
 });

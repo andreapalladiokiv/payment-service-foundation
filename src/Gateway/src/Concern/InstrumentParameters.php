@@ -94,9 +94,9 @@ trait InstrumentParameters
         return $this->getParameter('initiation') ?? PaymentInitiation::CardholderInitiated;
     }
 
-    public function setStoredCredentialReference(?string $value): self
+    public function setRebillingReference(?string $value): self
     {
-        return $this->setParameter('storedCredentialReference', $value);
+        return $this->setParameter('rebillingReference', $value);
     }
 
     /**
@@ -106,20 +106,20 @@ trait InstrumentParameters
      * invent one — a wrong anchor is worse than none, since the acquirer rejects a
      * reference it does not recognise.
      */
-    public function getStoredCredentialReference(): ?string
+    public function getRebillingReference(): ?string
     {
-        return $this->getParameter('storedCredentialReference');
+        return $this->getParameter('rebillingReference');
     }
 
-    public function setInStoredCredentialSeries(bool $value): self
+    public function setRebilling(bool $value): self
     {
-        return $this->setParameter('inStoredCredentialSeries', $value);
+        return $this->setParameter('rebilling', $value);
     }
 
     /**
-     * Whether this request is a payment inside a stored-credential series.
+     * Whether this request is a payment inside a rebilling series.
      *
-     * Set only by {@see \Techork\PaymentService\Gateway\PaymentGatewayRouter::authorizeStoredCredential},
+     * Set only by {@see \Techork\PaymentService\Gateway\PaymentGatewayRouter::authorizeRebilling},
      * so it is the method choice crossing Omnipay's parameter bag rather than a
      * decision of its own — Omnipay has no other way for a distinct operation to
      * announce itself to a shared request class.
@@ -130,8 +130,8 @@ trait InstrumentParameters
      * false, so an adapter reading it understates a series rather than promising an
      * acquirer renewals of every one-off sale.
      */
-    public function isInStoredCredentialSeries(): bool
+    public function isRebilling(): bool
     {
-        return (bool) $this->getParameter('inStoredCredentialSeries');
+        return (bool) $this->getParameter('rebilling');
     }
 }

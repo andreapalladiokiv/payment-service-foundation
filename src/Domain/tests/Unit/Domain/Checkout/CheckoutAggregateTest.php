@@ -207,7 +207,6 @@ function makeAuthorizedPiAggregate(): PaymentIntentAggregate
         public function challengeResult(): ?\Techork\PaymentService\Common\Contract\ChallengeResult { return null; }
         public function initiation(): PaymentInitiation { return PaymentInitiation::CardholderInitiated; }
         public function connection(): ?ConnectionContext { return null; }
-        public function genesisPaymentIntentId(): ?PaymentIntentId { return null; }
         public function gatewayId(): ?string { return null; }
     };
 
@@ -387,7 +386,6 @@ it('throws CheckoutNotPayable when payment intent amount does not match checkout
         public function challengeResult(): ?\Techork\PaymentService\Common\Contract\ChallengeResult { return null; }
         public function initiation(): PaymentInitiation { return PaymentInitiation::CardholderInitiated; }
         public function connection(): ?ConnectionContext { return null; }
-        public function genesisPaymentIntentId(): ?PaymentIntentId { return null; }
         public function gatewayId(): ?string { return null; }
     };
 
@@ -427,7 +425,6 @@ it('throws CheckoutNotPayable when the payment intent was already charged inline
         public function challengeResult(): ?\Techork\PaymentService\Common\Contract\ChallengeResult { return null; }
         public function initiation(): PaymentInitiation { return PaymentInitiation::CardholderInitiated; }
         public function connection(): ?ConnectionContext { return null; }
-        public function genesisPaymentIntentId(): ?PaymentIntentId { return null; }
         public function gatewayId(): ?string { return null; }
     };
 

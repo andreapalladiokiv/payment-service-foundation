@@ -32,10 +32,19 @@ use Techork\PaymentService\Common\ValueObject\CardBrand;
  * intentionally omitted — those rely on natural HTTP idempotency at the
  * gateway endpoint instead.
  *
- * {@see authorizeStoredCredential} is the one operation that is not simply another
- * verb: it places a payment belonging to a stored-credential series, which is a
+ * {@see authorizeRebilling} is the one operation that is not simply another
+ * verb: it places a payment belonging to a rebilling series, which is a
  * different request from an ordinary authorization rather than the same one with
  * flags. See its own note.
+ *
+ * Operations that act on an existing transaction take the acquirer's
+ * `$transactionReference` directly. They used to take a payment-intent id and look
+ * the reference up themselves, which split the reference's lifecycle across two
+ * layers — read here, written by the port — and let the same missing-row condition
+ * mean two different things depending on the method. Resolving it is the port's
+ * business now, alongside persisting it, so this interface talks about acquirer
+ * identities and nothing else. {@see issueVirtualCard} is the exception, and only
+ * because no port drives it.
  */
 interface PaymentGatewayInterface
 {
@@ -43,9 +52,9 @@ interface PaymentGatewayInterface
 
     public function createPaymentMethod(GatewayId $gatewayId, PaymentInstrument $instrument, ?BillingAddress $billingAddress = null, ?string $clientUniqueId = null): RegistrationResult;
 
-    public function authorize(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null): AuthorizationResult;
+    public function authorize(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated): AuthorizationResult;
 
-    public function charge(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null): AuthorizationResult;
+    public function charge(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated): AuthorizationResult;
 
     /**
      * @param  ?Money  $authorizedAmount  The originally authorized amount.
@@ -54,7 +63,7 @@ interface PaymentGatewayInterface
      *  `$instrument`. Gateways with native partial capture ignore both.
      */
     /**
-     * Authorizes a payment that belongs to a stored-credential series — a
+     * Authorizes a payment that belongs to a rebilling series — a
      * subscription's first charge, or any of its renewals.
      *
      * A separate operation rather than arguments on {@see authorize}, because a
@@ -82,7 +91,7 @@ interface PaymentGatewayInterface
      * its own. So there is no capture method to pass; capture follows through
      * {@see capture}.
      */
-    public function authorizeStoredCredential(
+    public function authorizeRebilling(
         GatewayId $gatewayId,
         PaymentInstrument $instrument,
         Money $amount,
@@ -95,9 +104,9 @@ interface PaymentGatewayInterface
         ?string $description = null,
     ): AuthorizationResult;
 
-    public function capture(GatewayId $gatewayId, string $paymentIntentId, Money $amount, ?string $clientUniqueId = null, ?Money $authorizedAmount = null, ?PaymentInstrument $instrument = null): GatewayResult;
+    public function capture(GatewayId $gatewayId, string $transactionReference, Money $amount, ?string $clientUniqueId = null, ?Money $authorizedAmount = null, ?PaymentInstrument $instrument = null): GatewayResult;
 
-    public function cancel(GatewayId $gatewayId, string $paymentIntentId, ?string $clientUniqueId = null): GatewayResult;
+    public function cancel(GatewayId $gatewayId, string $transactionReference, ?string $clientUniqueId = null): GatewayResult;
 
     /**
      * @param  ?PaymentInstrument  $retryInstrument  Refund the funds onto this
@@ -106,7 +115,7 @@ interface PaymentGatewayInterface
      *  every gateway supports this; impls that don't should surface a
      *  failed {@see GatewayResult} so the aggregate records `RefundFailed`.
      */
-    public function refund(GatewayId $gatewayId, string $paymentIntentId, Money $amount, ?string $clientUniqueId = null, ?PaymentInstrument $retryInstrument = null): GatewayResult;
+    public function refund(GatewayId $gatewayId, string $transactionReference, Money $amount, ?string $clientUniqueId = null, ?PaymentInstrument $retryInstrument = null): GatewayResult;
 
     public function issueVirtualCard(
         GatewayId $gatewayId,

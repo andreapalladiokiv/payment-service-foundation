@@ -216,13 +216,6 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
             throw InvalidPaymentIntent::hostedPaymentRequiresImmediateCapture($command->captureMethod()->value);
         }
 
-        // A series cannot begin with itself. Left unchecked this reaches the
-        // acquirer as a transaction anchored to an id it has never seen — the
-        // request is built, sent, and refused, and the refusal reads as a decline.
-        if ($command->genesisPaymentIntentId()?->equals($command->paymentIntentId())) {
-            throw InvalidPaymentIntent::cannotBeItsOwnGenesis($command->paymentIntentId());
-        }
-
         $self = new self($command->paymentIntentId());
 
         // Inspect before spending a gateway call: a rejected payment never
@@ -252,7 +245,6 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                 billingAddress: $command->billingAddress(),
                 challengeResult: $command->challengeResult(),
                 initiation: $command->initiation(),
-                genesisPaymentIntentId: $command->genesisPaymentIntentId(),
             ));
         } catch (GatewayDeclinedException $e) {
             $self->recordThat(new PaymentIntentFailed(

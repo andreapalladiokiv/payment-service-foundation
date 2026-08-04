@@ -117,7 +117,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         return $result;
     }
 
-    public function authorize(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null): AuthorizationResult
+    public function authorize(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated): AuthorizationResult
     {
         $credential = $this->credentialRepository->findOrFail($gatewayId);
         $omnipay = $this->gatewayFactory->createForCredential($credential);
@@ -132,6 +132,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             'threeDS' => $threeDS,
             'statementDescription' => $statementDescription,
             'description' => $description,
+            'initiation' => $initiation->value,
         ]);
 
         $result = $this->buildAuthorization(fn () => $omnipay->authorize([
@@ -145,6 +146,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             'threeDS' => $threeDS,
             'statementDescription' => $statementDescription,
             'description' => $description,
+            'initiation' => $initiation,
         ])->send());
 
         $this->logger->log('Gateway authorize response', [
@@ -162,7 +164,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         return $result;
     }
 
-    public function authorizeStoredCredential(
+    public function authorizeRebilling(
         GatewayId $gatewayId,
         PaymentInstrument $instrument,
         Money $amount,
@@ -177,7 +179,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         $credential = $this->credentialRepository->findOrFail($gatewayId);
         $omnipay = $this->gatewayFactory->createForCredential($credential);
 
-        $this->logger->log('Gateway authorizeStoredCredential request', [
+        $this->logger->log('Gateway authorizeRebilling request', [
             'gatewayId' => $gatewayId->toString(),
             'gatewayName' => $credential->getGatewayName(),
             'amount' => $amount,
@@ -209,11 +211,11 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             'statementDescription' => $statementDescription,
             'description' => $description,
             'initiation' => $initiation,
-            'storedCredentialReference' => $genesisReference,
-            'inStoredCredentialSeries' => true,
+            'rebillingReference' => $genesisReference,
+            'rebilling' => true,
         ])->send());
 
-        $this->logger->log('Gateway authorizeStoredCredential response', [
+        $this->logger->log('Gateway authorizeRebilling response', [
             'clientUniqueId' => $clientUniqueId,
             'success' => $result->success,
             'reference' => $result->reference,
@@ -225,7 +227,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         return $result;
     }
 
-    public function charge(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null): AuthorizationResult
+    public function charge(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated): AuthorizationResult
     {
         $credential = $this->credentialRepository->findOrFail($gatewayId);
         $omnipay = $this->gatewayFactory->createForCredential($credential);
@@ -240,6 +242,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             'threeDS' => $threeDS,
             'statementDescription' => $statementDescription,
             'description' => $description,
+            'initiation' => $initiation->value,
         ]);
 
         $result = $this->buildAuthorization(fn () => $omnipay->purchase([
@@ -253,6 +256,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             'threeDS' => $threeDS,
             'statementDescription' => $statementDescription,
             'description' => $description,
+            'initiation' => $initiation,
         ])->send());
 
         $this->logger->log('Gateway charge response', [
@@ -270,21 +274,14 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         return $result;
     }
 
-    public function cancel(GatewayId $gatewayId, string $paymentIntentId, ?string $clientUniqueId = null): GatewayResult
+    public function cancel(GatewayId $gatewayId, string $transactionReference, ?string $clientUniqueId = null): GatewayResult
     {
-        $transactionReference = $this->transactionRepository->findForPaymentIntent($paymentIntentId);
-
-        if ($transactionReference === null) {
-            return GatewayResult::failed("Transaction reference for payment intent '$paymentIntentId' not found");
-        }
-
         $credential = $this->credentialRepository->findOrFail($gatewayId);
         $omnipay = $this->gatewayFactory->createForCredential($credential);
 
         $this->logger->log('Gateway cancel request', [
             'gatewayId' => $gatewayId->toString(),
             'gatewayName' => $credential->getGatewayName(),
-            'paymentIntentId' => $paymentIntentId,
             'transactionReference' => $transactionReference,
             'clientUniqueId' => $clientUniqueId,
         ]);
@@ -304,17 +301,13 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         return $result;
     }
 
-    public function capture(GatewayId $gatewayId, string $paymentIntentId, Money $amount, ?string $clientUniqueId = null, ?Money $authorizedAmount = null, ?PaymentInstrument $instrument = null): GatewayResult
+    public function capture(GatewayId $gatewayId, string $transactionReference, Money $amount, ?string $clientUniqueId = null, ?Money $authorizedAmount = null, ?PaymentInstrument $instrument = null): GatewayResult
     {
         $credential = $this->credentialRepository->findOrFail($gatewayId);
         $omnipay = $this->gatewayFactory->createForCredential($credential);
-        $transactionReference = $this->transactionRepository->findForPaymentIntent($paymentIntentId);
-        $transactionReference === null && throw new RuntimeException("Transaction reference for payment intent '$paymentIntentId' not found");
-
         $this->logger->log('Gateway capture request', [
             'gatewayId' => $gatewayId->toString(),
             'gatewayName' => $credential->getGatewayName(),
-            'paymentIntentId' => $paymentIntentId,
             'transactionReference' => $transactionReference,
             'amount' => $amount,
             'clientUniqueId' => $clientUniqueId,
@@ -346,19 +339,15 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         return $result;
     }
 
-    public function refund(GatewayId $gatewayId, string $paymentIntentId, Money $amount, ?string $clientUniqueId = null, ?PaymentInstrument $retryInstrument = null): GatewayResult
+    public function refund(GatewayId $gatewayId, string $transactionReference, Money $amount, ?string $clientUniqueId = null, ?PaymentInstrument $retryInstrument = null): GatewayResult
     {
         $credential = $this->credentialRepository->findOrFail($gatewayId);
         $omnipay = $this->gatewayFactory->createForCredential($credential);
-        $transactionReference = $this->transactionRepository->findForPaymentIntent($paymentIntentId);
-        $transactionReference === null && throw new RuntimeException("Transaction reference for payment intent '$paymentIntentId' not found");
-
         // Step 1: standard refund against the original sale. Returns funds
         // to the card used in the charge.
         $this->logger->log('Gateway refund request', [
             'gatewayId' => $gatewayId->toString(),
             'gatewayName' => $credential->getGatewayName(),
-            'paymentIntentId' => $paymentIntentId,
             'transactionReference' => $transactionReference,
             'amount' => $amount,
             'clientUniqueId' => $clientUniqueId,
@@ -396,7 +385,6 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         $this->logger->log('Gateway retryRefund request', [
             'gatewayId' => $gatewayId->toString(),
             'gatewayName' => $credential->getGatewayName(),
-            'paymentIntentId' => $paymentIntentId,
             'transactionReference' => $transactionReference,
             'amount' => $amount,
             'clientUniqueId' => $clientUniqueId,

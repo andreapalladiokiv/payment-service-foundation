@@ -62,11 +62,11 @@ it('defaults to cardholder-initiated rather than returning null', function () {
     expect(initiationRequest()->getInitiation())->toBe(PaymentInitiation::CardholderInitiated);
 });
 
-it('binds the stored-credential reference from an Omnipay parameter array', function () {
+it('binds the rebilling reference from an Omnipay parameter array', function () {
     $request = initiationRequest();
-    $request->initialize(['storedCredentialReference' => '1110000000123456']);
+    $request->initialize(['rebillingReference' => '1110000000123456']);
 
-    expect($request->getStoredCredentialReference())->toBe('1110000000123456');
+    expect($request->getRebillingReference())->toBe('1110000000123456');
 });
 
 /**
@@ -77,13 +77,13 @@ it('binds the stored-credential reference from an Omnipay parameter array', func
  * unchained.
  */
 it('has no default for the anchor, unlike the initiation', function () {
-    expect(initiationRequest()->getStoredCredentialReference())->toBeNull();
+    expect(initiationRequest()->getRebillingReference())->toBeNull();
 });
 
 it('binds the series flag, and defaults it to false', function () {
     $request = initiationRequest();
-    expect($request->isInStoredCredentialSeries())->toBeFalse();
+    expect($request->isRebilling())->toBeFalse();
 
-    $request->initialize(['inStoredCredentialSeries' => true]);
-    expect($request->isInStoredCredentialSeries())->toBeTrue();
+    $request->initialize(['rebilling' => true]);
+    expect($request->isRebilling())->toBeTrue();
 });
