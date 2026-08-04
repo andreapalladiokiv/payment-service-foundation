@@ -601,14 +601,14 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
                 return self::attachChecksToAuthorization(
                     AuthorizationResult::requiresAction($response->getTransactionReference(), $challenge),
                     $response,
-                )->withMetadata(self::extractMetadata($response));
+                )->withMetadata(self::extractOpeningMetadata($response));
             }
 
             if ($response->isSuccessful()) {
                 return self::attachChecksToAuthorization(
                     AuthorizationResult::succeeded($response->getTransactionReference()),
                     $response,
-                )->withMetadata(self::extractMetadata($response))
+                )->withMetadata(self::extractOpeningMetadata($response))
                     ->withConvertedAmount(self::extractConvertedAmount($response));
             }
 
@@ -660,6 +660,33 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         return $response instanceof TransactionMetadataProvider
             ? $response->getTransactionMetadata()
             : [];
+    }
+
+    /**
+     * The gateway's metadata plus `opening_transaction_reference` — the reference of
+     * the transaction that OPENED the payment intent.
+     *
+     * Recorded because `reference` cannot answer that later: it overwrites on
+     * transition, so once a capture lands the row holds the settle reference. Both
+     * readings are wanted — Nuvei's settle expects the authorization's transactionId
+     * and its refund expects the settle's — so they live side by side.
+     *
+     * Added HERE, in {@see buildAuthorization}, and nowhere else. Only the opening
+     * operations pass through it; capture, cancel and refund are built by
+     * {@see buildOutcome}, so it is structurally impossible for one of them to write
+     * this key and bury the value with its own reference. A port adding it instead
+     * would have looked equivalent and lost that guarantee.
+     *
+     * @return array<string, mixed>
+     */
+    private static function extractOpeningMetadata(ResponseInterface $response): array
+    {
+        $metadata = self::extractMetadata($response);
+        $reference = $response->getTransactionReference();
+
+        return $reference === null || $reference === ''
+            ? $metadata
+            : [...$metadata, 'opening_transaction_reference' => (string) $reference];
     }
 
     private static function extractConvertedAmount(ResponseInterface $response): ?Money

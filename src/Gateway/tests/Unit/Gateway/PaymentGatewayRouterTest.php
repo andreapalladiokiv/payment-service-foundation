@@ -246,11 +246,24 @@ it('folds transaction metadata onto a successful charge result alongside checks'
     $result = $gateway->charge(GatewayId::generate(), $instrument, new Money(100, new Currency('USD')));
 
     expect($result->success)->toBeTrue()
-        ->and($result->metadata)->toBe(['incoming_transaction_code' => 'ICT-10'])
+        ->and($result->metadata)->toBe([
+            'incoming_transaction_code' => 'ICT-10',
+            'opening_transaction_reference' => 'sale_guid',
+        ])
         ->and($result->cvcCheck)->toBe(CheckResult::Pass);
 });
 
-it('leaves metadata empty when the response carries none', function () {
+/**
+ * Every opening operation records the reference it was given, because `reference`
+ * cannot answer "which transaction opened this intent" later on — it overwrites on
+ * transition, so once a capture lands the row holds the settle reference. The
+ * rebilling anchor needs the earlier one: "not from the settle flow".
+ *
+ * Written here rather than by a port on purpose. Only opening operations pass through
+ * buildAuthorization; capture, cancel and refund are built by buildOutcome, so no
+ * later operation can write this key and bury the value with its own reference.
+ */
+it('records the opening reference even when the response carries no metadata of its own', function () {
     $omnipay = makeOmnipayWithMethod('purchase', makeSuccessResponse('ch_plain_meta'));
     $gateway = makeRouter(omnipay: $omnipay);
     $instrument = Mockery::mock(PaymentInstrument::class);
@@ -258,7 +271,24 @@ it('leaves metadata empty when the response carries none', function () {
 
     $result = $gateway->charge(GatewayId::generate(), $instrument, new Money(100, new Currency('USD')));
 
-    expect($result->metadata)->toBe([]);
+    expect($result->metadata)->toBe(['opening_transaction_reference' => 'ch_plain_meta']);
+});
+
+it('records no opening reference on a capture, so a settle cannot bury the anchor', function () {
+    $piId = 'pi-'.uniqid();
+    $txRepo = Mockery::mock(GatewayTransactionRepository::class);
+
+    $response = Mockery::mock(ResponseInterface::class, TransactionMetadataProvider::class);
+    $response->shouldReceive('isSuccessful')->andReturn(true);
+    $response->shouldReceive('getTransactionReference')->andReturn('settle_guid');
+    $response->shouldReceive('getTransactionMetadata')->andReturn(['incoming_transaction_code' => 'ICT-11']);
+
+    $router = makeRouter(omnipay: makeOmnipayWithMethod('capture', $response), transactionRepo: $txRepo);
+
+    $result = $router->capture(GatewayId::generate(), 'auth_ref', new Money(100, new Currency('USD')));
+
+    expect($result->metadata)->toBe(['incoming_transaction_code' => 'ICT-11'])
+        ->and($result->metadata)->not->toHaveKey('opening_transaction_reference');
 });
 
 // ──────────────────────────────────────────────
