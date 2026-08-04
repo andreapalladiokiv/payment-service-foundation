@@ -23,8 +23,6 @@ use Techork\PaymentService\Gateway\Contract\GatewayCredential;
 use Techork\PaymentService\Gateway\Contract\GatewayCredentialRepository;
 use Techork\PaymentService\Gateway\Contract\GatewayInstrumentRepository;
 use Techork\PaymentService\Gateway\Contract\GatewayTransactionRepository;
-use Techork\PaymentService\Gateway\Contract\StoredCredentialReferenceProvider;
-use Techork\PaymentService\Gateway\Contract\RegistrationResult;
 use Techork\PaymentService\Gateway\Contract\TransactionMetadataProvider;
 use Techork\PaymentService\Gateway\Contract\VirtualCardResponseInterface;
 use Techork\PaymentService\Gateway\Contract\VirtualCardResult;
@@ -616,74 +614,4 @@ it('defaults the initiation to cardholder-initiated when a caller omits it', fun
     );
 
     expect($seen['initiation'])->toBe(PaymentInitiation::CardholderInitiated);
-});
-
-// ──────────────────────────────────────────────
-//  the credential-establishing transaction survives the registration
-// ──────────────────────────────────────────────
-
-function makeRegistrationResponse(string $reference, ?string $storedCredentialReference): ResponseInterface
-{
-    if ($storedCredentialReference === null) {
-        // A response that began no chain does not implement the interface at all,
-        // which is the case the null branch has to cope with.
-        $response = Mockery::mock(ResponseInterface::class);
-        $response->shouldReceive('isSuccessful')->andReturn(true);
-        $response->shouldReceive('getTransactionReference')->andReturn($reference);
-
-        return $response;
-    }
-
-    $response = Mockery::mock(ResponseInterface::class, StoredCredentialReferenceProvider::class);
-    $response->shouldReceive('isSuccessful')->andReturn(true);
-    $response->shouldReceive('getTransactionReference')->andReturn($reference);
-    $response->shouldReceive('getStoredCredentialReference')->andReturn($storedCredentialReference);
-
-    return $response;
-}
-
-it('carries the credential-establishing transaction onto the registration result', function () {
-    $router = makeRouter(omnipay: makeOmnipayWithMethod(
-        'createPaymentMethod',
-        makeRegistrationResponse('upo_9001', '1110000000123456'),
-    ));
-
-    $result = $router->createPaymentMethod(
-        GatewayId::generate(),
-        initiationInstrument(),
-        new BillingAddress('Test', 'User', '1 St', 'NYC', new Country('US'), '10001'),
-    );
-
-    expect($result->storedCredentialReference)->toBe('1110000000123456')
-        // The instrument reference is a different value and must not be displaced.
-        ->and($result->reference)->toBe('upo_9001');
-});
-
-it('leaves the anchor null when the registration began no chain', function () {
-    $router = makeRouter(omnipay: makeOmnipayWithMethod(
-        'createPaymentMethod',
-        makeRegistrationResponse('upo_4242', null),
-    ));
-
-    $result = $router->createPaymentMethod(
-        GatewayId::generate(),
-        initiationInstrument(),
-        new BillingAddress('Test', 'User', '1 St', 'NYC', new Country('US'), '10001'),
-    );
-
-    expect($result->storedCredentialReference)->toBeNull()
-        ->and($result->reference)->toBe('upo_4242');
-});
-
-it('keeps the anchor when the checks wither rebuilds the result', function () {
-    // withChecks() and withCustomerReference() both reconstruct the whole readonly
-    // object, so a field they forget to copy is silently lost on the way through
-    // buildRegistration — which attaches all three.
-    $result = RegistrationResult::succeeded('upo_1')
-        ->withStoredCredentialReference('txn_1')
-        ->withCustomerReference('cust_1')
-        ->withChecks(CheckResult::Pass, CheckResult::Pass, CheckResult::Pass);
-
-    expect($result->storedCredentialReference)->toBe('txn_1')
-        ->and($result->customerReference)->toBe('cust_1');
 });

@@ -8,14 +8,10 @@ use Techork\PaymentService\Common\ValueObject\CreditCard\CheckResult;
 
 /**
  * Result of a tokenize / createPaymentMethod gateway operation. Extends
- * {@see GatewayResult} with the extra signals the gateway may return:
+ * {@see GatewayResult} with two extra signals the gateway may return:
  *
  *  - {@see $customerReference} — issuer-side / processor-side customer id
  *    that future ops can attach to.
- *  - {@see $storedCredentialReference} — the transaction that ESTABLISHED the
- *    credential, when the registration was itself one. Not the same value as
- *    the inherited reference, which names the stored instrument; see
- *    {@see StoredCredentialReferenceProvider} for why they never coincide.
  *  - card-verification fields ({@see $addressLineCheck},
  *    {@see $postalCodeCheck}, {@see $cvcCheck}) — `null` means the operation
  *    carried no signal for that field; a non-null {@see CheckResult}
@@ -38,7 +34,6 @@ final readonly class RegistrationResult extends GatewayResult
         public ?CheckResult $addressLineCheck = null,
         public ?CheckResult $postalCodeCheck = null,
         public ?CheckResult $cvcCheck = null,
-        public ?string $storedCredentialReference = null,
     ) {
         parent::__construct($success, $reference, $message);
     }
@@ -53,21 +48,6 @@ final readonly class RegistrationResult extends GatewayResult
             $this->addressLineCheck,
             $this->postalCodeCheck,
             $this->cvcCheck,
-            $this->storedCredentialReference,
-        );
-    }
-
-    public function withStoredCredentialReference(?string $storedCredentialReference): self
-    {
-        return new self(
-            $this->success,
-            $this->reference,
-            $this->message,
-            $this->customerReference,
-            $this->addressLineCheck,
-            $this->postalCodeCheck,
-            $this->cvcCheck,
-            $storedCredentialReference,
         );
     }
 
@@ -84,7 +64,6 @@ final readonly class RegistrationResult extends GatewayResult
             $addressLineCheck,
             $postalCodeCheck,
             $cvcCheck,
-            $this->storedCredentialReference,
         );
     }
 

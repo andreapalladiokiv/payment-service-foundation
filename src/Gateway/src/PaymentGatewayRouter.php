@@ -17,7 +17,6 @@ use Techork\PaymentService\Gateway\Contract\AuthorizationResult;
 use Techork\PaymentService\Gateway\Contract\CardChecksProvider;
 use Techork\PaymentService\Gateway\Contract\ChallengeProvider;
 use Techork\PaymentService\Gateway\Contract\CustomerReferenceProvider;
-use Techork\PaymentService\Gateway\Contract\StoredCredentialReferenceProvider;
 use Techork\PaymentService\Gateway\Contract\GatewayCredentialRepository;
 use Techork\PaymentService\Gateway\Contract\GatewayInstrumentRepository;
 use Techork\PaymentService\Gateway\Contract\GatewayResult;
@@ -594,18 +593,9 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
                 ? $response->getCustomerReference()
                 : null;
 
-            // Opt-in, like the customer reference above: a response that began no
-            // chain does not implement this, and one that did would otherwise
-            // have its anchor end here — the router is the only place the two
-            // registration routes converge.
-            $storedCredentialReference = $response instanceof StoredCredentialReferenceProvider
-                ? $response->getStoredCredentialReference()
-                : null;
-
             return self::attachChecksToRegistration(
                 RegistrationResult::succeeded($response->getTransactionReference())
-                    ->withCustomerReference($customerReference)
-                    ->withStoredCredentialReference($storedCredentialReference),
+                    ->withCustomerReference($customerReference),
                 $response,
             );
         } catch (UnsupportedByGateway $e) {
