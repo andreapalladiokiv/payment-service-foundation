@@ -350,6 +350,11 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         $outcome = $port->capture(new CaptureRequest(
             paymentIntentId: $this->aggregateRootId(),
             amount: $command->amount(),
+            // Both from our own state rather than from the command: what was held and
+            // what it was held on are facts about this intent, not a caller's choice,
+            // and a caller free to restate them could contradict them.
+            authorizedAmount: $this->amount,
+            instrument: $this->instrument,
         ));
 
         $this->recordThat(new PaymentIntentCaptured($command->amount(), $outcome->convertedAmount));

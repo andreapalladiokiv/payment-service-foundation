@@ -2426,3 +2426,51 @@ it('refuses an accept whose chain was degraded', function () {
 
     expect($aggregate->status())->toBe(PaymentIntentStatus::RequiresAction);
 });
+
+// ──────────────────────────────────────────────
+//  what a capture tells the port about the hold
+//
+//  ConnexPay can only capture the full authorized amount; its documented procedure
+//  for anything less is to void and re-sell, which needs both the original amount (to
+//  notice a partial request at all) and a card (to sell against). Neither is reachable
+//  from its side — an authorization has no lookup endpoint and the card on a sale
+//  record is masked — so the request has to carry them. Its adapter's own words for
+//  what happens otherwise: "the full hold would be captured silently".
+// ──────────────────────────────────────────────
+
+function makeCaptureCapturingPort(?CaptureRequest &$seen): CapturePort
+{
+    return new class($seen) implements CapturePort
+    {
+        public function __construct(private ?CaptureRequest &$seen) {}
+
+        public function capture(CaptureRequest $request): CaptureOutcome
+        {
+            $this->seen = $request;
+
+            return new CaptureOutcome;
+        }
+    };
+}
+
+it('tells the port what was held and what it was held on, not just what to capture', function () {
+    $id = PaymentIntentId::generate();
+    $authorized = makeAmount();
+    $instrument = makeInstrument();
+
+    $aggregate = PaymentIntentAggregate::create(
+        makeCreatePiCommand($id, CaptureMethod::Manual, amount: $authorized, instrument: $instrument),
+        makePaySuccessPort(),
+        StubPaymentIntentFirewall::allowing(),
+    );
+
+    $seen = null;
+    $partial = $authorized->divide(2);
+    $aggregate->capture(makeCapturePiCommand($id, $partial), makeCaptureCapturingPort($seen));
+
+    expect($seen->amount)->toBe($partial)
+        // From the intent's own state, so a caller cannot restate the hold as something
+        // it was not: only `amount` is the caller's to choose.
+        ->and($seen->authorizedAmount)->toBe($authorized)
+        ->and($seen->instrument)->toBe($instrument);
+});
