@@ -10,20 +10,27 @@ use BadMethodCallException;
  * A gateway was asked for an operation its product does not have at all,
  * whatever the instrument — Paynet has no auth-only, Revolut acquires nothing.
  *
- * Note the deliberate asymmetry with the older per-package exceptions
- * (`UnsupportedPaynetOperation`, Revolut's `UnsupportedOperationException`):
- * those do NOT carry the {@see UnsupportedByGateway} marker, so they keep
- * degrading into a failed result the way they always have. That is load-bearing
- * for at least one path — {@see \Techork\PaymentService\Gateway\PaymentGatewayRouter::refund}
- * documents that a gateway without a native retry-refund primitive is
- * *expected* to fall through the catch and surface a failed `GatewayResult`, so
- * the aggregate records `RefundFailed` and the saga carries on. Marking every
- * operation-level refusal as an invariant would turn those graceful
- * degradations into thrown exceptions mid-saga.
+ * The degradation this must not break is narrower than it first looks. It lives
+ * on `retryRefund()` — refunding onto an *alternative* instrument, which Stripe
+ * and others have no native primitive for and which
+ * {@see \Techork\PaymentService\Gateway\PaymentGatewayRouter::refund} expects to
+ * fall through the catch as a failed `GatewayResult` so the aggregate records
+ * `RefundFailed` and the saga carries on. That is step 2 of that method. It says
+ * nothing about step 1, the plain refund.
  *
- * So: reach for this only where the operation is unreachable except through a
- * wiring mistake, and leave the existing degradations alone until someone
- * decides, per operation, which of the two a caller should get.
+ * So the test is per operation, not per package: does a caller reaching this
+ * method mean the gateway lacks a primitive for something it does otherwise
+ * support (degrade), or does it mean the operation was routed to the wrong
+ * gateway entirely (refuse)? Revolut's `UnsupportedOperationException` is the
+ * second kind on every operation it throws for — it acquires nothing at all and
+ * has no `retryRefund` — so it carries the marker.
+ *
+ * Paynet splits on the same test rather than by package: authorize,
+ * createPaymentMethod, issueVirtualCard and terminateVirtualCard have no
+ * legitimate caller and throw this, while `void()` keeps the unmarked
+ * `UnsupportedPaynetOperation` because it backs `cancel()`, the only thing that
+ * closes an abandoned hosted payment. Two refusals in one gateway, answering the
+ * question differently, is the expected outcome of applying it per operation.
  */
 final class UnsupportedOperation extends BadMethodCallException implements UnsupportedByGateway
 {

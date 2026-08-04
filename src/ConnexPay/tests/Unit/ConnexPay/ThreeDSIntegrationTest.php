@@ -22,6 +22,8 @@ use Techork\PaymentService\ConnexPay\AuthorizeRequest;
 use Techork\PaymentService\ConnexPay\CreateCardRequest;
 use Techork\PaymentService\ConnexPay\CreatePaymentMethodRequest;
 use Techork\PaymentService\Gateway\Contract\GatewayCredential;
+use Techork\PaymentService\Gateway\Exception\IncompleteAuthentication;
+use Techork\PaymentService\Gateway\Exception\UnsupportedInstrument;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 
 function threeDSCpEncrypter(): EncryptInterface
@@ -132,7 +134,7 @@ it('refuses Cash with ThreeDS (Cash must go through purchase)', function () {
     ]);
 
     $request->getData();
-})->throws(RuntimeException::class, 'does not support cash');
+})->throws(UnsupportedInstrument::class, 'does not accept a "cash" instrument on the "authorize" operation');
 
 // ──────────────────────────────────────────────
 //  Registration — /api/v1/verify also carries ThreeDS
@@ -203,4 +205,67 @@ it('forwards ThreeDS when tokenizing a card', function () {
     ]);
 
     expect($request->getData()['Card']['ThreeDS']['Cavv'])->toBe('cavv-tokenize');
+});
+
+// ──────────────────────────────────────────────
+//  A cryptogram-less attestation is refused, not downgraded
+//
+//  Measured against the sandbox (ConnexPayThreeDSFieldProbeTest, 2026-08-04):
+//  ConnexPay accepts a ThreeDS block whose Cavv is null and returns
+//  type: "Default" — the same value as a request carrying no ThreeDS block at
+//  all — where a Cavv-bearing request returns type: "Secured3D". So the block is
+//  not rejected, it is processed as unauthenticated, silently. ECI is a
+//  different case: with ECI null and a Cavv present the sale still comes back
+//  Secured3D, so ECI is deliberately NOT required here even though Nuvei
+//  requires it.
+// ──────────────────────────────────────────────
+
+it('refuses an attestation with no Cavv rather than being silently downgraded to Default', function () {
+    $request = new AuthorizeRequest(new OmnipayClient, new HttpRequest);
+    $request->initialize([
+        'money' => new Money(5000, new Currency('USD')),
+        'instrument' => threeDSCpCard(),
+        'gateway' => threeDSCpCredential(),
+        'decrypter' => threeDSCpDecrypter(),
+        'deviceGuid' => 'device-123',
+        // NotAuthenticated carries no authentication value — the shape an app
+        // produces when it forwards a failed authentication as evidence.
+        'threeDS' => new ThreeDSResult(
+            ThreeDSStatus::NotAuthenticated,
+            null,
+            ECICode::MastercardFailed,
+            'ds-txn-auth',
+            'acs-txn-auth',
+            ThreeDSVersion::V220,
+        ),
+    ]);
+
+    $request->getData();
+})->throws(IncompleteAuthentication::class, 'missing Cavv');
+
+it('still forwards an attestation whose ECI is absent, because ConnexPay honours it', function () {
+    $request = new AuthorizeRequest(new OmnipayClient, new HttpRequest);
+    $request->initialize([
+        'money' => new Money(5000, new Currency('USD')),
+        'instrument' => threeDSCpCard(),
+        'gateway' => threeDSCpCredential(),
+        'decrypter' => threeDSCpDecrypter(),
+        'deviceGuid' => 'device-123',
+        'threeDS' => new ThreeDSResult(
+            ThreeDSStatus::Successful,
+            'cavv-auth-value',
+            null,
+            'ds-txn-auth',
+            'acs-txn-auth',
+            ThreeDSVersion::V220,
+        ),
+    ]);
+
+    expect($request->getData()['Card']['ThreeDS'])->toBe([
+        'Cavv' => 'cavv-auth-value',
+        'Version' => '2.2.0',
+        'DirectoryServerTransactionID' => 'ds-txn-auth',
+        'AcsTransactionId' => 'acs-txn-auth',
+        'ECI' => null,
+    ]);
 });

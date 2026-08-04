@@ -89,7 +89,8 @@ final class AuthorizeRequest extends AbstractRequest implements PaymentInstrumen
 
     public function visitCash(Cash $cash): never
     {
-        throw new RuntimeException('ConnexPay /authonlys does not support cash; route cash payments through purchase() instead.');
+        // Cash is a purchase-only product at ConnexPay; /authonlys has no form of it.
+        throw UnsupportedInstrument::forGateway('connexpay', 'authorize', $cash);
     }
 
     public function visitToken(Token $token): array

@@ -10,6 +10,7 @@ use Money\Currencies\ISOCurrencies;
 use Money\Formatter\DecimalMoneyFormatter;
 use Money\Money;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
+use Techork\PaymentService\Gateway\Exception\IncompleteAuthentication;
 
 trait ConnexPayRequestParameters
 {
@@ -212,6 +213,20 @@ trait ConnexPayRequestParameters
      * auth-onlys, so a card registration that was authenticated must forward it
      * too — otherwise the authentication is performed and then thrown away, and
      * the issuer sees an unauthenticated verification.
+     *
+     * The Cavv guard is measured, not defensive. ConnexPay publishes its 3DS
+     * field table as an image, so requiredness had to be probed
+     * ({@see \ConnexPayThreeDSFieldProbeTest}, sandbox, 2026-08-04). What it
+     * found: all five members bind, ECI may be null and the sale still comes
+     * back `type: "Secured3D"` — but with a null or absent `Cavv` the response
+     * is `type: "Default"`, byte-identical to a request that sent no ThreeDS
+     * block at all. So a cryptogram-less attestation is not rejected, it is
+     * accepted and processed as UNAUTHENTICATED, and the caller is told nothing.
+     * That is the one shape worth refusing: everything downstream, including the
+     * stored `challengeResult`, would claim an authentication that the acquirer
+     * demonstrably did not apply. ECI is deliberately NOT required here even
+     * though Nuvei requires it — per-provider wire truth belongs in the
+     * per-provider mapper.
      */
     protected function formatThreeDS(): ?array
     {
@@ -219,6 +234,14 @@ trait ConnexPayRequestParameters
 
         if ($threeDS === null) {
             return null;
+        }
+
+        if (($threeDS->authenticationValue ?? '') === '') {
+            throw IncompleteAuthentication::missingFields(
+                'connexpay',
+                lcfirst((string) preg_replace('/Request$/', '', basename(str_replace('\\', '/', static::class)))),
+                ['Cavv'],
+            );
         }
 
         return [

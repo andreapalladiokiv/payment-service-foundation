@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Money\Currency;
 use Money\Money;
+use Techork\PaymentService\Gateway\Exception\UnsupportedByGateway;
 use Techork\PaymentService\Revolut\Exception\UnsupportedOperationException;
 use Techork\PaymentService\Revolut\IssueVirtualCardRequest;
 use Techork\PaymentService\Revolut\TerminateCardRequest;
@@ -28,6 +29,35 @@ it('creates a terminate card request', function () {
 it('throws on every acquiring / tokenization operation', function (string $operation) {
     makeRevolutGateway()->{$operation}();
 })->throws(UnsupportedOperationException::class)->with([
+    'purchase',
+    'authorize',
+    'capture',
+    'refund',
+    'void',
+    'createCard',
+    'createPaymentMethod',
+]);
+
+// The class alone is not the guarantee. Without the marker interface the router
+// folds this into a failed result and the stream records PaymentIntentFailed /
+// RefundFailed — i.e. it claims an issuer declined a payment that was never sent.
+// Revolut acquires nothing, so every one of these is a misrouting, refund
+// included: there is no retryRefund primitive here to degrade gracefully.
+it('refuses acquiring operations as a wiring error, not as an acquirer decline', function () {
+    expect(is_subclass_of(UnsupportedOperationException::class, UnsupportedByGateway::class))->toBeTrue();
+});
+
+it('throws something the router will rethrow rather than swallow', function (string $operation) {
+    try {
+        makeRevolutGateway()->{$operation}();
+    } catch (Throwable $e) {
+        expect($e)->toBeInstanceOf(UnsupportedByGateway::class);
+
+        return;
+    }
+
+    $this->fail("Revolut::{$operation}() did not throw at all.");
+})->with([
     'purchase',
     'authorize',
     'capture',

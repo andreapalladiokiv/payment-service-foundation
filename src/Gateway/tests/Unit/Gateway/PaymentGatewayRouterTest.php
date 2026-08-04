@@ -14,6 +14,7 @@ use Techork\PaymentService\Common\ValueObject\CreditCard\CheckResult;
 use Techork\PaymentService\Common\ValueObject\Email;
 use Techork\PaymentService\Common\ValueObject\HostedPayment;
 use Techork\PaymentService\Gateway\Exception\UnsupportedInstrument;
+use Techork\PaymentService\Gateway\Exception\UnsupportedOperation;
 use Techork\PaymentService\Gateway\Contract\CardChecksProvider;
 use Techork\PaymentService\Gateway\Contract\ConvertedAmountProvider;
 use Techork\PaymentService\Gateway\Contract\Gateway as GatewayContract;
@@ -490,6 +491,27 @@ it('rethrows an unsupported-instrument refusal from a plain outcome op', functio
 
     $router->refund(GatewayId::generate(), $piId, new Money(1000, new Currency('USD')));
 })->throws(UnsupportedInstrument::class, 'on the "retryRefund" operation');
+
+// Every refusal above is thrown from `send()`. An issuing-only gateway refuses
+// one step earlier — the omnipay METHOD itself throws, before there is a request
+// to send — and that is the path Revolut's UnsupportedOperationException relies
+// on. The builders wrap both calls in the same closure, so it must be rethrown
+// just the same; if it were not, routing a refund to a gateway that never took
+// the money would be recorded as RefundFailed, i.e. as an issuer decline.
+it('rethrows a refusal thrown by the gateway method itself, not by send', function () {
+    $piId = 'pi-'.uniqid();
+    $txRepo = Mockery::mock(GatewayTransactionRepository::class);
+    $txRepo->shouldReceive('findForPaymentIntent')->with($piId)->andReturn('auth_ref');
+
+    $omnipay = Mockery::mock(GatewayContract::class);
+    $omnipay->shouldReceive('refund')->andThrow(
+        UnsupportedOperation::forGateway('test', 'refund', 'it is an issuing-only gateway'),
+    );
+
+    $router = makeRouter(omnipay: $omnipay, transactionRepo: $txRepo);
+
+    $router->refund(GatewayId::generate(), $piId, new Money(1000, new Currency('USD')));
+})->throws(UnsupportedOperation::class, 'does not support the "refund" operation');
 
 it('still folds an ordinary gateway exception into a failed result', function () {
     $request = Mockery::mock(RequestInterface::class);

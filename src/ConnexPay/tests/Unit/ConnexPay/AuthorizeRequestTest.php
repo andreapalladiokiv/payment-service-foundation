@@ -27,6 +27,7 @@ use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSStatus;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSVersion;
 use Techork\PaymentService\ConnexPay\AuthorizeRequest;
 use Techork\PaymentService\Gateway\Contract\GatewayInstrumentRepository;
+use Techork\PaymentService\Gateway\Exception\UnsupportedInstrument;
 
 it('builds authorize data for credit card', function () {
     $card = new CreditCard(
@@ -121,7 +122,7 @@ it('refuses to build authorize data for cash (cash must go through charge)', fun
     ]);
 
     $request->getData();
-})->throws(RuntimeException::class, 'does not support cash');
+})->throws(UnsupportedInstrument::class, 'does not accept a "cash" instrument on the "authorize" operation');
 
 it('forwards clientUniqueId as OrderNumber', function () {
     $card = new CreditCard(
