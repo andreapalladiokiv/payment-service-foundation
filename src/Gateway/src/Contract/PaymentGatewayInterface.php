@@ -57,12 +57,6 @@ interface PaymentGatewayInterface
     public function charge(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated): AuthorizationResult;
 
     /**
-     * @param  ?Money  $authorizedAmount  The originally authorized amount.
-     *  Gateways without native partial capture (ConnexPay) need it to detect
-     *  a partial request and fall back to void + a fresh sale with
-     *  `$instrument`. Gateways with native partial capture ignore both.
-     */
-    /**
      * Authorizes a payment that belongs to a rebilling series — a
      * subscription's first charge, or any of its renewals.
      *
@@ -104,6 +98,12 @@ interface PaymentGatewayInterface
         ?string $description = null,
     ): AuthorizationResult;
 
+    /**
+     * @param  ?Money  $authorizedAmount  The originally authorized amount.
+     *  Gateways without native partial capture (ConnexPay) need it to detect
+     *  a partial request and fall back to void + a fresh sale with
+     *  `$instrument`. Gateways with native partial capture ignore both.
+     */
     public function capture(GatewayId $gatewayId, string $transactionReference, Money $amount, ?string $clientUniqueId = null, ?Money $authorizedAmount = null, ?PaymentInstrument $instrument = null): GatewayResult;
 
     public function cancel(GatewayId $gatewayId, string $transactionReference, ?string $clientUniqueId = null): GatewayResult;
