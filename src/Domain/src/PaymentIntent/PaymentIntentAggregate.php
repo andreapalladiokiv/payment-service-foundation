@@ -18,6 +18,7 @@ use Techork\PaymentService\Common\ValueObject\Challenge\ThreeDSChallenge;
 use Techork\PaymentService\Common\ValueObject\CreditCard\CardSummaryExtractor;
 use Techork\PaymentService\Common\ValueObject\HostedPayment;
 use Techork\PaymentService\Common\ValueObject\MerchantDescriptor;
+use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
 use Techork\PaymentService\Common\ValueObject\PaymentInstrumentFactory;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSResult;
 use Techork\PaymentService\Domain\PaymentIntent\Command\CancelPaymentIntentCommand;

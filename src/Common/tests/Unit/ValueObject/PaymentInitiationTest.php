@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use Techork\PaymentService\Domain\PaymentIntent\PaymentInitiation;
+use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
 
 it('treats CardholderInitiated as a cardholder-initiated (CIT) transaction', function () {
     expect(PaymentInitiation::CardholderInitiated->isCardholderInitiated())->toBeTrue()

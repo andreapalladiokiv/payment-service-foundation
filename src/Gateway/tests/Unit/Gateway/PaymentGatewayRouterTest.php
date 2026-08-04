@@ -13,6 +13,7 @@ use Techork\PaymentService\Common\ValueObject\Country;
 use Techork\PaymentService\Common\ValueObject\CreditCard\CheckResult;
 use Techork\PaymentService\Common\ValueObject\Email;
 use Techork\PaymentService\Common\ValueObject\HostedPayment;
+use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
 use Techork\PaymentService\Gateway\Exception\UnsupportedInstrument;
 use Techork\PaymentService\Gateway\Exception\UnsupportedOperation;
 use Techork\PaymentService\Gateway\Contract\CardChecksProvider;
@@ -528,4 +529,89 @@ it('still folds an ordinary gateway exception into a failed result', function ()
 
     expect($result->success)->toBeFalse()
         ->and($result->message)->toBe('Connection timeout');
+});
+
+// ──────────────────────────────────────────────
+//  the stored-credential indicator reaches the request
+//
+//  The router is the only implementer of PaymentGatewayInterface, so if the
+//  initiation does not make it into the parameter array here it reaches no
+//  adapter at all — which is what happened for as long as CIT/MIT existed only
+//  in the domain. Asserting the key rather than adapter behaviour keeps this a
+//  test of the seam: what each provider maps it to is its own test's business.
+// ──────────────────────────────────────────────
+
+function captureOmnipayParams(string $method, ?array &$seen): GatewayContract
+{
+    $request = Mockery::mock(RequestInterface::class);
+    $request->shouldReceive('send')->andReturn(makeSuccessResponse('ref_1'));
+
+    $omnipay = Mockery::mock(GatewayContract::class);
+    $omnipay->shouldReceive($method)->andReturnUsing(function (array $params) use ($request, &$seen) {
+        $seen = $params;
+
+        return $request;
+    });
+
+    return $omnipay;
+}
+
+/** The router logs `$instrument->toPayload()`, so a bare mock is not enough. */
+function initiationInstrument(): PaymentInstrument
+{
+    $instrument = Mockery::mock(PaymentInstrument::class);
+    $instrument->shouldReceive('toPayload')->andReturn([]);
+
+    return $instrument;
+}
+
+it('puts the initiation in the parameters it hands the charge request', function (PaymentInitiation $initiation) {
+    $seen = null;
+    $router = makeRouter(omnipay: captureOmnipayParams('purchase', $seen));
+
+    $router->charge(
+        GatewayId::generate(),
+        initiationInstrument(),
+        new Money(1000, new Currency('USD')),
+        initiation: $initiation,
+    );
+
+    expect($seen)->toHaveKey('initiation')
+        ->and($seen['initiation'])->toBe($initiation);
+})->with([
+    PaymentInitiation::CardholderInitiated,
+    PaymentInitiation::MerchantRecurring,
+    PaymentInitiation::MerchantUnscheduled,
+]);
+
+it('puts the initiation in the parameters it hands the authorize request', function (PaymentInitiation $initiation) {
+    $seen = null;
+    $router = makeRouter(omnipay: captureOmnipayParams('authorize', $seen));
+
+    $router->authorize(
+        GatewayId::generate(),
+        initiationInstrument(),
+        new Money(1000, new Currency('USD')),
+        initiation: $initiation,
+    );
+
+    expect($seen)->toHaveKey('initiation')
+        ->and($seen['initiation'])->toBe($initiation);
+})->with([
+    PaymentInitiation::CardholderInitiated,
+    PaymentInitiation::MerchantRecurring,
+    PaymentInitiation::MerchantUnscheduled,
+]);
+
+it('defaults the initiation to cardholder-initiated when a caller omits it', function () {
+    $seen = null;
+    $router = makeRouter(omnipay: captureOmnipayParams('purchase', $seen));
+
+    $router->charge(
+        GatewayId::generate(),
+        initiationInstrument(),
+        new Money(1000, new Currency('USD')),
+    );
+
+    expect($seen['initiation'])->toBe(PaymentInitiation::CardholderInitiated);
 });

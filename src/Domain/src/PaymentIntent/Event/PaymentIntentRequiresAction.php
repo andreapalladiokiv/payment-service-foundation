@@ -14,7 +14,7 @@ use Techork\PaymentService\Common\ValueObject\MerchantDescriptor;
 use Techork\PaymentService\Common\ValueObject\PaymentInstrumentFactory;
 use Techork\PaymentService\Domain\PaymentIntent\CaptureMethod;
 use Techork\PaymentService\Domain\PaymentIntent\ChallengeArraySerializer;
-use Techork\PaymentService\Domain\PaymentIntent\PaymentInitiation;
+use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
 
 final readonly class PaymentIntentRequiresAction implements SerializablePayload
 {

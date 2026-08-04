@@ -7,6 +7,7 @@ namespace Techork\PaymentService\Gateway\Contract;
 use Money\Money;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
+use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSResult;
 use Techork\PaymentService\Gateway\ValueObject\CardSpendCategory;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
@@ -37,9 +38,9 @@ interface PaymentGatewayInterface
 
     public function createPaymentMethod(GatewayId $gatewayId, PaymentInstrument $instrument, ?BillingAddress $billingAddress = null, ?string $clientUniqueId = null): RegistrationResult;
 
-    public function authorize(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null): AuthorizationResult;
+    public function authorize(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated): AuthorizationResult;
 
-    public function charge(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null): AuthorizationResult;
+    public function charge(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated): AuthorizationResult;
 
     /**
      * @param  ?Money  $authorizedAmount  The originally authorized amount.

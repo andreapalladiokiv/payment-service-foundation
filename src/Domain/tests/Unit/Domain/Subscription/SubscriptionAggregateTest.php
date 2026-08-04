@@ -6,7 +6,7 @@ use Techork\PaymentService\Common\ValueObject\MerchantDescriptor;
 use Techork\PaymentService\Common\ValueObject\ConnectionContext;
 use Techork\PaymentService\Tests\Support\StubPaymentIntentFirewall;
 use Techork\PaymentService\Domain\PaymentIntent\CaptureMethod;
-use Techork\PaymentService\Domain\PaymentIntent\PaymentInitiation;
+use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
 use Techork\PaymentService\Domain\PaymentIntent\Command\CreatePaymentIntentCommand;
 use Techork\PaymentService\Common\Contract\Challenge;
 use Techork\PaymentService\Domain\PaymentIntent\Command\CapturePaymentIntentCommand;

@@ -51,7 +51,7 @@ use Techork\PaymentService\Domain\PaymentIntent\Exception\PaymentIntentCannotBeC
 use Techork\PaymentService\Domain\PaymentIntent\Exception\PaymentIntentCannotBeRefunded;
 use Techork\PaymentService\Domain\PaymentIntent\Exception\PaymentIntentChallengeNotPending;
 use Techork\PaymentService\Domain\PaymentIntent\Exception\PaymentIntentRefundExceedsAmount;
-use Techork\PaymentService\Domain\PaymentIntent\PaymentInitiation;
+use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
 use Techork\PaymentService\Domain\PaymentIntent\PaymentIntentAggregate;
 use Techork\PaymentService\Domain\PaymentIntent\PaymentIntentStatus;
 use Techork\PaymentService\Domain\PaymentIntent\Port\CancelPort;

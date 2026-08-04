@@ -11,7 +11,7 @@ use Techork\PaymentService\Common\ValueObject\BillingAddress;
 use Techork\PaymentService\Common\ValueObject\ConnectionContext;
 use Techork\PaymentService\Common\ValueObject\MerchantDescriptor;
 use Techork\PaymentService\Domain\PaymentIntent\CaptureMethod;
-use Techork\PaymentService\Domain\PaymentIntent\PaymentInitiation;
+use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
 use Techork\PaymentService\Domain\PaymentIntent\ValueObject\PaymentIntentId;
 
 interface CreatePaymentIntentCommand

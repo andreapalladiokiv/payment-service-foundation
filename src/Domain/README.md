@@ -56,11 +56,19 @@ can also carry a pre-authenticated result from an external MPI.
 
 **Payment initiation (CIT/MIT).** `PaymentInitiation` models the Stored
 Credential Framework: `CardholderInitiated`, `MerchantRecurring` (scheduled
-fixed-amount), `MerchantUnscheduled` (on-demand card-on-file). It rides on the
+fixed-amount), `MerchantUnscheduled` (on-demand card-on-file). It lives in
+`Common\ValueObject` rather than here, because the gateway package has to name
+it to put the indicator on the wire and cannot see this one. It rides on the
 creation-flow events (`RequiresAction` / `Authorized` / `Charged` / `Failed`)
-and gates the cardholder-facing controls — fraud
-screening and 3DS step-up apply only to CIT; an MIT payment must never be
-forced into a challenge.
+and gates the cardholder-facing controls — fraud screening and a 3DS step-up
+apply only to CIT, since an MIT payment has no cardholder to answer one.
+
+That is a rule about step-ups, not about authentication: EMV 3DS
+requestor-initiated (3RI) obtains a cryptogram with no cardholder present, so an
+MIT carrying a `ThreeDSResult` is ordinary. Note also that
+`CardholderInitiated` does not mean "first payment of a series" — a one-off
+checkout is CIT too — so an acquirer that wants the initiating transaction of a
+stored-credential series flagged needs a distinction this enum does not draw.
 
 **Risk.** `RiskDecisionPort::decide(RiskAssessmentRequest): RiskOutcome` is
 defined here but consulted by the application flow, not the aggregate. The card

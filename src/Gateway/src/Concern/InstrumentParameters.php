@@ -7,6 +7,7 @@ namespace Techork\PaymentService\Gateway\Concern;
 use Omnipay\Common\Message\AbstractRequest;
 use Techork\PaymentService\Common\Contract\DecryptInterface;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
+use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSResult;
 use Techork\PaymentService\Gateway\Contract\CustomerRepository;
 use Techork\PaymentService\Gateway\Contract\GatewayCredential;
@@ -73,5 +74,23 @@ trait InstrumentParameters
     public function getThreeDS(): ?ThreeDSResult
     {
         return $this->getParameter('threeDS');
+    }
+
+    public function setInitiation(PaymentInitiation $value): self
+    {
+        return $this->setParameter('initiation', $value);
+    }
+
+    /**
+     * Defaults rather than returning null: every request has an initiation, and a
+     * caller that did not set one is describing a cardholder-present payment. A
+     * nullable getter would push that same default into each adapter, where
+     * forgetting it means quietly declaring a merchant-initiated payment as
+     * cardholder-present — the direction that claims an SCA exemption we have no
+     * right to.
+     */
+    public function getInitiation(): PaymentInitiation
+    {
+        return $this->getParameter('initiation') ?? PaymentInitiation::CardholderInitiated;
     }
 }

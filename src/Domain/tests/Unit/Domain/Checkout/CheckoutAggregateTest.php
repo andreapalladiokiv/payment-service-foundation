@@ -25,7 +25,7 @@ use Techork\PaymentService\Domain\Subscription\ValueObject\SubscriptionId;
 use Techork\PaymentService\Domain\Subscription\ValueObject\SubscriptionPlan;
 use Techork\PaymentService\Common\ValueObject\PaymentMethodId;
 use Techork\PaymentService\Domain\PaymentIntent\CaptureMethod;
-use Techork\PaymentService\Domain\PaymentIntent\PaymentInitiation;
+use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
 use Techork\PaymentService\Domain\PaymentIntent\Command\CapturePaymentIntentCommand;
 use Techork\PaymentService\Domain\PaymentIntent\Command\CreatePaymentIntentCommand;
 use Techork\PaymentService\Domain\PaymentIntent\Exception\PaymentIntentCannotBeCaptured;
