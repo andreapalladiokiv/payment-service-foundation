@@ -6,6 +6,7 @@ namespace Techork\PaymentService\Common\ValueObject\CreditCard;
 
 use DateMalformedStringException;
 use DateTimeImmutable;
+use InvalidArgumentException;
 use DateTimeInterface;
 use JsonSerializable;
 use Override;
@@ -34,7 +35,12 @@ final readonly class Expiration implements JsonSerializable
             $expiration = DateTimeImmutable::createFromFormat('!mY', sprintf('%02d%04d', $month, $year));
         }
 
-        return new self($expiration);
+        // createFromFormat yields false for a value the format cannot read. Reaching the
+        // constructor with it would surface as a TypeError naming DateTimeInterface, which
+        // says nothing about the month and year that produced it.
+        return new self($expiration ?: throw new InvalidArgumentException(
+            sprintf('Card expiration %02d/%d is not a readable date.', $month, $year),
+        ));
     }
 
     /**

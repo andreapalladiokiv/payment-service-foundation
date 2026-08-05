@@ -7,12 +7,15 @@ namespace Techork\PaymentService\Domain\Subscription;
 use DateInterval;
 use DateTimeImmutable;
 use DateTimeInterface;
+use EventSauce\EventSourcing\AggregateRoot;
 use EventSauce\EventSourcing\AggregateRootBehaviour;
 use EventSauce\EventSourcing\AggregateRootId;
 use EventSauce\EventSourcing\Snapshotting\AggregateRootWithSnapshotting;
 use EventSauce\EventSourcing\Snapshotting\SnapshottingBehaviour;
 use Money\Currency;
 use Money\Money;
+use Override;
+use RuntimeException;
 use Techork\PaymentService\Common\ValueObject\PaymentMethodId;
 use Techork\PaymentService\Domain\PaymentIntent\PaymentIntentStatus;
 use Techork\PaymentService\Domain\PaymentIntent\ValueObject\PaymentIntentId;
@@ -20,7 +23,6 @@ use Techork\PaymentService\Domain\Subscription\Command\ActivateSubscriptionComma
 use Techork\PaymentService\Domain\Subscription\Command\CancelSubscriptionCommand;
 use Techork\PaymentService\Domain\Subscription\Command\CreateSubscriptionCommand;
 use Techork\PaymentService\Domain\Subscription\Command\RecordSubscriptionRenewalCommand;
-use Techork\PaymentService\Domain\Subscription\Command\RevertSubscriptionCancellationCommand;
 use Techork\PaymentService\Domain\Subscription\Event\SubscriptionActivated;
 use Techork\PaymentService\Domain\Subscription\Event\SubscriptionCancellationReverted;
 use Techork\PaymentService\Domain\Subscription\Event\SubscriptionCancelled;
@@ -36,10 +38,14 @@ use Techork\PaymentService\Domain\Subscription\ValueObject\BillingPeriod;
 use Techork\PaymentService\Domain\Subscription\ValueObject\SubscriptionId;
 
 /**
- * @implements AggregateRootWithSnapshotting<SubscriptionId>
+ * The aggregate-root id type is bound on the `@use` below rather than here: EventSauce's
+ * AggregateRootWithSnapshotting extends the generic AggregateRoot without carrying its
+ * template forward, so `@implements AggregateRoot<SubscriptionId>` names an interface this class
+ * does not implement directly and psalm rejects it.
  */
 final class SubscriptionAggregate implements AggregateRootWithSnapshotting
 {
+    /** @use AggregateRootBehaviour<SubscriptionId> */
     use AggregateRootBehaviour;
     use SnapshottingBehaviour;
 
@@ -78,6 +84,7 @@ final class SubscriptionAggregate implements AggregateRootWithSnapshotting
      */
     private ?PaymentIntentId $lastPaymentIntentId = null;
 
+    #[Override]
     public function aggregateRootId(): SubscriptionId
     {
         return SubscriptionId::fromString($this->aggregateRootId->toString());
@@ -217,13 +224,14 @@ final class SubscriptionAggregate implements AggregateRootWithSnapshotting
         $this->recordThat(new SubscriptionCancelled($command->reason()));
     }
 
-    public function revertCancellation(RevertSubscriptionCancellationCommand $command): void
+    public function revertCancellation(): void
     {
         $this->isCancellationPending() || throw SubscriptionNotCancellable::notScheduled();
 
         $this->recordThat(new SubscriptionCancellationReverted);
     }
 
+    #[Override]
     protected function createSnapshotState(): array
     {
         return [
@@ -242,15 +250,26 @@ final class SubscriptionAggregate implements AggregateRootWithSnapshotting
         ];
     }
 
+    #[Override]
     protected static function reconstituteFromSnapshotState(AggregateRootId $id, $state): AggregateRootWithSnapshotting
     {
+        // EventSauce's signature is the widest id type; a snapshot of this aggregate can
+        // only carry its own.
+        assert($id instanceof SubscriptionId);
+
         $self = new self($id);
         $self->storedStatus = SubscriptionStatus::from($state['status']);
         $self->amount = new Money($state['amount'], new Currency($state['currency']));
         $self->interval = new BillingInterval($state['interval_every'], BillingPeriod::from($state['interval_period']));
         $self->trialPeriod = isset($state['trial_period']) ? new DateInterval($state['trial_period']) : null;
         $self->paymentMethodId = PaymentMethodId::fromString($state['payment_method_id']);
-        $self->currentPeriodStart = isset($state['current_period_start']) ? DateTimeImmutable::createFromFormat(DateTimeInterface::RFC3339_EXTENDED, $state['current_period_start']) : null;
+        // Refused for the same reason, and it matters more here: the current period start is
+        // what every renewal date is computed from, so losing it to a silent null would
+        // rebill the subscriber against a period the system invented.
+        $self->currentPeriodStart = isset($state['current_period_start'])
+            ? (DateTimeImmutable::createFromFormat(DateTimeInterface::RFC3339_EXTENDED, $state['current_period_start'])
+                ?: throw new RuntimeException("Subscription snapshot '{$id->toString()}' carries an unreadable current_period_start: '{$state['current_period_start']}'."))
+            : null;
         $self->callbackUrl = $state['callback_url'];
         $self->metadata = $state['metadata'] ?? [];
         $self->cancellationReason = $state['cancellation_reason'] ?? null;

@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\ConnexPay;
 
+use Override;
 use Techork\PaymentService\Gateway\Concern\InstrumentParameters;
 use Techork\PaymentService\ConnexPay\Concern\ConnexPayRequestParameters;
+use Techork\PaymentService\ConnexPay\Concern\FormatsThreeDS;
 use Techork\PaymentService\Gateway\Contract\GatewayCredential;
 use GuzzleHttp\Exception\GuzzleException;
 use Omnipay\Common\Message\AbstractRequest;
@@ -30,12 +32,16 @@ use Techork\PaymentService\Gateway\Exception\UnsupportedInstrument;
  *
  * Expects: instrument (PaymentInstrument), gateway (Gateway). Optional:
  * billingAddress (becomes `Card.Customer`).
+ *
+ * @implements PaymentInstrumentVisitor<array>
  */
 final class CreatePaymentMethodRequest extends AbstractRequest implements PaymentInstrumentVisitor
 {
     use ConnexPayRequestParameters;
+    use FormatsThreeDS;
     use InstrumentParameters;
 
+    #[Override]
     public function getData(): array
     {
         $this->validate('instrument', 'gateway');
@@ -63,6 +69,7 @@ final class CreatePaymentMethodRequest extends AbstractRequest implements Paymen
         ];
     }
 
+    #[Override]
     public function visitCreditCard(CreditCard $card): array
     {
         $decrypter = $this->getDecrypter();
@@ -84,11 +91,13 @@ final class CreatePaymentMethodRequest extends AbstractRequest implements Paymen
         return $data;
     }
 
+    #[Override]
     public function visitCash(Cash $cash): never
     {
         throw new RuntimeException('Cash cannot be stored as a payment method.');
     }
 
+    #[Override]
     public function visitToken(Token $token): array
     {
         /** @var GatewayCredential $gateway */
@@ -109,11 +118,13 @@ final class CreatePaymentMethodRequest extends AbstractRequest implements Paymen
         return $data;
     }
 
+    #[Override]
     public function visitPaymentMethod(PaymentMethod $paymentMethod): never
     {
         throw new RuntimeException('PaymentMethod cannot be re-stored as a payment method.');
     }
 
+    #[Override]
     public function sendData($data): CreatePaymentMethodResponse
     {
         try {
@@ -137,6 +148,7 @@ final class CreatePaymentMethodRequest extends AbstractRequest implements Paymen
         }
     }
 
+    #[Override]
     public function visitHostedPayment(HostedPayment $hosted): never
     {
         throw UnsupportedInstrument::forGateway('connexpay', 'createPaymentMethod', $hosted);

@@ -6,6 +6,7 @@ namespace Techork\PaymentService\Gateway;
 
 use Money\Money;
 use Omnipay\Common\Message\ResponseInterface;
+use Override;
 use RuntimeException;
 use Techork\PaymentService\Common\Contract\DecryptInterface;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
@@ -36,6 +37,8 @@ use Throwable;
 
 final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
 {
+    private const string UNNAMED_SUCCESS = 'The gateway reported success without naming a transaction reference.';
+
     public function __construct(
         private GatewayFactory $gatewayFactory,
         private DecryptInterface $decrypter,
@@ -45,6 +48,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         private GatewayLoggerInterface $logger = new NullGatewayLogger(),
     ) {}
 
+    #[Override]
     public function tokenize(GatewayId $gatewayId, PaymentInstrument $instrument, ?BillingAddress $billingAddress = null, ?string $clientUniqueId = null): RegistrationResult
     {
         $credential = $this->credentialRepository->findOrFail($gatewayId);
@@ -81,6 +85,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         return $result;
     }
 
+    #[Override]
     public function createPaymentMethod(GatewayId $gatewayId, PaymentInstrument $instrument, ?BillingAddress $billingAddress = null, ?string $clientUniqueId = null): RegistrationResult
     {
         $credential = $this->credentialRepository->findOrFail($gatewayId);
@@ -90,7 +95,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             'gatewayId' => $gatewayId->toString(),
             'gatewayName' => $credential->getGatewayName(),
             'instrument' => $instrument->toPayload(),
-            'billingAddress' => $billingAddress->toArray(),
+            'billingAddress' => $billingAddress?->toArray(),
             'clientUniqueId' => $clientUniqueId,
         ]);
 
@@ -117,6 +122,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         return $result;
     }
 
+    #[Override]
     public function authorize(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated): AuthorizationResult
     {
         $credential = $this->credentialRepository->findOrFail($gatewayId);
@@ -164,6 +170,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         return $result;
     }
 
+    #[Override]
     public function authorizeRebilling(
         GatewayId $gatewayId,
         PaymentInstrument $instrument,
@@ -227,6 +234,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         return $result;
     }
 
+    #[Override]
     public function charge(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated): AuthorizationResult
     {
         $credential = $this->credentialRepository->findOrFail($gatewayId);
@@ -274,6 +282,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         return $result;
     }
 
+    #[Override]
     public function cancel(GatewayId $gatewayId, string $transactionReference, ?string $clientUniqueId = null): GatewayResult
     {
         $credential = $this->credentialRepository->findOrFail($gatewayId);
@@ -301,6 +310,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         return $result;
     }
 
+    #[Override]
     public function capture(GatewayId $gatewayId, string $transactionReference, Money $amount, ?string $clientUniqueId = null, ?Money $authorizedAmount = null, ?PaymentInstrument $instrument = null): GatewayResult
     {
         $credential = $this->credentialRepository->findOrFail($gatewayId);
@@ -339,6 +349,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         return $result;
     }
 
+    #[Override]
     public function refund(GatewayId $gatewayId, string $transactionReference, Money $amount, ?string $clientUniqueId = null, ?PaymentInstrument $retryInstrument = null): GatewayResult
     {
         $credential = $this->credentialRepository->findOrFail($gatewayId);
@@ -392,15 +403,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             'standardRefundMessage' => $standard->message,
         ]);
 
-        $retried = $this->buildOutcome(fn () => $omnipay->retryRefund([
-            'money' => $amount,
-            'transactionReference' => $transactionReference,
-            'clientUniqueId' => $clientUniqueId,
-            'instrument' => $retryInstrument,
-            'gateway' => $credential,
-            'decrypter' => $this->decrypter,
-            'referenceResolver' => $this->referenceRepository,
-        ])->send());
+        $retried = $this->buildOutcome(fn () => $omnipay->retryRefund()->send());
 
         $this->logger->log('Gateway retryRefund response', [
             'clientUniqueId' => $clientUniqueId,
@@ -412,6 +415,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         return $retried;
     }
 
+    #[Override]
     public function terminateVirtualCard(GatewayId $gatewayId, string $cardGuid): GatewayResult
     {
         $credential = $this->credentialRepository->findOrFail($gatewayId);
@@ -437,6 +441,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         return $result;
     }
 
+    #[Override]
     public function updateVirtualCard(
         GatewayId $gatewayId,
         string $cardGuid,
@@ -455,11 +460,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         ]);
 
         try {
-            $response = $omnipay->updateVirtualCard([
-                'transactionReference' => $cardGuid,
-                'money' => $amountLimit,
-                'spendCategory' => $spendCategory->value,
-            ])->send();
+            $response = $omnipay->updateVirtualCard()->send();
 
             if ($response instanceof VirtualCardResponseInterface) {
                 $result = $response->toVirtualCardResult();
@@ -484,6 +485,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         return $result;
     }
 
+    #[Override]
     public function issueVirtualCard(
         GatewayId $gatewayId,
         string $paymentIntentId,
@@ -533,7 +535,10 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             if ($response instanceof VirtualCardResponseInterface) {
                 $result = $response->toVirtualCardResult();
             } elseif ($response->isSuccessful()) {
-                $result = VirtualCardResult::succeeded($response->getTransactionReference());
+                $reference = self::successReference($response);
+                $result = $reference === null
+                    ? VirtualCardResult::failed(self::UNNAMED_SUCCESS)
+                    : VirtualCardResult::succeeded($reference);
             } else {
                 $result = VirtualCardResult::failed($response->getMessage() ?? 'Virtual card issuance failed.');
             }
@@ -565,6 +570,8 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
      * a payment outcome and is rethrown so it cannot be mistaken for a decline.
      *
      * @param callable(): ResponseInterface $request
+     * @return GatewayResult
+     * @throws UnsupportedByGateway
      */
     private function buildOutcome(callable $request): GatewayResult
     {
@@ -572,7 +579,13 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             $response = $request();
 
             if ($response->isSuccessful()) {
-                return GatewayResult::succeeded($response->getTransactionReference())
+                $reference = self::successReference($response);
+
+                if ($reference === null) {
+                    return GatewayResult::failed(self::UNNAMED_SUCCESS);
+                }
+
+                return GatewayResult::succeeded($reference)
                     ->withMetadata(self::extractMetadata($response))
                     ->withConvertedAmount(self::extractConvertedAmount($response));
             }
@@ -591,6 +604,8 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
      * onto an {@see AuthorizationResult}.
      *
      * @param callable(): ResponseInterface $request
+     * @return AuthorizationResult
+     * @throws UnsupportedByGateway
      */
     private function buildAuthorization(callable $request): AuthorizationResult
     {
@@ -598,15 +613,27 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             $response = $request();
 
             if ($response instanceof ChallengeProvider && ($challenge = $response->getChallenge()) !== null) {
+                $reference = self::successReference($response);
+
+                if ($reference === null) {
+                    return AuthorizationResult::failed(self::UNNAMED_SUCCESS);
+                }
+
                 return self::attachChecksToAuthorization(
-                    AuthorizationResult::requiresAction($response->getTransactionReference(), $challenge),
+                    AuthorizationResult::requiresAction($reference, $challenge),
                     $response,
                 )->withMetadata(self::extractOpeningMetadata($response));
             }
 
             if ($response->isSuccessful()) {
+                $reference = self::successReference($response);
+
+                if ($reference === null) {
+                    return AuthorizationResult::failed(self::UNNAMED_SUCCESS);
+                }
+
                 return self::attachChecksToAuthorization(
-                    AuthorizationResult::succeeded($response->getTransactionReference()),
+                    AuthorizationResult::succeeded($reference),
                     $response,
                 )->withMetadata(self::extractOpeningMetadata($response))
                     ->withConvertedAmount(self::extractConvertedAmount($response));
@@ -626,6 +653,8 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
      * onto a {@see RegistrationResult}.
      *
      * @param callable(): ResponseInterface $request
+     * @return RegistrationResult
+     * @throws UnsupportedByGateway
      */
     private function buildRegistration(callable $request): RegistrationResult
     {
@@ -640,8 +669,14 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
                 ? $response->getCustomerReference()
                 : null;
 
+            $reference = self::successReference($response);
+
+            if ($reference === null) {
+                return RegistrationResult::failed(self::UNNAMED_SUCCESS);
+            }
+
             return self::attachChecksToRegistration(
-                RegistrationResult::succeeded($response->getTransactionReference())
+                RegistrationResult::succeeded($reference)
                     ->withCustomerReference($customerReference),
                 $response,
             );
@@ -679,6 +714,27 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
      *
      * @return array<string, mixed>
      */
+    /**
+     * The reference a response reporting success must name, or null when it named none.
+     *
+     * A success that identifies nothing is unreachable afterwards: the reference is the only
+     * handle the ports ever get, so nothing could capture, cancel or refund it. Every builder
+     * below turns this into a failure rather than recording a payment no later operation can
+     * address.
+     *
+     * This is not new behaviour. `succeeded()` and `requiresAction()` already declare a
+     * `string`, so a null arrived as a TypeError, was caught by the same `Throwable` handler
+     * and became a failed result carrying "must be of type string, null given" — an internal
+     * artefact where the merchant expects a reason. Empty counts as absent for the same
+     * reason {@see self::extractOpeningMetadata()} treats it that way.
+     */
+    private static function successReference(ResponseInterface $response): ?string
+    {
+        $reference = $response->getTransactionReference();
+
+        return $reference === null || $reference === '' ? null : $reference;
+    }
+
     private static function extractOpeningMetadata(ResponseInterface $response): array
     {
         $metadata = self::extractMetadata($response);
@@ -686,7 +742,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
 
         return $reference === null || $reference === ''
             ? $metadata
-            : [...$metadata, 'opening_transaction_reference' => (string) $reference];
+            : [...$metadata, 'opening_transaction_reference' => $reference];
     }
 
     private static function extractConvertedAmount(ResponseInterface $response): ?Money

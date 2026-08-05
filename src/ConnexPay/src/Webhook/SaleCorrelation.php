@@ -62,6 +62,9 @@ final class SaleCorrelation
         public bool $viaOrderNumber,
     ) {}
 
+    /**
+     * @psalm-assert-if-true !null $this->paymentIntentId
+     */
     public function found(): bool
     {
         return $this->paymentIntentId !== null;

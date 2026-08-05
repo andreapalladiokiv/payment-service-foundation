@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Domain\Checkout;
 
+use EventSauce\EventSourcing\AggregateRoot;
+use Override;
 use Techork\PaymentService\Domain\Checkout\Command\CreateCheckoutCommand;
 use Techork\PaymentService\Domain\Checkout\Command\PayCheckoutCommand;
 use Techork\PaymentService\Domain\Checkout\Event\CheckoutCancelled;
@@ -16,10 +18,10 @@ use Techork\PaymentService\Domain\Checkout\Port\CheckoutCapturePort;
 use Techork\PaymentService\Domain\Checkout\Port\Request\CheckoutCaptureRequest;
 use Techork\PaymentService\Domain\Checkout\ValueObject\CheckoutId;
 use Techork\PaymentService\Domain\PaymentIntent\PaymentIntentStatus;
-use Techork\PaymentService\Domain\Subscription\SubscriptionStatus;
 use Techork\PaymentService\Domain\Subscription\ValueObject\SubscriptionPlan;
 use DateTimeImmutable;
 use DateTimeInterface;
+use RuntimeException;
 use EventSauce\EventSourcing\AggregateRootBehaviour;
 use EventSauce\EventSourcing\AggregateRootId;
 use EventSauce\EventSourcing\Snapshotting\AggregateRootWithSnapshotting;
@@ -28,10 +30,14 @@ use Money\Currency;
 use Money\Money;
 
 /**
- * @implements AggregateRootWithSnapshotting<CheckoutId>
+ * The aggregate-root id type is bound on the `@use` below rather than here: EventSauce's
+ * AggregateRootWithSnapshotting extends the generic AggregateRoot without carrying its
+ * template forward, so `@implements AggregateRoot<CheckoutId>` names an interface this class
+ * does not implement directly and psalm rejects it.
  */
 final class CheckoutAggregate implements AggregateRootWithSnapshotting
 {
+    /** @use AggregateRootBehaviour<CheckoutId> */
     use AggregateRootBehaviour;
     use SnapshottingBehaviour;
 
@@ -50,6 +56,7 @@ final class CheckoutAggregate implements AggregateRootWithSnapshotting
 
     private ?SubscriptionPlan $plan = null;
 
+    #[Override]
     public function aggregateRootId(): CheckoutId
     {
         return CheckoutId::fromString($this->aggregateRootId->toString());
@@ -146,6 +153,7 @@ final class CheckoutAggregate implements AggregateRootWithSnapshotting
         $this->recordThat(new CheckoutCancelled);
     }
 
+    #[Override]
     protected function createSnapshotState(): array
     {
         return [
@@ -160,14 +168,25 @@ final class CheckoutAggregate implements AggregateRootWithSnapshotting
         ];
     }
 
+    #[Override]
     protected static function reconstituteFromSnapshotState(AggregateRootId $id, $state): AggregateRootWithSnapshotting
     {
+        // EventSauce's signature is the widest id type; a snapshot of this aggregate can
+        // only carry its own.
+        assert($id instanceof CheckoutId);
+
         $self = new self($id);
         $self->status = CheckoutStatus::from($state['status']);
         $self->amount = new Money($state['amount'], new Currency($state['currency']));
         $self->description = $state['description'];
         $self->callbackUrl = $state['callback_url'];
-        $self->expiresAt = $state['expires_at'] !== null ? DateTimeImmutable::createFromFormat(DateTimeInterface::RFC3339_EXTENDED, $state['expires_at']) : null;
+        // `createFromFormat` answers an unreadable value with false, and `?: throw` is the
+        // difference between a corrupt snapshot and one that never had an expiry: silently
+        // nulling it would make an expired checkout look open-ended.
+        $self->expiresAt = $state['expires_at'] !== null
+            ? (DateTimeImmutable::createFromFormat(DateTimeInterface::RFC3339_EXTENDED, $state['expires_at'])
+                ?: throw new RuntimeException("Checkout snapshot '{$id->toString()}' carries an unreadable expires_at: '{$state['expires_at']}'."))
+            : null;
         $self->metadata = $state['metadata'] ?? [];
         $self->plan = isset($state['plan']) ? SubscriptionPlan::fromArray($state['plan']) : null;
 
@@ -185,12 +204,12 @@ final class CheckoutAggregate implements AggregateRootWithSnapshotting
         $this->plan = $event->plan;
     }
 
-    protected function applyCheckoutPaymentSubmitted(CheckoutPaymentSubmitted $event): void
+    protected function applyCheckoutPaymentSubmitted(): void
     {
         $this->status = CheckoutStatus::Charged;
     }
 
-    protected function applyCheckoutCancelled(CheckoutCancelled $event): void
+    protected function applyCheckoutCancelled(): void
     {
         $this->status = CheckoutStatus::Cancelled;
     }

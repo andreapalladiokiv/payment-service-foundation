@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\ConnexPay;
 
+use Override;
 use Techork\PaymentService\Gateway\Concern\InstrumentParameters;
 use Techork\PaymentService\ConnexPay\Concern\ConnexPayRequestParameters;
+use Techork\PaymentService\ConnexPay\Concern\FormatsThreeDS;
 use Techork\PaymentService\Gateway\Contract\GatewayCredential;
 use GuzzleHttp\Exception\GuzzleException;
 use DateInterval;
@@ -20,7 +22,6 @@ use Techork\PaymentService\Common\ValueObject\Cash;
 use Techork\PaymentService\Common\ValueObject\CreditCard;
 use Techork\PaymentService\Common\ValueObject\HostedPayment;
 use Techork\PaymentService\Common\ValueObject\PaymentMethod;
-use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSResult;
 use Techork\PaymentService\Common\ValueObject\Token;
 
 /**
@@ -29,10 +30,13 @@ use Techork\PaymentService\Common\ValueObject\Token;
  *
  * Not final: {@see PartialCaptureRequest} reuses the sale build for the
  * void-then-resell partial capture flow.
+ *
+ * @implements PaymentInstrumentVisitor<array>
  */
 class PurchaseRequest extends AbstractRequest implements PaymentInstrumentVisitor
 {
     use ConnexPayRequestParameters;
+    use FormatsThreeDS;
     use InstrumentParameters;
 
     private const int EXPECTED_PAYMENTS_CARD = 1;
@@ -45,6 +49,7 @@ class PurchaseRequest extends AbstractRequest implements PaymentInstrumentVisito
 
     private const string HOSTED_TENDER = 'Credit';
 
+    #[Override]
     public function getData(): array
     {
         $this->validate('money', 'instrument', 'gateway');
@@ -75,7 +80,7 @@ class PurchaseRequest extends AbstractRequest implements PaymentInstrumentVisito
         }
 
         $threeDS = $this->formatThreeDS();
-        if ($threeDS !== null && isset($data['Card'])) {
+        if ($threeDS !== null && isset($data['Card']) && is_array($data['Card'])) {
             $data['Card']['ThreeDS'] = $threeDS;
         }
 
@@ -87,6 +92,7 @@ class PurchaseRequest extends AbstractRequest implements PaymentInstrumentVisito
         return $this->withOrderNumber($data);
     }
 
+    #[Override]
     public function visitCreditCard(CreditCard $card): array
     {
         $decrypter = $this->getDecrypter();
@@ -112,6 +118,7 @@ class PurchaseRequest extends AbstractRequest implements PaymentInstrumentVisito
         ];
     }
 
+    #[Override]
     public function visitCash(Cash $cash): array
     {
         $billingAddress = $this->getParameter('billingAddress');
@@ -128,6 +135,7 @@ class PurchaseRequest extends AbstractRequest implements PaymentInstrumentVisito
         return $data;
     }
 
+    #[Override]
     public function visitToken(Token $token): array
     {
         /** @var GatewayCredential $gateway */
@@ -143,6 +151,7 @@ class PurchaseRequest extends AbstractRequest implements PaymentInstrumentVisito
         ];
     }
 
+    #[Override]
     public function visitPaymentMethod(PaymentMethod $paymentMethod): array
     {
         /** @var GatewayCredential $gateway */
@@ -158,6 +167,7 @@ class PurchaseRequest extends AbstractRequest implements PaymentInstrumentVisito
         ];
     }
 
+    #[Override]
     public function sendData($data): ConnexPayResponse
     {
         if (! empty($data['_hosted'])) {
@@ -191,6 +201,7 @@ class PurchaseRequest extends AbstractRequest implements PaymentInstrumentVisito
      * check: an empty object is accepted. It carries `ExpectedPayments` anyway,
      * to match the sale payload.
      */
+    #[Override]
     public function visitHostedPayment(HostedPayment $hosted): array
     {
         /** @var Money $money */
@@ -226,7 +237,7 @@ class PurchaseRequest extends AbstractRequest implements PaymentInstrumentVisito
             'TenderTypeOptions' => [self::HOSTED_TENDER],
             // Sent explicitly because the default is the end of the following
             // day — far longer than a checkout should stay payable.
-            'Expiration' => (new DateTimeImmutable('now', new DateTimeZone('UTC')))
+            'Expiration' => new DateTimeImmutable('now', new DateTimeZone('UTC'))
                 ->add(new DateInterval(self::HOSTED_EXPIRY_INTERVAL))
                 ->format('Y-m-d\TH:i:s'),
         ];

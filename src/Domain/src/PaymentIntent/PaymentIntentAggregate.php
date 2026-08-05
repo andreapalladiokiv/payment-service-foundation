@@ -4,12 +4,15 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Domain\PaymentIntent;
 
+use EventSauce\EventSourcing\AggregateRoot;
 use EventSauce\EventSourcing\AggregateRootId;
 use EventSauce\EventSourcing\AggregateRootWithAggregates;
 use EventSauce\EventSourcing\Snapshotting\AggregateRootWithSnapshotting;
 use EventSauce\EventSourcing\Snapshotting\SnapshottingBehaviour;
 use Money\Currency;
 use Money\Money;
+use Override;
+use RuntimeException;
 use Techork\PaymentService\Common\Contract\Challenge;
 use Techork\PaymentService\Common\Contract\ChallengeResult;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
@@ -66,7 +69,10 @@ use Techork\PaymentService\Domain\PaymentIntent\Refund\ValueObject\RefundId;
 use Techork\PaymentService\Domain\PaymentIntent\ValueObject\PaymentIntentId;
 
 /**
- * @implements AggregateRootWithSnapshotting<PaymentIntentId>
+ * The aggregate-root id type is bound on the `@use` below rather than here: EventSauce's
+ * AggregateRootWithSnapshotting extends the generic AggregateRoot without carrying its
+ * template forward, so `@implements AggregateRoot<PaymentIntentId>` names an interface this class
+ * does not implement directly and psalm rejects it.
  */
 final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
 {
@@ -90,11 +96,14 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
     private CaptureMethod $captureMethod;
 
     /**
-     * Nullable only so a snapshot written before `billing_address` was required
-     * still reconstitutes. Every event that opens an intent supplies one,
-     * imports included, so live states always have it.
+     * Total, because every event that opens an intent carries one — imports included, and
+     * `PaymentIntentImported` was the last event where it was ever optional. The property
+     * used to be nullable purely so a snapshot written before `billing_address` existed
+     * could still reconstitute; that concession made every reader downstream carry a null
+     * case that no live aggregate could produce. Absence, where it is genuinely possible,
+     * is {@see BillingAddress::unknown()} rather than null.
      */
-    private ?BillingAddress $billingAddress = null;
+    private BillingAddress $billingAddress;
 
     /** @var array<string, mixed> */
     private array $metadata = [];
@@ -120,6 +129,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
     /** @var array<string, Refund> indexed by RefundId string */
     private array $refunds = [];
 
+    #[Override]
     public function aggregateRootId(): PaymentIntentId
     {
         return PaymentIntentId::fromString($this->aggregateRootId->toString());
@@ -145,7 +155,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         return $this->captureMethod;
     }
 
-    public function billingAddress(): ?BillingAddress
+    public function billingAddress(): BillingAddress
     {
         return $this->billingAddress;
     }
@@ -156,6 +166,11 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         return $this->metadata;
     }
 
+    /**
+     * @psalm-suppress RedundantPropertyInitializationCheck the property is set by the
+     *   opening event, not by a constructor, and a stream opened before merchant
+     *   descriptors existed has none — which is exactly what this backfills.
+     */
     public function merchantDescriptor(): MerchantDescriptor
     {
         return $this->merchantDescriptor ??= MerchantDescriptor::none();
@@ -325,6 +340,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         // version, so it holds for a caller that assembled the aggregate some
         // other way. Importing over a live intent would rewrite its amount and
         // instrument from a stale export and lose whatever it had progressed to.
+        /** @psalm-suppress RedundantPropertyInitializationCheck no constructor sets it; an unopened aggregate genuinely has no status. */
         isset($this->status) && throw InvalidPaymentIntent::alreadyExists($this->aggregateRootId());
 
         $this->recordThat(new PaymentIntentImported(
@@ -610,6 +626,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         $this->registerAggregate($refund);
     }
 
+    #[Override]
     protected function createSnapshotState(): array
     {
         return [
@@ -622,7 +639,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
             'metadata' => $this->metadata,
             'merchant_descriptor' => (string) $this->merchantDescriptor(),
             'description' => $this->description,
-            'billing_address' => $this->billingAddress?->toArray(),
+            'billing_address' => $this->billingAddress->toArray(),
             'challenge' => $this->challenge === null ? null : ChallengeArraySerializer::toArray($this->challenge),
             'challenge_result' => $this->challengeResult === null ? null : ChallengeResultArraySerializer::toArray($this->challengeResult),
             'initiation' => $this->initiation->value,
@@ -630,8 +647,13 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         ];
     }
 
+    #[Override]
     protected static function reconstituteFromSnapshotState(AggregateRootId $id, $state): AggregateRootWithSnapshotting
     {
+        // EventSauce's signature is the widest id type; a snapshot of this aggregate can
+        // only carry its own.
+        assert($id instanceof PaymentIntentId);
+
         $self = new self($id);
         $self->status = PaymentIntentStatus::from($state['status']);
         $currency = new Currency($state['currency']);
@@ -642,7 +664,12 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         $self->metadata = $state['metadata'] ?? [];
         $self->merchantDescriptor = new MerchantDescriptor($state['merchant_descriptor'] ?? '');
         $self->description = $state['description'] ?? '';
-        $self->billingAddress = isset($state['billing_address']) ? BillingAddress::fromArray($state['billing_address']) : null;
+        // Refused rather than defaulted: a snapshot with no billing address predates the
+        // field being required, and quietly substituting one would put an address the
+        // cardholder never gave into AVS and reporting.
+        $self->billingAddress = isset($state['billing_address'])
+            ? BillingAddress::fromArray($state['billing_address'])
+            : throw new RuntimeException("Payment intent snapshot '{$id->toString()}' carries no billing address.");
         $self->challenge = isset($state['challenge']) ? ChallengeArraySerializer::fromArray($state['challenge']) : null;
         $self->challengeResult = isset($state['challenge_result']) ? ChallengeResultArraySerializer::fromArray($state['challenge_result']) : null;
         $self->initiation = PaymentInitiation::from($state['initiation'] ?? PaymentInitiation::CardholderInitiated->value);
@@ -730,7 +757,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         $this->challenge = null;
     }
 
-    protected function applyPaymentIntentCancelled(PaymentIntentCancelled $event): void
+    protected function applyPaymentIntentCancelled(): void
     {
         $this->status = PaymentIntentStatus::Cancelled;
         $this->challenge = null;

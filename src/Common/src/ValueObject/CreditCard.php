@@ -6,12 +6,12 @@ namespace Techork\PaymentService\Common\ValueObject;
 
 use DateMalformedStringException;
 use DateTimeImmutable;
+use InvalidArgumentException;
 use Override;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\Contract\PaymentInstrumentVisitor;
 use Techork\PaymentService\Common\Pii;
 use Techork\PaymentService\Common\ShreddingStubs;
-use Techork\PaymentService\Common\ValueObject\CardBrand;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Address;
 use Techork\PaymentService\Common\ValueObject\CreditCard\CheckResult;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Cvc;
@@ -45,7 +45,8 @@ final readonly class CreditCard implements PaymentInstrument
      */
     public static function fromArray(array $data): self
     {
-        $expiration = DateTimeImmutable::createFromFormat('my', $data['expiration']);
+        $expiration = DateTimeImmutable::createFromFormat('my', $data['expiration'])
+            ?: throw new InvalidArgumentException("Stored card expiration '{$data['expiration']}' is not a readable date.");
 
         return new self(
             new Number($data['first6'], $data['last4'], CardBrand::from($data['brand'])),

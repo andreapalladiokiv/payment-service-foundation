@@ -6,6 +6,7 @@ namespace Techork\PaymentService\Revolut;
 
 use Omnipay\Common\AbstractGateway;
 use Omnipay\Common\Message\AbstractRequest;
+use Override;
 use Techork\PaymentService\Gateway\Contract\CustomerRepository;
 use Techork\PaymentService\Gateway\Contract\Gateway;
 use Techork\PaymentService\Revolut\Exception\UnsupportedOperationException;
@@ -44,11 +45,13 @@ final class RevolutGateway extends AbstractGateway implements Gateway
 {
     private RevolutHttpClientInterface $client;
 
+    #[Override]
     public function getName(): string
     {
         return 'revolut';
     }
 
+    #[Override]
     public function setCustomerRepository(CustomerRepository $repository): void
     {
         // These cards are auto-issued with no holder at all (Revolut wants a
@@ -57,6 +60,7 @@ final class RevolutGateway extends AbstractGateway implements Gateway
         // repository is intentionally ignored.
     }
 
+    #[Override]
     public function getDefaultParameters(): array
     {
         return [
@@ -183,7 +187,7 @@ final class RevolutGateway extends AbstractGateway implements Gateway
     {
         $value = $this->getParameter('fetchSensitiveDetails');
 
-        return $value === null ? true : (bool) $value;
+        return $value === null || $value;
     }
 
     public function setFetchSensitiveDetails(bool $value): static
@@ -191,6 +195,7 @@ final class RevolutGateway extends AbstractGateway implements Gateway
         return $this->setParameter('fetchSensitiveDetails', $value);
     }
 
+    #[Override]
     public function initialize(array $parameters = []): static
     {
         // parent::initialize() drives Omnipay's Helper, which translates
@@ -228,52 +233,63 @@ final class RevolutGateway extends AbstractGateway implements Gateway
         return $this;
     }
 
-    public function issueVirtualCard(array $parameters = []): AbstractRequest
+    #[Override]
+    public function issueVirtualCard(array $options = []): AbstractRequest
     {
-        return $this->createRevolutRequest(IssueVirtualCardRequest::class, $parameters);
+        return $this->createRevolutRequest(IssueVirtualCardRequest::class, $options);
     }
 
-    public function updateVirtualCard(array $parameters = []): AbstractRequest
+    #[Override]
+    public function retryRefund(array $options = []): AbstractRequest
     {
-        return $this->createRevolutRequest(UpdateVirtualCardRequest::class, $parameters);
+        throw UnsupportedOperationException::operation('retryRefund');
     }
 
-    public function terminateVirtualCard(array $parameters = []): AbstractRequest
+    #[Override]
+    public function updateVirtualCard(array $options = []): AbstractRequest
     {
-        return $this->createRevolutRequest(TerminateCardRequest::class, $parameters);
+        return $this->createRevolutRequest(UpdateVirtualCardRequest::class, $options);
     }
 
-    public function purchase(array $parameters = []): AbstractRequest
+    #[Override]
+    public function terminateVirtualCard(array $options = []): AbstractRequest
+    {
+        return $this->createRevolutRequest(TerminateCardRequest::class, $options);
+    }
+
+    public function purchase(array $options = []): AbstractRequest
     {
         throw UnsupportedOperationException::operation('purchase');
     }
 
-    public function authorize(array $parameters = []): AbstractRequest
+    public function authorize(array $options = []): AbstractRequest
     {
         throw UnsupportedOperationException::operation('authorize');
     }
 
-    public function capture(array $parameters = []): AbstractRequest
+    public function capture(array $options = []): AbstractRequest
     {
         throw UnsupportedOperationException::operation('capture');
     }
 
-    public function refund(array $parameters = []): AbstractRequest
+    public function refund(array $options = []): AbstractRequest
     {
         throw UnsupportedOperationException::operation('refund');
     }
 
-    public function void(array $parameters = []): AbstractRequest
+    #[Override]
+    public function void(array $options = []): AbstractRequest
     {
         throw UnsupportedOperationException::operation('void');
     }
 
-    public function createCard(array $parameters = []): AbstractRequest
+    public function createCard(array $options = []): AbstractRequest
     {
         throw UnsupportedOperationException::operation('createCard');
     }
 
-    public function createPaymentMethod(array $parameters = []): AbstractRequest
+    #[Override]
+    public function createPaymentMethod(array $options = []): AbstractRequest
     {
         throw UnsupportedOperationException::operation('createPaymentMethod');
     }

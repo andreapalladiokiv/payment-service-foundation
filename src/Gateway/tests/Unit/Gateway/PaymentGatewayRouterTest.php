@@ -275,7 +275,6 @@ it('records the opening reference even when the response carries no metadata of 
 });
 
 it('records no opening reference on a capture, so a settle cannot bury the anchor', function () {
-    $piId = 'pi-'.uniqid();
     $txRepo = Mockery::mock(GatewayTransactionRepository::class);
 
     $response = Mockery::mock(ResponseInterface::class, TransactionMetadataProvider::class);
@@ -664,4 +663,49 @@ it('leaves an ordinary charge with no series facts either', function () {
 
     expect($seen['initiation'])->toBe(PaymentInitiation::CardholderInitiated)
         ->and($seen)->not->toHaveKey('rebilling');
+});
+
+/**
+ * A gateway that reports success without naming a transaction.
+ *
+ * `getMessage()` is stubbed with an approval so the assertions below cannot pass by
+ * accidentally falling into the ordinary failure branch — the message they expect can only
+ * come from the router refusing an unnamed success.
+ */
+function makeUnnamedSuccessResponse(?string $reference = null): ResponseInterface
+{
+    $response = Mockery::mock(ResponseInterface::class);
+    $response->shouldReceive('isSuccessful')->andReturn(true);
+    $response->shouldReceive('getTransactionReference')->andReturn($reference);
+    $response->shouldReceive('getMessage')->andReturn('Approved');
+
+    return $response;
+}
+
+it('refuses a success that names no transaction, on an outcome', function (?string $reference) {
+    // Nothing could capture, cancel or refund it afterwards: the reference is the only
+    // handle the ports get. This already failed before — as a TypeError caught by the same
+    // handler, surfacing "must be of type string, null given" to the caller.
+    $omnipay = makeOmnipayWithMethod('capture', makeUnnamedSuccessResponse($reference));
+    $router = makeRouter(omnipay: $omnipay);
+
+    $result = $router->capture(GatewayId::generate(), 'auth_ref', new Money(1000, new Currency('USD')));
+
+    expect($result->success)->toBeFalse()
+        ->and($result->message)->toBe('The gateway reported success without naming a transaction reference.');
+})->with([
+    'null' => [null],
+    'empty' => [''],
+]);
+
+it('refuses a success that names no transaction, on an authorization', function () {
+    $omnipay = makeOmnipayWithMethod('purchase', makeUnnamedSuccessResponse());
+    $router = makeRouter(omnipay: $omnipay);
+    $instrument = Mockery::mock(PaymentInstrument::class);
+    $instrument->shouldReceive('toPayload')->andReturn([]);
+
+    $result = $router->charge(GatewayId::generate(), $instrument, new Money(100, new Currency('USD')));
+
+    expect($result->success)->toBeFalse()
+        ->and($result->message)->toBe('The gateway reported success without naming a transaction reference.');
 });

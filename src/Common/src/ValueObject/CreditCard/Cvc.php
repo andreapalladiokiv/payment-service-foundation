@@ -6,15 +6,16 @@ namespace Techork\PaymentService\Common\ValueObject\CreditCard;
 
 use JsonSerializable;
 use Override;
+use SensitiveParameter;
 use Stringable;
 use Techork\PaymentService\Common\Contract\DecryptInterface;
 use Techork\PaymentService\Common\Contract\EncryptInterface;
 
-final readonly class Cvc implements JsonSerializable, Stringable
+final class Cvc implements JsonSerializable, Stringable
 {
-    private string $data;
+    private ?string $data = null;
 
-    public static function fromCvc(string $cvc, EncryptInterface $encrypter): self
+    public static function fromCvc(#[SensitiveParameter] string $cvc, EncryptInterface $encrypter): self
     {
         $self = new self;
         $self->data = $encrypter->encrypt($cvc);

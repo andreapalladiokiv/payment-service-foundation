@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\ConnexPay;
 
+use InvalidArgumentException;
 use Omnipay\Common\AbstractGateway;
 use Omnipay\Common\Message\AbstractRequest;
+use Override;
+use RuntimeException;
 use Techork\PaymentService\Common\ValueObject\Cash;
 use Techork\PaymentService\Common\ValueObject\PaymentMethod;
 use Techork\PaymentService\Gateway\Contract\CustomerRepository;
@@ -19,16 +22,19 @@ final class ConnexPayGateway extends AbstractGateway implements Gateway
 
     private ?CustomerRepository $customerRepository = null;
 
+    #[Override]
     public function getName(): string
     {
         return 'connexpay';
     }
 
+    #[Override]
     public function setCustomerRepository(CustomerRepository $repository): void
     {
         $this->customerRepository = $repository;
     }
 
+    #[Override]
     public function getDefaultParameters(): array
     {
         return [
@@ -128,6 +134,7 @@ final class ConnexPayGateway extends AbstractGateway implements Gateway
         return $this->setParameter('environment', $value);
     }
 
+    #[Override]
     public function initialize(array $parameters = []): static
     {
         // parent::initialize() drives Omnipay's Helper, which translates
@@ -152,31 +159,32 @@ final class ConnexPayGateway extends AbstractGateway implements Gateway
         return $this;
     }
 
-    public function createCard(array $parameters = []): AbstractRequest
+    public function createCard(array $options = []): AbstractRequest
     {
-        return $this->createRequest(CreateCardRequest::class, $parameters);
+        return $this->createRequest(CreateCardRequest::class, $options);
     }
 
-    public function createPaymentMethod(array $parameters = []): AbstractRequest
+    #[Override]
+    public function createPaymentMethod(array $options = []): AbstractRequest
     {
-        return $this->createRequest(CreatePaymentMethodRequest::class, $parameters);
+        return $this->createRequest(CreatePaymentMethodRequest::class, $options);
     }
 
-    public function purchase(array $parameters = []): AbstractRequest
+    public function purchase(array $options = []): AbstractRequest
     {
-        return $this->createRequest(PurchaseRequest::class, $parameters);
+        return $this->createRequest(PurchaseRequest::class, $options);
     }
 
-    public function authorize(array $parameters = []): AbstractRequest
+    public function authorize(array $options = []): AbstractRequest
     {
         // ConnexPay's /authonlys endpoint doesn't accept cash; auths against a
         // cash tender must go through /sales instead. Match the legacy
         // acquirer's behavior of transparently routing Cash to charge.
-        if (($parameters['instrument'] ?? null) instanceof Cash) {
-            return $this->purchase($parameters);
+        if (($options['instrument'] ?? null) instanceof Cash) {
+            return $this->purchase($options);
         }
 
-        return $this->createRequest(AuthorizeRequest::class, $parameters);
+        return $this->createRequest(AuthorizeRequest::class, $options);
     }
 
     /**
@@ -189,85 +197,90 @@ final class ConnexPayGateway extends AbstractGateway implements Gateway
      * partial request can't be detected and the full hold would be
      * captured silently.
      */
-    public function capture(array $parameters = []): AbstractRequest
+    public function capture(array $options = []): AbstractRequest
     {
-        $money = $parameters['money'] ?? null;
-        $authorized = $parameters['authorizedAmount'] ?? null;
+        $money = $options['money'] ?? null;
+        $authorized = $options['authorizedAmount'] ?? null;
 
         if ($money !== null && $authorized !== null && $money->greaterThan($authorized)) {
-            throw new \InvalidArgumentException('Capture amount exceeds the authorized amount.');
+            throw new InvalidArgumentException('Capture amount exceeds the authorized amount.');
         }
 
         if ($money !== null && $authorized !== null && $money->lessThan($authorized)) {
-            $instrument = $parameters['instrument'] ?? null;
+            $instrument = $options['instrument'] ?? null;
 
             if ($instrument === null) {
-                throw new \InvalidArgumentException(
+                throw new InvalidArgumentException(
                     'ConnexPay cannot capture a partial amount without the original instrument '
                     .'(full-auth void + fresh sale is required).',
                 );
             }
 
-            if ($instrument instanceof PaymentMethod && ! isset($parameters['billingAddress'])) {
-                $parameters['billingAddress'] = $instrument->billingAddress;
+            if ($instrument instanceof PaymentMethod && ! isset($options['billingAddress'])) {
+                $options['billingAddress'] = $instrument->billingAddress;
             }
 
-            return $this->createRequest(PartialCaptureRequest::class, $parameters);
+            return $this->createRequest(PartialCaptureRequest::class, $options);
         }
 
-        return $this->createRequest(CaptureRequest::class, $parameters);
+        return $this->createRequest(CaptureRequest::class, $options);
     }
 
-    public function refund(array $parameters = []): AbstractRequest
+    public function refund(array $options = []): AbstractRequest
     {
-        return $this->createRequest(RefundRequest::class, $parameters);
+        return $this->createRequest(RefundRequest::class, $options);
     }
 
-    public function retryRefund(array $parameters = []): AbstractRequest
+    #[Override]
+    public function retryRefund(array $options = []): AbstractRequest
     {
-        return $this->createRequest(ReturnRetryRequest::class, $parameters);
+        return $this->createRequest(ReturnRetryRequest::class, $options);
     }
 
-    public function void(array $parameters = []): AbstractRequest
+    #[Override]
+    public function void(array $options = []): AbstractRequest
     {
-        return $this->createRequest(VoidRequest::class, $parameters);
+        return $this->createRequest(VoidRequest::class, $options);
     }
 
-    public function issueVirtualCard(array $parameters = []): AbstractRequest
+    #[Override]
+    public function issueVirtualCard(array $options = []): AbstractRequest
     {
         // Prefer the code persisted with the sale / capture response
         // (passed down by the router from gateway_references.metadata) —
         // Search/Sales is the fallback, not the source of truth.
-        $incomingTransactionCode = $parameters['incomingTransactionCode'] ?? null;
+        $incomingTransactionCode = $options['incomingTransactionCode'] ?? null;
 
         if ($incomingTransactionCode === null || $incomingTransactionCode === '') {
-            $transactionReference = $parameters['transactionReference'] ?? null;
+            $transactionReference = $options['transactionReference'] ?? null;
             $incomingTransactionCode = $transactionReference !== null
-                ? $this->resolveIncomingTransactionCode($transactionReference, $parameters['clientUniqueId'] ?? null)
+                ? $this->resolveIncomingTransactionCode($transactionReference, $options['clientUniqueId'] ?? null)
                 : null;
         }
 
         return parent::createRequest(IssueVirtualCardRequest::class, [
-            ...$parameters,
+            ...$options,
             'connexPayClient' => $this->purchasesClient,
             'merchantGuid' => $this->getMerchantGuid(),
             'incomingTransactionCode' => $incomingTransactionCode,
-            'cardBrand' => $parameters['cardBrand'] ?? null,
+            'cardBrand' => $options['cardBrand'] ?? null,
         ]);
     }
 
-    public function updateVirtualCard(array $parameters = []): AbstractRequest
+    #[Override]
+    public function updateVirtualCard(array $options = []): AbstractRequest
     {
         return parent::createRequest(UpdateVirtualCardRequest::class, [
-            ...$parameters,
+            ...$options,
             'connexPayClient' => $this->purchasesClient,
         ]);
     }
 
-    public function terminateVirtualCard(array $parameters = []): AbstractRequest
+    #[Override]
+    public function terminateVirtualCard(array $options = []): AbstractRequest
     {
         return parent::createRequest(TerminateCardRequest::class, [
-            ...$parameters,
+            ...$options,
             'connexPayClient' => $this->purchasesClient,
         ]);
     }
@@ -307,13 +320,14 @@ final class ConnexPayGateway extends AbstractGateway implements Gateway
             $page++;
         } while ($page <= $pageTotal && $page <= $maxPages);
 
-        throw new \RuntimeException("Could not resolve IncomingTransactionCode for sale GUID: {$saleGuid}");
+        throw new RuntimeException("Could not resolve IncomingTransactionCode for sale GUID: {$saleGuid}");
     }
 
-    protected function createRequest($class, array $parameters): AbstractRequest
+    #[Override]
+    protected function createRequest($class, array $options): AbstractRequest
     {
         return parent::createRequest($class, [
-            ...$parameters,
+            ...$options,
             'connexPayClient' => $this->client,
             'deviceGuid' => $this->getDeviceGuid(),
             'customerRepository' => $this->customerRepository,

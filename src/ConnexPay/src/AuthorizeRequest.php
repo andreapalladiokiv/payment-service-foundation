@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\ConnexPay;
 
+use Override;
 use Techork\PaymentService\Gateway\Concern\InstrumentParameters;
 use Techork\PaymentService\ConnexPay\Concern\ConnexPayRequestParameters;
+use Techork\PaymentService\ConnexPay\Concern\FormatsThreeDS;
 use Techork\PaymentService\Gateway\Contract\GatewayCredential;
 use Techork\PaymentService\Gateway\Exception\UnsupportedInstrument;
 use GuzzleHttp\Exception\GuzzleException;
@@ -18,18 +20,21 @@ use Techork\PaymentService\Common\ValueObject\Cash;
 use Techork\PaymentService\Common\ValueObject\CreditCard;
 use Techork\PaymentService\Common\ValueObject\HostedPayment;
 use Techork\PaymentService\Common\ValueObject\PaymentMethod;
-use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSResult;
 use Techork\PaymentService\Common\ValueObject\Token;
 
 /**
  * Authorizes (holds) funds via ConnexPay without capturing.
  * Expects: money (Money), instrument (PaymentInstrument), gateway (Gateway).
+ *
+ * @implements PaymentInstrumentVisitor<array>
  */
 final class AuthorizeRequest extends AbstractRequest implements PaymentInstrumentVisitor
 {
     use ConnexPayRequestParameters;
+    use FormatsThreeDS;
     use InstrumentParameters;
 
+    #[Override]
     public function getData(): array
     {
         $this->validate('money', 'instrument', 'gateway');
@@ -66,6 +71,7 @@ final class AuthorizeRequest extends AbstractRequest implements PaymentInstrumen
         return $this->withOrderNumber($data);
     }
 
+    #[Override]
     public function visitCreditCard(CreditCard $card): array
     {
         $decrypter = $this->getDecrypter();
@@ -87,12 +93,14 @@ final class AuthorizeRequest extends AbstractRequest implements PaymentInstrumen
         return $data;
     }
 
+    #[Override]
     public function visitCash(Cash $cash): never
     {
         // Cash is a purchase-only product at ConnexPay; /authonlys has no form of it.
         throw UnsupportedInstrument::forGateway('connexpay', 'authorize', $cash);
     }
 
+    #[Override]
     public function visitToken(Token $token): array
     {
         /** @var GatewayCredential $gateway */
@@ -104,6 +112,7 @@ final class AuthorizeRequest extends AbstractRequest implements PaymentInstrumen
         return ['Guid' => $reference];
     }
 
+    #[Override]
     public function visitPaymentMethod(PaymentMethod $paymentMethod): array
     {
         /** @var GatewayCredential $gateway */
@@ -115,6 +124,13 @@ final class AuthorizeRequest extends AbstractRequest implements PaymentInstrumen
         return ['Guid' => $reference];
     }
 
+    #[Override]
+    public function visitHostedPayment(HostedPayment $hosted): never
+    {
+        throw UnsupportedInstrument::forGateway('connexpay', 'authorize', $hosted);
+    }
+
+    #[Override]
     public function sendData($data): AuthorizeResponse
     {
         try {
@@ -128,10 +144,5 @@ final class AuthorizeRequest extends AbstractRequest implements PaymentInstrumen
                 'processorResponseMessage' => $e->getMessage(),
             ]);
         }
-    }
-
-    public function visitHostedPayment(HostedPayment $hosted): never
-    {
-        throw UnsupportedInstrument::forGateway('connexpay', 'authorize', $hosted);
     }
 }
