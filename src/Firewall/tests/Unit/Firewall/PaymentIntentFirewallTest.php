@@ -22,6 +22,9 @@ use Techork\PaymentService\Firewall\PaymentIntent\PaymentIntentFactSchema;
 use Techork\PaymentService\Firewall\PaymentIntent\PaymentIntentFirewall;
 use Techork\PaymentService\Firewall\PaymentIntent\RequestFactSupplier;
 use Techork\PaymentService\Firewall\Rule\FirewallRule;
+use Techork\PaymentService\Firewall\Exception\UnevaluableChain;
+use Techork\PaymentService\Firewall\Chain\ChainStrategy;
+use Techork\PaymentService\Firewall\Chain\FirstMatchWins;
 use Techork\PaymentService\Firewall\Rule\FirewallRuleSource;
 
 function firewallRequestFor(bool $withConnection = true, ?string $gatewayId = 'gw-1'): PaymentIntentFirewallRequest
@@ -70,6 +73,13 @@ function paymentIntentFirewall(array $rules, array $enrichment = []): PaymentInt
         public function rulesFor(string $chain): iterable
         {
             return $chain === PaymentIntentFirewall::CHAIN ? $this->rules : [];
+        }
+
+        // Blacklist: this port inspects payments for fraud, where the rules enumerate what is
+        // suspicious and an ordinary payment is expected to fall through untouched.
+        public function strategyFor(string $chain): ChainStrategy
+        {
+            return FirstMatchWins::blacklist();
         }
     };
 
@@ -141,25 +151,30 @@ it('evaluates the chain for a merchant-initiated request that has no origin', fu
         ->and($decision->reason)->toBe('matched rule no-origin');
 });
 
-it('falls through when nothing matches, leaving the policy to the caller', function () {
+it('lets an ordinary payment through when no rule mentions it', function () {
+    // This chain is a blacklist — its rules enumerate what is suspicious — so a payment none of
+    // them describes proceeds. That used to be reported as NoMatch and handed to the caller to
+    // interpret, which is how an ordinary payment ended up parked for authentication.
     $decision = paymentIntentFirewall([
         new FirewallRule(FirewallVerdict::Deny, ['payment_method.source.bin' => ['values' => ['555555']]], id: '1'),
     ])->evaluate(firewallRequestFor());
 
-    expect($decision->verdict)->toBe(FirewallVerdict::NoMatch)
-        ->and($decision->permits())->toBeFalse();
+    expect($decision->isAllowed())->toBeTrue()
+        ->and($decision->permits())->toBeTrue()
+        ->and($decision->matched)->toBeFalse();
 });
 
-it('reports a degraded chain when a rule could not be evaluated', function () {
-    $decision = paymentIntentFirewall([
+it('refuses to decide when a rule could not be evaluated, rather than allowing on the rest', function () {
+    // The old fail-open, at the port. A broken deny above an allow that matches produced an
+    // allowed payment carrying a `degraded` flag, and whether that flag was honoured depended on
+    // every caller remembering to check it.
+    $firewall = paymentIntentFirewall([
         new FirewallRule(FirewallVerdict::Deny, null, 'this is not ( valid', id: 'broken'),
         new FirewallRule(FirewallVerdict::Allow, ['payment_method.source.bin' => ['values' => ['411111']]], id: '2'),
-    ])->evaluate(firewallRequestFor());
+    ]);
 
-    expect($decision->isAllowed())->toBeTrue()
-        ->and($decision->degraded)->toBeTrue()
-        // ...and the domain refuses it anyway, which is the point of the flag.
-        ->and($decision->permits())->toBeFalse();
+    expect(fn () => $firewall->evaluate(firewallRequestFor()))
+        ->toThrow(UnevaluableChain::class, 'broken');
 });
 
 it('survives an enrichment supplier that fails, evaluating on what is known', function () {

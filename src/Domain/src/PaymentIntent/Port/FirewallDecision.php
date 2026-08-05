@@ -4,93 +4,85 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Domain\PaymentIntent\Port;
 
+use Techork\PaymentService\Common\Contract\Challenge;
+
 /**
- * The outcome of evaluating one firewall chain — the whole of what a domain's
- * firewall port returns.
+ * The outcome of evaluating one firewall chain — the whole of what a domain's firewall port
+ * returns.
  *
- * This is the shared decision vocabulary: each domain declares its own typed
- * firewall port (see
- * {@see PaymentIntentFirewallPort}),
- * and they all answer in these terms.
+ * This is the shared decision vocabulary: each domain declares its own typed firewall port
+ * (see {@see PaymentIntentFirewallPort}), and they all answer in these terms.
  *
- * Deliberately minimal. A firewall reports what its rules decided and nothing
- * more: it carries no policy action vocabulary and no provider payload.
+ * Always an action. There is no "nothing matched" outcome, because a caller cannot act on
+ * silence: what the absence of a match means is the chain's business and its strategy answers
+ * it. And there is no `degraded` flag, because a chain that could not be fully evaluated has no
+ * answer at all and says so by throwing — both of those used to be the caller's problem, and
+ * both were quietly collapsed into one branch by the only caller there is.
  *
- * The verdict is always present — {@see FirewallVerdict::NoMatch} covers the
- * chain that matched nothing, so a caller can `match` over three cases and be
- * forced to say what each means, rather than defaulting an absent value by
- * accident.
+ * `$reason` is an abstract breadcrumb for debugging and audit — a rule identifier, "no rule
+ * matched (blacklist)", "firewall not installed". It is documentation, never control flow:
+ * callers MUST NOT parse it.
  *
- * `$reason` is an abstract breadcrumb for debugging and audit — a rule
- * identifier, "no rule matched", "firewall not installed". It is documentation,
- * never control flow: callers MUST NOT parse it.
+ * `$matched` separates a decision a rule made from one the chain's fallthrough made. Both are
+ * real answers; the difference matters when reading back why a payment went the way it did.
  *
- * `$degraded` reports that at least one rule in the chain could not be
- * evaluated and was skipped. It exists so that skipping cannot silently weaken
- * a decision: a chain whose reject rule threw otherwise looks identical to one
- * that legitimately accepted, and a caller that treats those the same has a
- * fail-open hole. It rides on every outcome, including a match. Callers MUST NOT
- * treat a degraded result as a clean evaluation.
+ * `$challenge` carries the step-up to present when the verdict is
+ * {@see FirewallVerdict::Challenge} and something was able to raise one. Null with that verdict
+ * means authentication is required and nobody has initiated it yet — which is a truthful
+ * answer, unlike a fabricated challenge with no ACS behind it.
  */
 final readonly class FirewallDecision
 {
     private function __construct(
         public FirewallVerdict $verdict,
         public ?string $reason = null,
-        public bool $degraded = false,
+        public bool $matched = false,
+        public ?Challenge $challenge = null,
     ) {}
 
     /**
      * A rule matched and accepts the subject.
      */
-    public static function allow(?string $reason = null, bool $degraded = false): self
+    public static function allow(?string $reason = null, bool $matched = true): self
     {
-        return new self(FirewallVerdict::Allow, $reason, $degraded);
+        return new self(FirewallVerdict::Allow, $reason, $matched);
     }
 
     /**
      * A rule matched and rejects the subject.
      */
-    public static function deny(?string $reason = null, bool $degraded = false): self
+    public static function deny(?string $reason = null, bool $matched = true): self
     {
-        return new self(FirewallVerdict::Deny, $reason, $degraded);
+        return new self(FirewallVerdict::Deny, $reason, $matched);
     }
 
     /**
-     * The chain was evaluated and nothing matched — the caller applies its own
-     * default policy.
+     * The subject may proceed only once it has passed a challenge.
+     *
+     * `$challenge` is what the client needs to present it. It is optional because the verdict is
+     * a decision and the challenge is an artefact someone has to go and obtain: a deployment
+     * with no challenge integration still reaches this outcome, and saying "required, none
+     * raised" is honest where inventing one is not.
      */
-    public static function noMatch(?string $reason = null, bool $degraded = false): self
+    public static function challenge(?string $reason = null, bool $matched = true, ?Challenge $challenge = null): self
     {
-        return new self(FirewallVerdict::NoMatch, $reason, $degraded);
+        return new self(FirewallVerdict::Challenge, $reason, $matched, $challenge);
     }
 
     /**
-     * Whether this decision lets the subject through.
+     * Whether this decision lets the subject through as it stands.
      *
-     * This is the domain's policy, stated once so no caller has to re-derive it:
-     * ONLY an explicit {@see FirewallVerdict::Allow} on a chain that evaluated
-     * cleanly permits. Everything else — a rejection, a chain that matched
-     * nothing, a chain that could not be fully evaluated — does not. Fail-closed
-     * in every direction, the way a packet filter treats a policy it cannot
-     * satisfy.
-     *
-     * Note the {@see $degraded} clause: it is what stops a rejecting rule that
-     * failed to compile from becoming an accepted subject, which is the shape a
-     * fail-open hole actually takes here.
+     * Only an explicit {@see FirewallVerdict::Allow}. A challenge does not permit yet — it
+     * permits after the challenge is passed, which is a different payment state.
      */
     public function permits(): bool
     {
-        return $this->verdict === FirewallVerdict::Allow && ! $this->degraded;
+        return $this->verdict === FirewallVerdict::Allow;
     }
 
-    /**
-     * True when a rule matched, either way. Useful for audit and diagnostics;
-     * for "may this proceed?" use {@see permits()}.
-     */
-    public function matched(): bool
+    public function requiresChallenge(): bool
     {
-        return $this->verdict !== FirewallVerdict::NoMatch;
+        return $this->verdict === FirewallVerdict::Challenge;
     }
 
     public function isDenied(): bool
@@ -101,5 +93,10 @@ final readonly class FirewallDecision
     public function isAllowed(): bool
     {
         return $this->verdict === FirewallVerdict::Allow;
+    }
+
+    public function withChallenge(Challenge $challenge): self
+    {
+        return new self($this->verdict, $this->reason, $this->matched, $challenge);
     }
 }

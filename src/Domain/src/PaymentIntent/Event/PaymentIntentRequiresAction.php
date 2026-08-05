@@ -28,7 +28,14 @@ final readonly class PaymentIntentRequiresAction implements SerializablePayload
         public array $metadata,
         public MerchantDescriptor $merchantDescriptor,
         public string $description,
-        public Challenge $challenge,
+        /**
+         * Null when the payment must be authenticated and nobody has raised a challenge yet —
+         * a firewall that demanded a step-up with no challenge integration behind it. A
+         * {@see Challenge} is evidence that a handoff to an external system has already
+         * happened and carries what the client needs to render it, so there is nothing
+         * truthful to put here until the ACS has actually been asked.
+         */
+        public ?Challenge $challenge,
         public PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated,
     ) {}
 
@@ -44,7 +51,7 @@ final readonly class PaymentIntentRequiresAction implements SerializablePayload
             'metadata' => $this->metadata,
             'merchant_descriptor' => (string) $this->merchantDescriptor,
             'description' => $this->description,
-            'challenge' => ChallengeArraySerializer::toArray($this->challenge),
+            'challenge' => $this->challenge === null ? null : ChallengeArraySerializer::toArray($this->challenge),
             'initiation' => $this->initiation->value,
         ];
     }
@@ -60,7 +67,7 @@ final readonly class PaymentIntentRequiresAction implements SerializablePayload
             $payload['metadata'] ?? [],
             new MerchantDescriptor($payload['merchant_descriptor']),
             $payload['description'],
-            ChallengeArraySerializer::fromArray($payload['challenge']),
+            isset($payload['challenge']) ? ChallengeArraySerializer::fromArray($payload['challenge']) : null,
             PaymentInitiation::from($payload['initiation'] ?? PaymentInitiation::CardholderInitiated->value),
         );
     }

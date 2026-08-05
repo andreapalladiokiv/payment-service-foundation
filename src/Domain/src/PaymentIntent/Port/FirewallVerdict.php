@@ -5,45 +5,45 @@ declare(strict_types=1);
 namespace Techork\PaymentService\Domain\PaymentIntent\Port;
 
 /**
- * What a firewall chain concluded — the equivalent of an iptables target, plus
- * the case where the packet fell off the end.
+ * What a firewall chain decided — one of three actions, and all three are actions.
  *
- * A firewall port never interprets these beyond reporting them; the consuming
- * policy maps them onto its own action. The fraud policy, for instance, maps
- * {@see Deny} onto a forced 3DS step-up (it never hard-blocks a payment, so
- * forcing authentication is the strongest action available to it) and
- * {@see Allow} onto letting a trusted transaction through.
+ * A rule declares one of these as what to do when it matches, and a chain answers with one.
+ * There is deliberately no "nothing matched" case: silence is not an action, and a caller
+ * handed one has no basis for interpreting it. What the absence of a match means belongs to
+ * the chain, which says so through its
+ * {@see \Techork\PaymentService\Firewall\Chain\ChainStrategy} — a whitelist ends in Deny, a
+ * blacklist in Allow — so the answer that reaches a caller is always something it can act on.
  *
- * Shared across every domain's firewall port, so it stays free of any one
- * domain's vocabulary.
+ * That case used to exist, documented as "the caller's own default policy applies — which may
+ * be per-tenant, per-chain or operator-configured, and the firewall cannot know it". No
+ * mechanism for expressing such a policy ever followed, so the one caller collapsed NoMatch,
+ * Deny and an unevaluable chain into a single branch and fabricated a 3DS challenge for all
+ * three. Policy that has nowhere to live does not stay at the caller; it gets lost.
  *
- * {@see NoMatch} is deliberately a case of its own rather than an absent value:
- * a caller writing `match` over this enum is forced to say what silence means,
- * whereas a nullable verdict lets a stray `?? $default` decide it silently. That
- * distinction is where fail-open holes come from.
+ * Shared across every domain's firewall port, so it stays free of any one domain's vocabulary.
  */
 enum FirewallVerdict: string
 {
     /**
-     * A rule matched and accepts the subject — the chain's whitelist exception.
+     * Let the subject through.
      */
     case Allow = 'allow';
 
     /**
-     * A rule matched and rejects the subject. What "reject" costs is the
-     * consuming policy's business; the firewall only reports that a rule said
-     * no.
+     * Refuse the subject outright.
+     *
+     * Not a request for more evidence: a denied payment is one that must not happen, so no
+     * authentication can answer it. Consuming policies map this onto their own refusal.
      */
     case Deny = 'deny';
 
     /**
-     * The chain was evaluated and nothing matched.
+     * Let the subject through only once it has passed a challenge.
      *
-     * This is NOT acceptance. Falling off the end of a chain is where the
-     * caller's own default policy applies — which may be per-tenant, per-chain
-     * or operator-configured, and the firewall cannot know it. Authors who want
-     * the chain itself to answer can write a final catch-all rule: a rule with
-     * no conditions matches everything.
+     * The middle answer, and the reason a firewall need not choose between waving a suspicious
+     * payment through and refusing a legitimate one. What the challenge IS belongs to whoever
+     * can raise it — 3DS is the usual one — reached through
+     * {@see \Techork\PaymentService\Firewall\Challenge\ChallengeInitiator}.
      */
-    case NoMatch = 'no_match';
+    case Challenge = 'challenge';
 }

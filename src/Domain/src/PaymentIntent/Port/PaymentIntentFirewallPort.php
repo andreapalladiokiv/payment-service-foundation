@@ -25,14 +25,19 @@ use Techork\PaymentService\Domain\PaymentIntent\Port\Request\PaymentIntentFirewa
  * so an inspection at card registration never weighs a rule written about
  * authorization.
  *
- * POLICY-FREE BY CONTRACT. Implementations MUST NOT throw for a business
- * outcome, MUST NOT substitute a default when nothing matches, and MUST NOT
- * decide fail-open versus fail-closed. A chain that matches nothing returns
- * {@see FirewallDecision::noMatch()} and the CALLER applies its own default
- * policy, which may vary per gateway or per chain.
+ * Implementations MUST NOT throw for a business outcome: an allow, a denial and a demand for a
+ * challenge are all answers, returned as a {@see FirewallDecision}. They MUST throw when the
+ * chain cannot be evaluated at all — a rule that fails to compile is a broken configuration, not
+ * a verdict, and answering anything at that point would be a guess.
  *
- * The default implementation is {@see NullPaymentIntentFirewall}, which denies.
- * Installing a rule engine is what makes a chain evaluable; see the
+ * The chain decides what the absence of a match means, through its own strategy, and reports one
+ * of three actions. That responsibility used to sit here: the port returned "nothing matched" and
+ * the caller was told to apply its own default policy. No mechanism for expressing such a policy
+ * followed, so the one caller folded it together with a denial and fabricated a 3DS challenge for
+ * both — policy with nowhere to live does not stay at the caller, it gets lost.
+ *
+ * The default implementation is {@see NullPaymentIntentFirewall}, which allows everything because
+ * no firewall is installed. Installing a rule engine is what makes a chain evaluable; see the
  * techork/payment-service-firewall package.
  */
 interface PaymentIntentFirewallPort

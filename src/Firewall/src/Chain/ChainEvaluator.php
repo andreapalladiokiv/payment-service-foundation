@@ -4,71 +4,59 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Firewall\Chain;
 
-use Psr\Log\LoggerInterface;
 use Techork\PaymentService\Domain\PaymentIntent\Port\FirewallDecision;
-use Techork\PaymentService\Domain\PaymentIntent\Port\FirewallVerdict;
+use Techork\PaymentService\Firewall\Challenge\ChallengeInitiator;
 use Techork\PaymentService\Firewall\Dsl\RuleEvaluator;
+use Techork\PaymentService\Firewall\Exception\UnevaluableChain;
 use Techork\PaymentService\Firewall\Rule\FirewallRuleSource;
-use Throwable;
 
 /**
- * Walks one chain in order and returns the first rule that matches.
+ * Evaluates one chain: hands its rules to the strategy that says how the chain is walked, then
+ * raises a challenge if the answer demanded one.
  *
- * This is the shared machinery behind every domain's firewall port: the ports
- * are typed to their own domain data and are responsible for assembling facts,
- * then they delegate the actual chain walk here. It deals only in a chain name
- * and a fact bag, which is why it can be reused across domains.
+ * This is the shared machinery behind every domain's firewall port. The ports are typed to their
+ * own domain data and assemble facts; they delegate the walk here, which is why the same class
+ * serves any domain — it deals only in a chain name and a fact bag.
  *
- * Fail-safety is the delicate part. A single malformed rule must never break the
- * caller's flow, so an unevaluable rule is skipped — but skipping silently is how
- * a chain quietly stops protecting anything. So a skip is both logged and
- * recorded on the decision as {@see FirewallDecision::$degraded}, on EVERY
- * outcome including a match: the dangerous case is a reject rule that threw
- * sitting above an accept rule that matched, where the result looks clean but is
- * not. The caller decides what a degraded chain is worth; this class only refuses
- * to hide it.
+ * It no longer owns the traversal. It used to iterate the rules itself and take the first match,
+ * which made that one algorithm the only one expressible: a chain that must visit every rule and
+ * let the first Deny override an earlier Allow had nowhere to live. Now the traversal is a
+ * {@see ChainStrategy} and this class supplies what any traversal needs — the rules, a
+ * {@see RuleMatcher}, and the one step no strategy should have to remember.
  *
- * Falling off the end of the chain returns {@see FirewallDecision::noMatch()} —
- * never a fabricated verdict. The default policy belongs to the caller.
+ * That step is the challenge. Raising it here rather than inside each strategy means a new
+ * traversal cannot forget it, and means a strategy never touches the initiator, the facts or the
+ * chain name.
  */
 final readonly class ChainEvaluator
 {
     public function __construct(
         private FirewallRuleSource $rules,
         private RuleEvaluator $evaluator,
-        private ?LoggerInterface $logger = null,
+        private ?ChallengeInitiator $challenges = null,
     ) {}
 
     /**
      * @param  array<string, mixed>  $facts  root-keyed; the key set is the sandbox
+     *
+     * @throws UnevaluableChain when a rule in the chain cannot be evaluated
      */
     public function evaluate(string $chain, array $facts): FirewallDecision
     {
-        $degraded = false;
+        $decision = $this->rules->strategyFor($chain)->walk(
+            $this->rules->rulesFor($chain),
+            new RuleMatcher($this->evaluator, $chain, $facts),
+        );
 
-        foreach ($this->rules->rulesFor($chain) as $rule) {
-            try {
-                if (! $this->evaluator->matches($rule->conditions, $facts, $rule->expression)) {
-                    continue;
-                }
-            } catch (Throwable $e) {
-                $degraded = true;
-                $this->logger?->error('Skipping unevaluable firewall rule', [
-                    'chain' => $chain,
-                    'rule' => $rule->id,
-                    'error' => $e->getMessage(),
-                ]);
-
-                continue;
-            }
-
-            $reason = $rule->id !== null ? "matched rule {$rule->id}" : 'matched rule';
-
-            return $rule->verdict === FirewallVerdict::Deny
-                ? FirewallDecision::deny($reason, $degraded)
-                : FirewallDecision::allow($reason, $degraded);
+        if (! $decision->requiresChallenge() || $decision->challenge !== null) {
+            return $decision;
         }
 
-        return FirewallDecision::noMatch('no rule matched', $degraded);
+        // A null answer is kept as a null: "required, nobody raised one" is the truthful shape,
+        // and it is what a deployment with no challenge integration gets. The verdict stands
+        // either way — the subject may not proceed without a challenge.
+        $raised = $this->challenges?->initiate($chain, $facts);
+
+        return $raised === null ? $decision : $decision->withChallenge($raised);
     }
 }

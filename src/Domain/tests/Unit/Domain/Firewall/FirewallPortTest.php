@@ -11,6 +11,7 @@ use Techork\PaymentService\Common\ValueObject\CreditCard\CardSummary;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Expiration;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Holder;
 use Techork\PaymentService\Common\ValueObject\IpAddress;
+use Techork\PaymentService\Common\ValueObject\Challenge\ThreeDSChallenge;
 use Techork\PaymentService\Domain\PaymentIntent\Port\FirewallDecision;
 use Techork\PaymentService\Domain\PaymentIntent\Port\FirewallVerdict;
 use Techork\PaymentService\Domain\PaymentIntent\Port\NullPaymentIntentFirewall;
@@ -37,13 +38,13 @@ it('is typed to the aggregate data, so the caller hands over no fact bag', funct
             // to walk is not on it: this port IS the payment-intent chain.
             return $request->gatewayId === 'gw-1'
                 ? FirewallDecision::deny('matched rule 7')
-                : FirewallDecision::noMatch('no rule matched');
+                : FirewallDecision::allow('no rule matched (blacklist)', matched: false);
         }
     };
 
     expect($firewall->evaluate(paymentIntentFirewallRequest())->isDenied())->toBeTrue()
         ->and($firewall->evaluate(paymentIntentFirewallRequest())->reason)->toBe('matched rule 7')
-        ->and($firewall->evaluate(paymentIntentFirewallRequest(null))->matched())->toBeFalse();
+        ->and($firewall->evaluate(paymentIntentFirewallRequest(null))->matched)->toBeFalse();
 });
 
 it('evaluates the chain even when there is no connection to inspect', function () {
@@ -68,56 +69,76 @@ it('evaluates the chain even when there is no connection to inspect', function (
     expect($firewall->evaluate($request)->isDenied())->toBeTrue();
 });
 
-it('denies by default when no firewall is installed', function () {
-    $decision = (new NullPaymentIntentFirewall)->evaluate(paymentIntentFirewallRequest());
+it('allows by default when no firewall is installed, because a stub is not a policy', function () {
+    // Was "denies by default", reasoning from `iptables -P INPUT DROP`. Wrong analogy: a packet
+    // filter's default policy is a configured decision, while this is the ABSENCE of one — the
+    // optional rule engine is not installed, so there is no chain, no strategy and nothing to
+    // apply. Denying turned "the operator has not wired up an optional package" into a step-up on
+    // every payment, which is a self-inflicted outage dressed as caution.
+    //
+    // `matched` is false because no rule said this: it is the shape of an empty chain under a
+    // blacklist, which is what "no firewall" honestly is.
+    $decision = new NullPaymentIntentFirewall()->evaluate(paymentIntentFirewallRequest());
 
-    expect($decision->isDenied())->toBeTrue()
-        ->and($decision->verdict)->toBe(FirewallVerdict::Deny)
+    expect($decision->isAllowed())->toBeTrue()
+        ->and($decision->permits())->toBeTrue()
+        ->and($decision->matched)->toBeFalse()
         ->and($decision->reason)->toBe('firewall not installed');
 });
 
-it('distinguishes falling through a chain from allowing', function () {
-    $fellThrough = FirewallDecision::noMatch('no rule matched');
-    $allowed = FirewallDecision::allow('matched rule 3');
+it('separates a decision a rule made from one the chain fell through to', function () {
+    // Both are real answers — that is the whole change from the old NoMatch, which was neither an
+    // answer nor an absence. What is still worth telling apart is WHO decided, because "allowed
+    // because a rule said so" and "allowed because nothing objected" read identically after the
+    // fact and mean different things when a chargeback arrives.
+    $fellThrough = FirewallDecision::allow('no rule matched (blacklist)', matched: false);
+    $byRule = FirewallDecision::allow('matched rule 3');
 
-    expect($fellThrough->matched())->toBeFalse()
-        ->and($fellThrough->verdict)->toBe(FirewallVerdict::NoMatch)
-        ->and($fellThrough->isAllowed())->toBeFalse()
-        ->and($fellThrough->isDenied())->toBeFalse()
-        ->and($allowed->matched())->toBeTrue()
-        ->and($allowed->isAllowed())->toBeTrue();
+    expect($fellThrough->matched)->toBeFalse()
+        ->and($fellThrough->isAllowed())->toBeTrue()
+        ->and($byRule->matched)->toBeTrue()
+        ->and($byRule->isAllowed())->toBeTrue();
 });
 
-it('reports a degraded chain on every outcome so skipping cannot pass as clean', function () {
-    expect(FirewallDecision::noMatch(degraded: true)->degraded)->toBeTrue()
-        ->and(FirewallDecision::allow(degraded: true)->degraded)->toBeTrue()
-        ->and(FirewallDecision::deny(degraded: true)->degraded)->toBeTrue()
-        ->and(FirewallDecision::noMatch()->degraded)->toBeFalse();
-});
-
-it('makes falling through a chain a verdict of its own, not an absent value', function () {
+it('offers three actions and no way to answer nothing', function () {
+    // Was "makes falling through a chain a verdict of its own". It was a verdict of its own and
+    // that was the problem: it obliged every caller to invent a policy, and the one caller there
+    // is folded it in with a denial and fabricated a 3DS challenge for both. Now each case is an
+    // action a caller can carry out, and silence is resolved by the chain's strategy before it
+    // ever reaches here.
     expect(FirewallVerdict::cases())->toHaveCount(3)
-        ->and(FirewallVerdict::NoMatch->value)->toBe('no_match');
+        ->and(array_map(fn (FirewallVerdict $v): string => $v->value, FirewallVerdict::cases()))
+        ->toBe(['allow', 'deny', 'challenge']);
 
-    // A caller must say what each of the three means; there is no value to
-    // silently default. This is the shape that forces the question:
-    $policy = static fn (FirewallDecision $d): string => match ($d->verdict) {
-        FirewallVerdict::Deny => 'step up',
+    $act = static fn (FirewallDecision $d): string => match ($d->verdict) {
         FirewallVerdict::Allow => 'proceed',
-        FirewallVerdict::NoMatch => 'apply my own default',
+        FirewallVerdict::Deny => 'refuse the payment',
+        FirewallVerdict::Challenge => 'require a step-up',
     };
 
-    expect($policy(FirewallDecision::deny()))->toBe('step up')
-        ->and($policy(FirewallDecision::allow()))->toBe('proceed')
-        ->and($policy(FirewallDecision::noMatch()))->toBe('apply my own default');
+    expect($act(FirewallDecision::allow()))->toBe('proceed')
+        ->and($act(FirewallDecision::deny()))->toBe('refuse the payment')
+        ->and($act(FirewallDecision::challenge()))->toBe('require a step-up');
 });
 
-it('states the permit policy once, in the domain, and fails closed everywhere', function () {
+it('permits only an allow, and a challenge is not a smaller allow', function () {
+    // A challenge permits AFTER it is passed, which is a different payment state, so it must not
+    // read as permission here. This used to also have to exclude a degraded accept; a chain that
+    // cannot be evaluated now throws instead of answering, so there is no such case left to state.
     expect(FirewallDecision::allow('matched rule 3')->permits())->toBeTrue()
-        // Everything that is not an explicit accept is refused.
         ->and(FirewallDecision::deny('matched rule 7')->permits())->toBeFalse()
-        ->and(FirewallDecision::noMatch('no rule matched')->permits())->toBeFalse()
-        // ...including an accept whose chain could not be fully evaluated: that
-        // is the shape a fail-open hole takes.
-        ->and(FirewallDecision::allow('matched rule 3', degraded: true)->permits())->toBeFalse();
+        ->and(FirewallDecision::challenge('matched rule 9')->permits())->toBeFalse()
+        ->and(FirewallDecision::challenge('matched rule 9')->requiresChallenge())->toBeTrue();
+});
+
+it('carries the challenge that was raised, or admits none was', function () {
+    // The distinction the aggregate acts on. A challenge object is evidence that a handoff to an
+    // ACS already happened; when no integration raised one, null says "required, not started" —
+    // which is why the aggregate no longer has to invent a ThreeDSChallenge to have something to
+    // record.
+    $raised = new ThreeDSChallenge(transactionId: 'ds-txn-1', acsUrl: 'https://acs.example/challenge', creq: 'creq');
+
+    expect(FirewallDecision::challenge('matched rule 9', challenge: $raised)->challenge)->toBe($raised)
+        ->and(FirewallDecision::challenge('matched rule 9')->challenge)->toBeNull()
+        ->and(FirewallDecision::challenge('matched rule 9')->withChallenge($raised)->challenge)->toBe($raised);
 });

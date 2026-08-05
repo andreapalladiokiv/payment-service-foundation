@@ -17,7 +17,6 @@ use Techork\PaymentService\Common\Contract\Challenge;
 use Techork\PaymentService\Common\Contract\ChallengeResult;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
-use Techork\PaymentService\Common\ValueObject\Challenge\ThreeDSChallenge;
 use Techork\PaymentService\Common\ValueObject\CreditCard\CardSummaryExtractor;
 use Techork\PaymentService\Common\ValueObject\HostedPayment;
 use Techork\PaymentService\Common\ValueObject\MerchantDescriptor;
@@ -237,7 +236,34 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
 
         // Inspect before spending a gateway call: a rejected payment never
         // reaches the acquirer, it parks for authentication instead.
-        if (($refusal = $self->firewallRefusal($command, $firewall)) !== null) {
+        $decision = $self->firewallDecision($command, $firewall);
+
+        if ($decision !== null && ! $decision->permits()) {
+            // A rule rejected this payment. Authentication cannot answer that — the firewall is
+            // not asking who the cardholder is, it has decided the payment must not happen — so
+            // parking it for a step-up would leave an intent waiting on evidence that could
+            // never satisfy the rule, and would send a cardholder somewhere for nothing.
+            if ($decision->isDenied()) {
+                $self->recordThat(new PaymentIntentFailed(
+                    $command->amount(),
+                    $command->instrument(),
+                    $command->captureMethod(),
+                    $command->billingAddress(),
+                    $command->metadata(),
+                    $command->merchantDescriptor(),
+                    $command->description(),
+                    self::firewallRefusalReason($decision),
+                    $command->challengeResult(),
+                    $command->initiation(),
+                ));
+
+                return $self;
+            }
+
+            // A challenge is required. It arrives on the decision when something was able to
+            // raise one, and stays null when nothing was — "required, not yet started" is a
+            // truthful state, where the alternative was manufacturing a ThreeDSChallenge out of
+            // the payment intent's own id.
             $self->recordThat(new PaymentIntentRequiresAction(
                 $command->amount(),
                 $command->instrument(),
@@ -246,7 +272,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                 $command->metadata(),
                 $command->merchantDescriptor(),
                 $command->description(),
-                $refusal,
+                $decision->challenge,
                 $command->initiation(),
             ));
 
@@ -511,8 +537,20 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
     }
 
     /**
-     * Put the payment through its firewall chain and, when the decision does not
-     * permit it, return the challenge to park on. Null means proceed.
+     * Put the payment through its firewall chain, or null when there is nothing to inspect.
+     *
+     * The decision is returned whole rather than reduced to a yes/no, because its three actions
+     * mean three different things and only the caller can act on them: a rejection ends the
+     * payment, a demand for a challenge parks it, and only an allow proceeds.
+     *
+     * What this deliberately no longer does is manufacture a challenge. It used to answer a
+     * non-permitting decision with `new ThreeDSChallenge(transactionId: $paymentIntentId)`, a
+     * fabrication on two counts: a {@see Challenge} is evidence that a handoff to an ACS has
+     * ALREADY happened and carries what the client needs to render it, and the identifier it
+     * named was the payment intent's rather than any 3DS transaction's. Every rendering field was
+     * null, so no client could act on it, while `transactionId()` handed out a value that reads
+     * like an authentication reference and is not one. Raising a real challenge belongs to
+     * whoever integrates 3DS, reached through the firewall's own initiator contract.
      *
      * Three cases skip inspection outright, and all three are about there being
      * nothing to gain:
@@ -529,10 +567,10 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
      * Otherwise the domain's own policy decides: only an explicit accept on a
      * cleanly evaluated chain proceeds ({@see FirewallDecision::permits()}).
      */
-    private function firewallRefusal(
+    private function firewallDecision(
         CreatePaymentIntentCommand $command,
         PaymentIntentFirewallPort $firewall,
-    ): ?Challenge {
+    ): ?FirewallDecision {
         if ($command->initiation()->isMerchantInitiated()) {
             return null;
         }
@@ -547,7 +585,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
             return null;
         }
 
-        $decision = $firewall->evaluate(new PaymentIntentFirewallRequest(
+        return $firewall->evaluate(new PaymentIntentFirewallRequest(
             amount: $command->amount(),
             card: $card,
             billing: $command->billingAddress(),
@@ -555,10 +593,21 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
             paymentIntentId: $command->paymentIntentId(),
             gatewayId: $command->gatewayId(),
         ));
+    }
 
-        return $decision->permits()
-            ? null
-            : new ThreeDSChallenge(transactionId: $command->paymentIntentId()->toString());
+    /**
+     * Why a denied payment was refused.
+     *
+     * {@see FirewallDecision::$reason} is a breadcrumb — a rule identifier, "no rule matched
+     * (whitelist)" — and its own docblock forbids parsing it. Recording it is the audit use it
+     * exists for, and it is prefixed so a reader can tell our own policy from an acquirer's
+     * answer: nothing left this process and no issuer was consulted.
+     */
+    private static function firewallRefusalReason(FirewallDecision $decision): string
+    {
+        return $decision->reason === null || $decision->reason === ''
+            ? 'Refused by the payment firewall.'
+            : "Refused by the payment firewall: {$decision->reason}";
     }
 
     /**

@@ -28,7 +28,7 @@ final readonly class FactCollector
      */
     public function __construct(
         private iterable $suppliers,
-        private ?LoggerInterface $logger = null,
+        private LoggerInterface $logger,
     ) {}
 
     /**
@@ -42,7 +42,7 @@ final readonly class FactCollector
             try {
                 $facts = self::merge($facts, $supplier->facts());
             } catch (Throwable $e) {
-                $this->logger?->warning('Firewall fact supplier failed; its facts are absent', [
+                $this->logger->warning('Firewall fact supplier failed; its facts are absent', [
                     'supplier' => $supplier::class,
                     'error' => $e->getMessage(),
                 ]);
