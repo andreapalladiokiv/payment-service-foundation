@@ -403,7 +403,15 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             'standardRefundMessage' => $standard->message,
         ]);
 
-        $retried = $this->buildOutcome(fn () => $omnipay->retryRefund()->send());
+        $retried = $this->buildOutcome(fn () => $omnipay->retryRefund([
+            'money' => $amount,
+            'transactionReference' => $transactionReference,
+            'clientUniqueId' => $clientUniqueId,
+            'instrument' => $retryInstrument,
+            'gateway' => $credential,
+            'decrypter' => $this->decrypter,
+            'referenceResolver' => $this->referenceRepository,
+        ])->send());
 
         $this->logger->log('Gateway retryRefund response', [
             'clientUniqueId' => $clientUniqueId,
@@ -460,7 +468,11 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         ]);
 
         try {
-            $response = $omnipay->updateVirtualCard()->send();
+            $response = $omnipay->updateVirtualCard([
+                'transactionReference' => $cardGuid,
+                'money' => $amountLimit,
+                'spendCategory' => $spendCategory->value,
+            ])->send();
 
             if ($response instanceof VirtualCardResponseInterface) {
                 $result = $response->toVirtualCardResult();

@@ -709,3 +709,95 @@ it('refuses a success that names no transaction, on an authorization', function 
     expect($result->success)->toBeFalse()
         ->and($result->message)->toBe('The gateway reported success without naming a transaction reference.');
 });
+
+// ──────────────────────────────────────────────
+//  What the gateway is actually handed
+// ──────────────────────────────────────────────
+//
+// Every mock above answers a method regardless of what it was called with, which
+// is what let both of these calls lose their entire parameter array unnoticed. An
+// omnipay request assembles itself from that array, so passing none is not a
+// degraded call — it is a request that throws on `send()` for a missing parameter,
+// gets caught, and is reported as the gateway refusing. These read the array.
+
+/**
+ * @param  array<string, mixed>|null  $seen
+ */
+function makeOmnipayCapturing(string $method, ResponseInterface $response, ?array &$seen): GatewayContract
+{
+    $request = Mockery::mock(RequestInterface::class);
+    $request->shouldReceive('send')->andReturn($response);
+
+    $omnipay = Mockery::mock(GatewayContract::class);
+    $omnipay->shouldReceive($method)->andReturnUsing(function (array $options = []) use ($request, &$seen) {
+        $seen = $options;
+
+        return $request;
+    });
+
+    return $omnipay;
+}
+
+it('hands the update the card, the limit and the category it was asked for', function () {
+    $seen = null;
+    $router = makeRouter(omnipay: makeOmnipayCapturing('updateVirtualCard', makeSuccessResponse('vc_updated'), $seen));
+
+    $router->updateVirtualCard(
+        GatewayId::generate(),
+        'vc_guid_9',
+        new Money(4200, new Currency('USD')),
+        CardSpendCategory::TravelAir,
+    );
+
+    expect($seen)->toEqual([
+        'transactionReference' => 'vc_guid_9',
+        'money' => new Money(4200, new Currency('USD')),
+        'spendCategory' => CardSpendCategory::TravelAir->value,
+    ]);
+});
+
+it('hands a retry refund the alternative instrument and everything needed to reach it', function () {
+    // The one operation whose refusal is expected to fold into a failed result, so a
+    // call that could never have succeeded looks exactly like a gateway without the
+    // primitive. Nothing downstream can tell the two apart — hence the assertion.
+    $piId = 'pi-'.uniqid();
+    $txRepo = Mockery::mock(GatewayTransactionRepository::class);
+    $txRepo->shouldReceive('findForPaymentIntent')->with($piId)->andReturn('settle_ref');
+
+    $failedStandard = Mockery::mock(ResponseInterface::class);
+    $failedStandard->shouldReceive('isSuccessful')->andReturn(false);
+    $failedStandard->shouldReceive('getMessage')->andReturn('Original card closed');
+
+    $standardRequest = Mockery::mock(RequestInterface::class);
+    $standardRequest->shouldReceive('send')->andReturn($failedStandard);
+
+    $retryRequest = Mockery::mock(RequestInterface::class);
+    $retryRequest->shouldReceive('send')->andReturn(makeSuccessResponse('credit_ref'));
+
+    $seen = null;
+    $omnipay = Mockery::mock(GatewayContract::class);
+    $omnipay->shouldReceive('refund')->andReturn($standardRequest);
+    $omnipay->shouldReceive('retryRefund')->andReturnUsing(function (array $options = []) use ($retryRequest, &$seen) {
+        $seen = $options;
+
+        return $retryRequest;
+    });
+
+    $instrument = Mockery::mock(PaymentInstrument::class);
+    $instrument->shouldReceive('toPayload')->andReturn([]);
+
+    $result = makeRouter(omnipay: $omnipay, transactionRepo: $txRepo)->refund(
+        GatewayId::generate(),
+        'settle_ref',
+        new Money(1500, new Currency('USD')),
+        "$piId:refund",
+        $instrument,
+    );
+
+    expect($result->success)->toBeTrue()
+        ->and($seen['money'])->toEqual(new Money(1500, new Currency('USD')))
+        ->and($seen['transactionReference'])->toBe('settle_ref')
+        ->and($seen['clientUniqueId'])->toBe("$piId:refund")
+        ->and($seen['instrument'])->toBe($instrument)
+        ->and($seen)->toHaveKeys(['gateway', 'decrypter', 'referenceResolver']);
+});
