@@ -1,0 +1,112 @@
+<?xml version="1.0"?>
+<psalm
+    errorLevel="3"
+    resolveFromConfigFile="true"
+    findUnusedBaselineEntry="true"
+    findUnusedCode="false"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns="https://getpsalm.org/schema/config"
+    xsi:schemaLocation="https://getpsalm.org/schema/config vendor/vimeo/psalm/config.xsd"
+>
+    <projectFiles>
+        <directory name="src/Common/src"/>
+        <directory name="src/Domain/src"/>
+        <directory name="src/Gateway/src"/>
+        <directory name="src/Firewall/src"/>
+        <directory name="src/Forter/src"/>
+        <directory name="src/Neutrino/src"/>
+        <directory name="src/Laravel/src"/>
+        <directory name="src/Stripe/src"/>
+        <directory name="src/Paynet/src"/>
+        <directory name="src/Nuvei/src"/>
+        <directory name="src/ConnexPay/src"/>
+        <directory name="src/Revolut/src"/>
+        <ignoreFiles>
+            <directory name="vendor"/>
+        </ignoreFiles>
+    </projectFiles>
+
+    <issueHandlers>
+        <!--
+            Both sides declare `static`; PHP binds it late, so on CheckoutId both resolve
+            to CheckoutId and the interface is satisfied. Psalm instead resolves `static`
+            in each declaring class and compares UuidValueObject against AggregateRootId,
+            neither of which is a subtype of the other. Verified: the classes load and the
+            suite passes, so this is Psalm's context resolution, not a variance bug.
+        -->
+        <MethodSignatureMismatch>
+            <errorLevel type="suppress">
+                <file name="src/Domain/src/Checkout/ValueObject/CheckoutId.php"/>
+                <file name="src/Domain/src/PaymentIntent/ValueObject/PaymentIntentId.php"/>
+                <file name="src/Domain/src/Subscription/ValueObject/SubscriptionId.php"/>
+            </errorLevel>
+        </MethodSignatureMismatch>
+
+        <!--
+            EventSauce declares argument 4 of ConstructingAggregateRootRepositoryWithSnapshotting
+            as AggregateRootRepository<AggregateRoot<AggregateRootId>> — the widest type,
+            hardcoded, rather than the class's own template. Docblock generics are invariant
+            by default, so Repo<PaymentIntentAggregate> is not accepted for Repo<AggregateRoot>
+            even though the aggregate IS one; accepting it would need @template-covariant
+            upstream. We pass something NARROWER than asked, so the direction is safe.
+        -->
+        <InvalidArgument>
+            <errorLevel type="suppress">
+                <file name="src/Laravel/src/EventSourcing/Repositories/CheckoutAggregateRepository.php"/>
+                <file name="src/Laravel/src/EventSourcing/Repositories/PaymentIntentAggregateRepository.php"/>
+                <file name="src/Laravel/src/EventSourcing/Repositories/SubscriptionAggregateRepository.php"/>
+            </errorLevel>
+        </InvalidArgument>
+
+        <!--
+            Stripe's SDK declares an exhaustive array shape for every endpoint. Our params
+            are assembled from `getData()`, whose values pass through omnipay's untyped
+            PaymentInstrumentVisitor contract, so they reach the call as `mixed` even though
+            the lines that set them produce int and string. Coercion, not a mismatch: the
+            keys and their real types are correct, and the shapes are far too large to
+            restate. The 3DS block that WAS a genuine mismatch is now
+            Stripe\Concern\FormatsThreeDS, with tests.
+        -->
+        <ArgumentTypeCoercion>
+            <errorLevel type="suppress">
+                <file name="src/Stripe/src/AuthorizeRequest.php"/>
+                <file name="src/Stripe/src/PurchaseRequest.php"/>
+                <file name="src/Stripe/src/CreatePaymentMethodRequest.php"/>
+            </errorLevel>
+        </ArgumentTypeCoercion>
+
+
+
+        <!--
+            NOTE, before adding a handler for an issue that this errorLevel does not report:
+            declaring ANY block here ACTIVATES that issue at every level, and `type="suppress"`
+            then only exempts the paths listed inside it. A scoped suppression therefore turns
+            the issue on everywhere else. Adding a `PropertyNotSetInConstructor` block for
+            src/Domain/src at errorLevel 3 switched it on globally and failed 37 omnipay request
+            classes over `$currencies`.
+
+            Three handlers were removed for that reason and belong with a move to errorLevel 2
+            or 1, not before:
+              - PropertyNotSetInConstructor, suppressed for src/Domain/src — an event-sourced
+                aggregate is opened by an event and sets its state in apply(), not in a
+                constructor. Psalm's own RedundantPropertyInitializationCheck contradicts this
+                one, and the aggregate is right.
+              - RedundantConditionGivenDocblockType / DocblockTypeContradiction /
+                RedundantCastGivenDocblockType, suppressed for src/Stripe/src — the Stripe SDK
+                declares `string $currency`, `int $fee`, `string $event->type` through
+                optimistic @property docblocks while the API omits them, which is exactly why
+                the adapters check isset() and cast. Deleting those checks would trust an
+                annotation over the wire on the paths that read settled amounts and fees.
+        -->
+    </issueHandlers>
+
+    <plugins>
+        <!--
+            Eloquent's static entry points and the container's array access are resolved by
+            __call/__callStatic, which psalm cannot follow on its own: `Model::query()` is
+            typed, but the builder chain past it is not. The plugin models them, so those
+            calls are checked rather than suppressed.
+        -->
+        <pluginClass class="Psalm\LaravelPlugin\Plugin"/>
+    </plugins>
+</psalm>

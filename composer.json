@@ -27,7 +27,9 @@
         "symfony/property-access": "^7.0 || ^8.0",
         "symfony/property-info": "^7.0 || ^8.0",
         "symfony/psr-http-message-bridge": "^7.0 || ^8.0",
-        "symfony/serializer": "^7.0 || ^8.0"
+        "symfony/serializer": "^7.0 || ^8.0",
+        "ext-intl": "*",
+        "ext-openssl": "*"
     },
     "replace": {
         "techork/payment-service-common": "self.version",
@@ -44,7 +46,9 @@
     "require-dev": {
         "eventsauce/pest-utilities": "^3.4",
         "mockery/mockery": "^1.6",
-        "pestphp/pest": "^4.6"
+        "pestphp/pest": "^4.6",
+        "psalm/plugin-laravel": "^3.15",
+        "vimeo/psalm": "^6.16"
     },
     "autoload": {
         "psr-4": {
