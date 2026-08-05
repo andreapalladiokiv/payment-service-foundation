@@ -193,13 +193,20 @@ final readonly class RuleCompiler
         return $value !== null && $value !== '';
     }
 
-    private function number(mixed $value): int|float
+    /**
+     * @param numeric-string|int|float $value
+     */
+    private function number(string|int|float $value): int|float
     {
         if (! is_numeric($value)) {
             throw new InvalidArgumentException('Firewall rule range bounds must be numeric.');
         }
 
-        return str_contains((string) $value, '.') ? (float) $value : (int) $value;
+        if (! is_string($value)) {
+            return $value;
+        }
+
+        return str_contains($value, '.') ? (float) $value : (int) $value;
     }
 
     /**
