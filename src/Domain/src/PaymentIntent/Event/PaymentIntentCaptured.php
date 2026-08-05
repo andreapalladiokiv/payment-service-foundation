@@ -7,6 +7,7 @@ namespace Techork\PaymentService\Domain\PaymentIntent\Event;
 use EventSauce\EventSourcing\Serialization\SerializablePayload;
 use Money\Currency;
 use Money\Money;
+use Override;
 
 final readonly class PaymentIntentCaptured implements SerializablePayload
 {
@@ -15,6 +16,7 @@ final readonly class PaymentIntentCaptured implements SerializablePayload
         public ?Money $convertedAmount = null,
     ) {}
 
+    #[Override]
     public function toPayload(): array
     {
         return [
@@ -25,6 +27,7 @@ final readonly class PaymentIntentCaptured implements SerializablePayload
         ];
     }
 
+    #[Override]
     public static function fromPayload(array $payload): static
     {
         return new self(

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Common\ValueObject\Challenge;
 
+use Override;
 use Techork\PaymentService\Common\Contract\ChallengeResult;
 use Techork\PaymentService\Common\Contract\ChallengeResultVisitor;
 
@@ -20,6 +21,7 @@ final readonly class RedirectResult implements ChallengeResult
         public string $transactionId,
     ) {}
 
+    #[Override]
     public function accept(ChallengeResultVisitor $visitor): mixed
     {
         return $visitor->visitRedirect($this);

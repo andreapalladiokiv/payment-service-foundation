@@ -31,8 +31,8 @@ it('creates a failed authorization', function () {
 
 it('creates a requires-action authorization that carries the challenge', function () {
     $challenge = new ThreeDSChallenge(
-        acsUrl: 'https://acs.example.com/challenge',
         transactionId: 'gw-txn-123',
+        acsUrl: 'https://acs.example.com/challenge',
         creq: 'base64-creq',
     );
 
@@ -46,8 +46,8 @@ it('creates a requires-action authorization that carries the challenge', functio
 
 it('attaches checks via withChecks preserving challenge and outcome fields', function () {
     $challenge = new ThreeDSChallenge(
-        acsUrl: 'https://acs.example.com/challenge',
         transactionId: 'gw-txn-7',
+        acsUrl: 'https://acs.example.com/challenge',
         creq: 'creq',
     );
 

@@ -17,6 +17,11 @@ final class HandlerRegistry
     /** @var array<string, array<string, WebhookEventHandler>> */
     private array $handlers = [];
 
+    /**
+     * @template T of object
+     *
+     * @param WebhookEventHandler<T> $handler
+     */
     public function register(string $kind, string $eventType, WebhookEventHandler $handler): void
     {
         $this->handlers[strtolower($kind)][$eventType] = $handler;

@@ -73,6 +73,7 @@ use Techork\PaymentService\Domain\PaymentIntent\Refund\Event\RefundFailed;
 use Techork\PaymentService\Domain\PaymentIntent\Refund\Event\RefundFeeRecorded;
 use Techork\PaymentService\Domain\PaymentIntent\Refund\Event\RefundImported;
 use Techork\PaymentService\Domain\PaymentIntent\Refund\Event\RefundProcessed;
+use Techork\PaymentService\Domain\PaymentIntent\Refund\Exception\InvalidRefund;
 use Techork\PaymentService\Domain\PaymentIntent\Refund\Exception\RefundNotFound;
 use Techork\PaymentService\Domain\PaymentIntent\Refund\Port\RefundPort;
 use Techork\PaymentService\Domain\PaymentIntent\Refund\Port\Request\RefundRequest;
@@ -176,8 +177,8 @@ function makePiThreeDSResult(ThreeDSStatus $status = ThreeDSStatus::Successful):
 function makeThreeDSChallenge(): ThreeDSChallenge
 {
     return new ThreeDSChallenge(
-        acsUrl: 'https://acs.example.com/challenge',
         transactionId: 'gw-txn-123',
+        acsUrl: 'https://acs.example.com/challenge',
         creq: 'base64-creq',
     );
 }
@@ -483,7 +484,7 @@ it('records PaymentIntentAuthorized on create with Automatic + GatewaySuccess', 
     $id = $this->aggregateRootId();
 
     $aggregate = PaymentIntentAggregate::create(
-        makeCreatePiCommand($id, CaptureMethod::Automatic),
+        makeCreatePiCommand($id),
         makePaySuccessPort(),
         StubPaymentIntentFirewall::allowing(),
     );
@@ -531,7 +532,7 @@ it('records PaymentIntentFailed on create with GatewayDeclined', function () {
     $id = $this->aggregateRootId();
 
     $aggregate = PaymentIntentAggregate::create(
-        makeCreatePiCommand($id, CaptureMethod::Automatic),
+        makeCreatePiCommand($id),
         makePayDeclinedPort('insufficient_funds'),
         StubPaymentIntentFirewall::allowing(),
     );
@@ -554,7 +555,7 @@ it('records PaymentIntentRequiresAction on create with GatewayChallengeRequired'
     $id = $this->aggregateRootId();
 
     $aggregate = PaymentIntentAggregate::create(
-        makeCreatePiCommand($id, CaptureMethod::Automatic),
+        makeCreatePiCommand($id),
         makePayChallengePort(makeThreeDSChallenge()),
         StubPaymentIntentFirewall::allowing(),
     );
@@ -578,7 +579,7 @@ it('forwards pre-auth ChallengeResult into the initial event', function () {
     $preAuth = makePiThreeDSResult();
 
     $aggregate = PaymentIntentAggregate::create(
-        makeCreatePiCommand($id, CaptureMethod::Automatic, challengeResult: $preAuth),
+        makeCreatePiCommand($id, challengeResult: $preAuth),
         makePaySuccessPort(),
         StubPaymentIntentFirewall::allowing(),
     );
@@ -614,9 +615,9 @@ it('binds the payment initiation onto the aggregate and the recorded event', fun
         CaptureMethod::Immediate,
         makeBillingAddress(),
         [],
-        initiation: PaymentInitiation::MerchantRecurring,
         merchantDescriptor: makeMerchantDescriptor(),
         description: '',
+        initiation: PaymentInitiation::MerchantRecurring,
     ));
 });
 
@@ -1521,7 +1522,6 @@ it('records RefundProcessed with retryInstrument when alternative card supplied'
     $aggregate->refund(
         makeCreateRefundCommand($refundId, makeAmount(), $retry),
         makeRefundSuccessPort(),
-        StubPaymentIntentFirewall::allowing(),
     );
     $this->persistAggregateRoot($aggregate);
 
@@ -1828,9 +1828,9 @@ it('finishes an intent imported as RequiresAction through the ordinary challenge
         captureMethod: CaptureMethod::Manual,
         billingAddress: BillingAddress::unknown(),
         metadata: [],
-        challengeResult: new RedirectResult('pi_123'),
         merchantDescriptor: makeMerchantDescriptor(),
         description: '',
+        challengeResult: new RedirectResult('pi_123'),
     ));
 });
 
@@ -2241,7 +2241,7 @@ it('throws InvalidRefund::currencyMismatch when refund currency differs from PI'
         makeCreateRefundCommand(RefundId::generate(), new Money(100, new Currency('EUR'))),
         makeRefundSuccessPort(),
     );
-})->throws(\Techork\PaymentService\Domain\PaymentIntent\Refund\Exception\InvalidRefund::class, 'does not match payment intent currency');
+})->throws(InvalidRefund::class, 'does not match payment intent currency');
 
 it('snapshot roundtrip preserves cancelled state', function () {
     $id = PaymentIntentId::generate();
@@ -2296,7 +2296,7 @@ it('parks for authentication without touching the gateway when the firewall refu
     $gateway->shouldNotReceive('create');
 
     $aggregate = PaymentIntentAggregate::create(
-        makeCreatePiCommand($id, CaptureMethod::Automatic),
+        makeCreatePiCommand($id),
         $gateway,
         StubPaymentIntentFirewall::denying(),
     );
@@ -2376,7 +2376,7 @@ it('refuses an accept whose chain was degraded', function () {
     $gateway->shouldNotReceive('create');
 
     $aggregate = PaymentIntentAggregate::create(
-        makeCreatePiCommand($id, CaptureMethod::Automatic),
+        makeCreatePiCommand($id),
         $gateway,
         StubPaymentIntentFirewall::returning(FirewallDecision::allow('matched rule 2', degraded: true)),
     );

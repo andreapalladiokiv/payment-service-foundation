@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Techork\PaymentService\Domain\Subscription\Event;
 
 use EventSauce\EventSourcing\Serialization\SerializablePayload;
+use Override;
 
 final readonly class SubscriptionCancelled implements SerializablePayload
 {
@@ -12,11 +13,13 @@ final readonly class SubscriptionCancelled implements SerializablePayload
         public string $reason,
     ) {}
 
+    #[Override]
     public function toPayload(): array
     {
         return ['reason' => $this->reason];
     }
 
+    #[Override]
     public static function fromPayload(array $payload): static
     {
         return new self($payload['reason']);

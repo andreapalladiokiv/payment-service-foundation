@@ -6,6 +6,7 @@ namespace Techork\PaymentService\Revolut;
 
 use GuzzleHttp\Exception\GuzzleException;
 use Omnipay\Common\Message\AbstractRequest;
+use Override;
 use Techork\PaymentService\Revolut\Concern\RevolutRequestParameters;
 
 /**
@@ -18,6 +19,7 @@ final class TerminateCardRequest extends AbstractRequest
 {
     use RevolutRequestParameters;
 
+    #[Override]
     public function getData(): array
     {
         $this->validate('transactionReference');
@@ -25,9 +27,10 @@ final class TerminateCardRequest extends AbstractRequest
         return [];
     }
 
+    #[Override]
     public function sendData($data): TerminateCardResponse
     {
-        $cardId = (string) $this->getTransactionReference();
+        $cardId = $this->getTransactionReference();
 
         try {
             $this->getRevolutClient()->delete("/api/1.0/cards/{$cardId}");

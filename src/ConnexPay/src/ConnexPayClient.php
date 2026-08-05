@@ -6,6 +6,7 @@ namespace Techork\PaymentService\ConnexPay;
 
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
+use Override;
 use RuntimeException;
 
 final class ConnexPayClient implements ConnexPayHttpClientInterface
@@ -34,6 +35,7 @@ final class ConnexPayClient implements ConnexPayHttpClientInterface
      *
      * @throws GuzzleException
      */
+    #[Override]
     public function post(string $path, array $data): array
     {
         $this->authenticate();
@@ -51,6 +53,7 @@ final class ConnexPayClient implements ConnexPayHttpClientInterface
      *
      * @throws GuzzleException
      */
+    #[Override]
     public function put(string $path, array $data): array
     {
         $this->authenticate();

@@ -4,9 +4,10 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Domain\Subscription\Exception;
 
+use DomainException;
 use Techork\PaymentService\Domain\Subscription\SubscriptionStatus;
 
-final class SubscriptionNotCancellable extends \DomainException
+final class SubscriptionNotCancellable extends DomainException
 {
     public static function withStatus(SubscriptionStatus $status): self
     {

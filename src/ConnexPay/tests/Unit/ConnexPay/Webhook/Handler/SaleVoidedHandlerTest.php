@@ -23,7 +23,7 @@ it('cancels the matching PaymentIntent', function () {
 
     $event = new ArrayObject(['eventType' => 'sale.card.auth.voided', 'guid' => 'sale-guid-v']);
 
-    expect((new SaleVoidedHandler($resolver, $recorder))($event, GatewayId::generate()))
+    expect(new SaleVoidedHandler($resolver, $recorder)($event, GatewayId::generate()))
         ->toBe(HandlerOutcome::Processed);
 });
 

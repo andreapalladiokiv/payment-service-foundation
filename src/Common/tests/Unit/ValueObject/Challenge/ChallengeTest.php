@@ -13,12 +13,12 @@ function challengeTagVisitor(): ChallengeVisitor
 {
     return new class implements ChallengeVisitor
     {
-        public function visitThreeDS(ThreeDSChallenge $challenge): mixed
+        public function visitThreeDS(ThreeDSChallenge $challenge): string
         {
             return 'three_ds:'.$challenge->transactionId;
         }
 
-        public function visitRedirect(RedirectChallenge $challenge): mixed
+        public function visitRedirect(RedirectChallenge $challenge): string
         {
             return 'redirect:'.$challenge->transactionId;
         }

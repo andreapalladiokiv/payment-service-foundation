@@ -4,17 +4,20 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Domain\Subscription\Event;
 
+use DateTimeImmutable;
 use EventSauce\EventSourcing\Serialization\SerializablePayload;
+use Override;
 use Techork\PaymentService\Domain\PaymentIntent\ValueObject\PaymentIntentId;
 
 final readonly class SubscriptionActivated implements SerializablePayload
 {
     public function __construct(
         public PaymentIntentId $paymentIntentId,
-        public \DateTimeImmutable $periodStart,
-        public \DateTimeImmutable $periodEnd,
+        public DateTimeImmutable $periodStart,
+        public DateTimeImmutable $periodEnd,
     ) {}
 
+    #[Override]
     public function toPayload(): array
     {
         return [
@@ -24,12 +27,13 @@ final readonly class SubscriptionActivated implements SerializablePayload
         ];
     }
 
+    #[Override]
     public static function fromPayload(array $payload): static
     {
         return new self(
             PaymentIntentId::fromString($payload['payment_intent_id']),
-            new \DateTimeImmutable($payload['period_start']),
-            new \DateTimeImmutable($payload['period_end']),
+            new DateTimeImmutable($payload['period_start']),
+            new DateTimeImmutable($payload['period_end']),
         );
     }
 }

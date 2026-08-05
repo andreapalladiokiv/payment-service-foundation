@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Techork\PaymentService\Forter;
 
 /**
- * Normalized result of a single {@see \Techork\PaymentService\Forter\FraudScreeningProvider}
+ * Normalized result of a single {@see FraudScreeningProvider}
  * screening. Adapters map their provider-specific response onto this shape so
  * the decision layer stays vendor-agnostic.
  *

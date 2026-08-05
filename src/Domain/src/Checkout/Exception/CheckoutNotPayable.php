@@ -4,10 +4,11 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Domain\Checkout\Exception;
 
+use DomainException;
 use Techork\PaymentService\Domain\Checkout\CheckoutStatus;
 use Techork\PaymentService\Domain\PaymentIntent\PaymentIntentStatus;
 
-final class CheckoutNotPayable extends \DomainException
+final class CheckoutNotPayable extends DomainException
 {
     public static function withStatus(CheckoutStatus $status): self
     {

@@ -7,6 +7,7 @@ namespace Techork\PaymentService\Revolut;
 use GuzzleHttp\Exception\GuzzleException;
 use Money\Money;
 use Omnipay\Common\Message\AbstractRequest;
+use Override;
 use Techork\PaymentService\Gateway\ValueObject\CardSpendCategory;
 use Techork\PaymentService\Revolut\Concern\MerchantCategoryMapper;
 use Techork\PaymentService\Revolut\Concern\RevolutRequestParameters;
@@ -23,6 +24,7 @@ final class UpdateVirtualCardRequest extends AbstractRequest
 {
     use RevolutRequestParameters;
 
+    #[Override]
     public function getData(): array
     {
         $this->validate('money', 'transactionReference');
@@ -42,9 +44,10 @@ final class UpdateVirtualCardRequest extends AbstractRequest
         return $body;
     }
 
+    #[Override]
     public function sendData($data): UpdateVirtualCardResponse
     {
-        $cardId = (string) $this->getTransactionReference();
+        $cardId = $this->getTransactionReference();
 
         try {
             $card = $this->getRevolutClient()->patch("/api/1.0/cards/{$cardId}", $data);

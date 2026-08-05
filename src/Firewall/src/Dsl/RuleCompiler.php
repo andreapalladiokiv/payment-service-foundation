@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Techork\PaymentService\Firewall\Dsl;
 
 use InvalidArgumentException;
+use JsonException;
 
 /**
  * Compiles one rule's conditions into a single Symfony ExpressionLanguage
@@ -231,7 +232,7 @@ final readonly class RuleCompiler
     {
         try {
             $encoded = json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
-        } catch (\JsonException $e) {
+        } catch (JsonException $e) {
             throw new InvalidArgumentException('Firewall rule value is not encodable.', previous: $e);
         }
 

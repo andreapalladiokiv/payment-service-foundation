@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Domain\Checkout\Command;
 
+use DateTimeImmutable;
 use Money\Money;
 use Techork\PaymentService\Domain\Checkout\ValueObject\CheckoutId;
 use Techork\PaymentService\Domain\Subscription\ValueObject\SubscriptionPlan;
@@ -18,7 +19,7 @@ interface CreateCheckoutCommand
 
     public function callbackUrl(): ?string;
 
-    public function expiresAt(): ?\DateTimeImmutable;
+    public function expiresAt(): ?DateTimeImmutable;
 
     /** @return array<string, mixed> */
     public function metadata(): array;

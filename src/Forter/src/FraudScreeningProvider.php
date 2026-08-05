@@ -12,7 +12,7 @@ namespace Techork\PaymentService\Forter;
  * Implementations MUST NOT throw for a business outcome — a decline is a
  * {@see FraudVerdict}, not an exception. On provider unavailability (timeout,
  * transport error, malformed response) implementations SHOULD return a
- * {@see \Techork\PaymentService\Forter\FraudDecision::Errored}
+ * {@see FraudDecision::Errored}
  * verdict rather than throwing, so the decision layer can apply a uniform
  * fail-open / fail-closed policy. Exceptions are reserved for programming
  * errors (invalid configuration, un-mappable input).

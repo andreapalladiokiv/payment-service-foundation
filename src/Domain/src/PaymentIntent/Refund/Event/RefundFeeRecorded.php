@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace Techork\PaymentService\Domain\PaymentIntent\Refund\Event;
 
 use DateTimeImmutable;
+use DateTimeInterface;
 use EventSauce\EventSourcing\Serialization\SerializablePayload;
 use Money\Currency;
 use Money\Money;
+use Override;
 use Techork\PaymentService\Domain\PaymentIntent\Refund\ValueObject\RefundId;
 
 /**
@@ -23,16 +25,18 @@ final readonly class RefundFeeRecorded implements SerializablePayload
         public DateTimeImmutable $observedAt,
     ) {}
 
+    #[Override]
     public function toPayload(): array
     {
         return [
             'refund_id' => $this->refundId->toString(),
             'fee_amount' => $this->fee->getAmount(),
             'fee_currency' => $this->fee->getCurrency()->getCode(),
-            'observed_at' => $this->observedAt->format(DateTimeImmutable::ATOM),
+            'observed_at' => $this->observedAt->format(DateTimeInterface::ATOM),
         ];
     }
 
+    #[Override]
     public static function fromPayload(array $payload): static
     {
         return new self(

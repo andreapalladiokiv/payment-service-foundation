@@ -3,10 +3,11 @@
 declare(strict_types=1);
 
 // Stub the EventSauce interface when not available (eventsauce is not a dependency of the common package)
-if (! interface_exists(\EventSauce\EventSourcing\Serialization\SerializablePayload::class)) {
+if (! interface_exists(SerializablePayload::class)) {
     eval('namespace EventSauce\EventSourcing\Serialization; interface SerializablePayload { public function toPayload(): array; public static function fromPayload(array $payload): static; }');
 }
 
+use EventSauce\EventSourcing\Serialization\SerializablePayload;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ECICode;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSResult;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSStatus;

@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace Techork\PaymentService\ConnexPay;
 
 use GuzzleHttp\Exception\GuzzleException;
+use InvalidArgumentException;
 use Money\Money;
 use Omnipay\Common\Message\AbstractRequest;
+use Override;
 use Techork\PaymentService\Common\ValueObject\CardBrand;
 use Techork\PaymentService\ConnexPay\Concern\ConnexPayRequestParameters;
 use Techork\PaymentService\Gateway\ValueObject\CardSpendCategory;
@@ -82,6 +84,7 @@ final class IssueVirtualCardRequest extends AbstractRequest
         return $this->setParameter('cardBrand', $value);
     }
 
+    #[Override]
     public function getData(): array
     {
         $this->validate('money', 'merchantGuid', 'incomingTransactionCode', 'spendCategory');
@@ -117,7 +120,7 @@ final class IssueVirtualCardRequest extends AbstractRequest
     {
         $raw = $this->getSpendCategory();
         $category = CardSpendCategory::tryFrom($raw)
-            ?? throw new \InvalidArgumentException("Unknown CardSpendCategory '{$raw}'");
+            ?? throw new InvalidArgumentException("Unknown CardSpendCategory '{$raw}'");
 
         $purchaseType = PurchaseTypeBridge::fromCategory($category);
 
@@ -131,16 +134,19 @@ final class IssueVirtualCardRequest extends AbstractRequest
      */
     private function normalizedCardBrand(): ?string
     {
-        return match ($this->getCardBrand()) {
+        $brand = $this->getCardBrand();
+
+        return match ($brand) {
             null => null,
             CardBrand::Visa => 'Visa',
             CardBrand::Mastercard => 'Mastercard',
-            default => throw new \InvalidArgumentException(
-                "Unsupported ConnexPay card brand: {$this->getCardBrand()->value}"
+            default => throw new InvalidArgumentException(
+                "Unsupported ConnexPay card brand: {$brand->value}"
             ),
         };
     }
 
+    #[Override]
     public function sendData($data): IssueVirtualCardResponse
     {
         try {

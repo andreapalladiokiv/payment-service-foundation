@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Domain\PaymentIntent\Port;
 
+use Override;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\PaymentIntentFirewallRequest;
 
 /**
@@ -28,6 +29,7 @@ use Techork\PaymentService\Domain\PaymentIntent\Port\Request\PaymentIntentFirewa
  */
 final readonly class NullPaymentIntentFirewall implements PaymentIntentFirewallPort
 {
+    #[Override]
     public function evaluate(PaymentIntentFirewallRequest $request): FirewallDecision
     {
         return FirewallDecision::deny('firewall not installed');

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Techork\PaymentService\ConnexPay\Webhook\Handler;
 
 use ArrayObject;
+use Override;
 use Techork\PaymentService\ConnexPay\Webhook\SaleCorrelation;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 use Techork\PaymentService\Gateway\Webhook\Contract\HandlerOutcome;
@@ -26,6 +27,7 @@ final readonly class SaleVoidedHandler implements WebhookEventHandler
         private GatewayCancellationRecorder $recorder,
     ) {}
 
+    #[Override]
     public function __invoke(object $event, GatewayId $gatewayId): HandlerOutcome
     {
         /** @var ArrayObject $event */

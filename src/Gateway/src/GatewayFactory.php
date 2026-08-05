@@ -60,6 +60,10 @@ class GatewayFactory extends OmnipayGatewayFactory
      * resolve via the container so provider gateways can receive repository
      * dependencies through their constructor.
      */
+    /**
+     * @param class-string<Gateway> $class every caller proves this with `is_a()` first, so
+     *   stating it here is what lets `new $class` be a Gateway rather than a bare object
+     */
     protected function instantiate(string $class): Gateway
     {
         return new $class;

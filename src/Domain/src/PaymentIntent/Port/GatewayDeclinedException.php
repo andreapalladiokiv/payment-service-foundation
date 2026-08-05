@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Domain\PaymentIntent\Port;
 
+use DomainException;
+
 /**
  * Raised by a port when the gateway refuses an operation. After domain
  * invariants pass, a refusal is an exceptional condition (issuer decline,
@@ -19,7 +21,7 @@ namespace Techork\PaymentService\Domain\PaymentIntent\Port;
  * assert something the aggregate cannot take back while the funds may still be
  * held.
  */
-final class GatewayDeclinedException extends \DomainException
+final class GatewayDeclinedException extends DomainException
 {
     public function __construct(public readonly string $reason)
     {

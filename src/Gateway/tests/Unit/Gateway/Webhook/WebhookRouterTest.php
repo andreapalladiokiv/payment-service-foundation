@@ -19,12 +19,12 @@ use Techork\PaymentService\Gateway\Webhook\WebhookRouter;
 
 function makeWebhookCredential(GatewayId $id, string $gatewayName, array $credentials = []): GatewayCredential
 {
-    return new class($id, $gatewayName, $credentials) implements GatewayCredential
+    return new readonly class($id, $gatewayName, $credentials) implements GatewayCredential
     {
         public function __construct(
-            private readonly GatewayId $id,
-            private readonly string $gatewayName,
-            private readonly array $credentials,
+            private GatewayId $id,
+            private string    $gatewayName,
+            private array     $credentials,
         ) {}
 
         public function getId(): GatewayId

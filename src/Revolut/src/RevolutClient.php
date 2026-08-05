@@ -7,6 +7,7 @@ namespace Techork\PaymentService\Revolut;
 use GuzzleHttp\Client;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
+use Override;
 
 /**
  * HTTP client for the Revolut Business REST API
@@ -58,21 +59,25 @@ final class RevolutClient implements RevolutHttpClientInterface
         $this->authenticator = new RevolutAuthenticator($clientId, $privateKey, $issuer, $this->http);
     }
 
+    #[Override]
     public function post(string $path, array $data = []): array
     {
         return $this->send('POST', $path, ['json' => $data]);
     }
 
+    #[Override]
     public function patch(string $path, array $data): array
     {
         return $this->send('PATCH', $path, ['json' => $data]);
     }
 
+    #[Override]
     public function get(string $path): array
     {
         return $this->send('GET', $path);
     }
 
+    #[Override]
     public function delete(string $path): array
     {
         return $this->send('DELETE', $path);

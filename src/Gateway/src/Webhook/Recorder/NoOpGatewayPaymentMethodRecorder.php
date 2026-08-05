@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Gateway\Webhook\Recorder;
 
+use Override;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
 use Techork\PaymentService\Common\ValueObject\CreditCard;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
@@ -18,6 +19,7 @@ use Techork\PaymentService\Gateway\ValueObject\GatewayId;
  */
 final readonly class NoOpGatewayPaymentMethodRecorder implements GatewayPaymentMethodRecorder
 {
+    #[Override]
     public function onPaymentMethodRecord(
         GatewayId $gatewayId,
         string $customerReference,

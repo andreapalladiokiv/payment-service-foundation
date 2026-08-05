@@ -6,6 +6,7 @@ use Money\Currency;
 use Money\Money;
 use Omnipay\Common\Http\PsrClient as OmnipayClient;
 use Symfony\Component\HttpFoundation\Request as HttpRequest;
+use Techork\PaymentService\Common\ValueObject\CardBrand;
 use Techork\PaymentService\Common\ValueObject\CreditCard;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Cvc;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Expiration;
@@ -48,11 +49,11 @@ it('builds retry-return data with ReturnRetryCard for a raw credit card', functi
 });
 
 it('resolves ReturnRetryCard.Guid from the reference resolver when given a stored Token', function () {
-    $future = (new DateTimeImmutable('+1 hour'))->format(DateTimeInterface::ATOM);
+    $future = new DateTimeImmutable('+1 hour')->format(DateTimeInterface::ATOM);
     $token = new Token(
         TokenId::fromString('01961f5a-0000-7000-8000-000000000050'),
         new CreditCard(
-            new Number('424242', '4242', \Techork\PaymentService\Common\ValueObject\CardBrand::Visa),
+            new Number('424242', '4242', CardBrand::Visa),
             Expiration::fromMonthAndYear(12, 2030),
             new Holder('Test'),
             new Cvc,

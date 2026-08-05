@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Domain\Checkout\Exception;
 
-final class InvalidCheckoutPlan extends \DomainException
+use DomainException;
+
+final class InvalidCheckoutPlan extends DomainException
 {
     public static function amountMismatch(): self
     {

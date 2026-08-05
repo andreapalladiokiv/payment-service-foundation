@@ -29,7 +29,8 @@ function factSupplierRequest(): FraudScreeningRequest
 }
 
 /**
- * @param  FraudVerdict|Throwable  $answer
+ * @param FraudVerdict|Throwable $answer
+ * @return FraudScreeningProvider
  */
 function screeningProviderReturning(FraudVerdict|Throwable $answer): FraudScreeningProvider
 {

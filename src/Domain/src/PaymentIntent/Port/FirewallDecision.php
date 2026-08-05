@@ -10,7 +10,7 @@ namespace Techork\PaymentService\Domain\PaymentIntent\Port;
  *
  * This is the shared decision vocabulary: each domain declares its own typed
  * firewall port (see
- * {@see \Techork\PaymentService\Domain\PaymentIntent\Port\PaymentIntentFirewallPort}),
+ * {@see PaymentIntentFirewallPort}),
  * and they all answer in these terms.
  *
  * Deliberately minimal. A firewall reports what its rules decided and nothing

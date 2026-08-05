@@ -29,7 +29,7 @@ it('returns null issuer country when the code is missing or invalid', function (
 ]);
 
 it('returns null when the response is empty', function () {
-    $provider = new NeutrinoCardIntelligenceProvider(fakeNeutrinoClient([]));
+    $provider = new NeutrinoCardIntelligenceProvider(fakeNeutrinoClient());
 
     expect($provider->lookupBin('411111'))->toBeNull();
 });

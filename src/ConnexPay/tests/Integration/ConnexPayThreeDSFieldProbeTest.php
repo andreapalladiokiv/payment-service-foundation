@@ -143,7 +143,7 @@ function cxpTdsProbeShape(array $response): array
     $shape = [];
 
     foreach ($response as $key => $value) {
-        if (in_array((string) $key, CXP_TDS_PROBE_VOLATILE, true)) {
+        if (in_array($key, CXP_TDS_PROBE_VOLATILE, true)) {
             $shape[$key] = '(volatile)';
 
             continue;
@@ -229,8 +229,8 @@ function cxpTdsProbeSend(int $case, array $card = [], array $top = [], array $ne
 
     return [
         'outcome' => ($response['wasProcessed'] ?? null) === true ? 'ACCEPTED' : 'ACCEPTED-NOT-PROCESSED',
-        'detail' => (string) ($response['status'] ?? '(no status)')
-            .' | '.(string) ($response['processorResponseMessage'] ?? '(no processor message)')
+        'detail' => ($response['status'] ?? '(no status)')
+            .' | '. ($response['processorResponseMessage'] ?? '(no processor message)')
             .' | amount='.json_encode($response['amount'] ?? null)
             // `type` is the field the first run of this probe caught moving: it
             // differed from the no-3DS baseline in exactly the cases carrying a
@@ -248,10 +248,8 @@ function cxpTdsProbeSend(int $case, array $card = [], array $top = [], array $ne
 function cxpTdsProbeBlamed(array $result, string ...$needles): bool
 {
     foreach ($result['blamed'] as $field) {
-        foreach ($needles as $needle) {
-            if (stripos((string) $field, $needle) !== false) {
-                return true;
-            }
+        if (array_any($needles, fn($needle) => stripos((string)$field, $needle) !== false)) {
+            return true;
         }
     }
 
@@ -271,14 +269,14 @@ function cxpTdsProbeVoid(?string $guid): string
     ]);
 
     try {
-        return 'voided: '.(string) ($void()['status'] ?? '(no status)');
-    } catch (Throwable $e) {
+        return 'voided: '. ($void()['status'] ?? '(no status)');
+    } catch (Throwable) {
         // Sandbox auths settle asynchronously; an immediate void can lose the
         // race. One retry, then report loudly so it can be voided by hand.
         sleep(8);
 
         try {
-            return 'voided on retry: '.(string) ($void()['status'] ?? '(no status)');
+            return 'voided on retry: '. ($void()['status'] ?? '(no status)');
         } catch (Throwable $retry) {
             return '!! NOT VOIDED — void by hand in the CXP portal: '.$retry->getMessage();
         }

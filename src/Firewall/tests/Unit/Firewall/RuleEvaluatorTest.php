@@ -170,7 +170,7 @@ it('parses an expression once per pool, not once per evaluator', function () {
     expect($pool->saves)->toBe(1);
 
     // A fresh evaluator stands in for the next request: same pool, no reparse.
-    (new RuleEvaluator(new RuleCompiler($schema), $schema, $pool))->matches($conditions, $facts);
+    new RuleEvaluator(new RuleCompiler($schema), $schema, $pool)->matches($conditions, $facts);
 
     expect($pool->saves)->toBe(1);
 });

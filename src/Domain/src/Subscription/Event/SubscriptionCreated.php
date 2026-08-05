@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Domain\Subscription\Event;
 
+use Override;
 use Techork\PaymentService\Domain\Subscription\ValueObject\SubscriptionPlan;
 use EventSauce\EventSourcing\Serialization\SerializablePayload;
 use Techork\PaymentService\Common\ValueObject\PaymentMethodId;
@@ -18,6 +19,7 @@ final readonly class SubscriptionCreated implements SerializablePayload
         public array $metadata = [],
     ) {}
 
+    #[Override]
     public function toPayload(): array
     {
         return [
@@ -28,6 +30,7 @@ final readonly class SubscriptionCreated implements SerializablePayload
         ];
     }
 
+    #[Override]
     public static function fromPayload(array $payload): static
     {
         return new self(

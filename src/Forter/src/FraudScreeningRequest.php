@@ -9,7 +9,7 @@ use Techork\PaymentService\Common\ValueObject\ConnectionContext;
 use Techork\PaymentService\Common\ValueObject\CreditCard\CardSummary;
 
 /**
- * Everything a {@see \Techork\PaymentService\Forter\FraudScreeningProvider}
+ * Everything a {@see FraudScreeningProvider}
  * needs to score a card transaction, kept inside the PII/PCI boundary: billing
  * details, the PCI-safe card summary (BIN + last four), the amount, and the
  * connection signals. No passenger PII, no raw PAN, no CVV.

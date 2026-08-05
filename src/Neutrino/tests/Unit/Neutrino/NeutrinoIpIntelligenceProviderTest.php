@@ -31,7 +31,7 @@ it('defaults reputation flags to false when absent', function () {
 });
 
 it('returns null when the response is empty', function () {
-    $provider = new NeutrinoIpIntelligenceProvider(fakeNeutrinoClient([]));
+    $provider = new NeutrinoIpIntelligenceProvider(fakeNeutrinoClient());
 
     expect($provider->lookupIp('203.0.113.7'))->toBeNull();
 });

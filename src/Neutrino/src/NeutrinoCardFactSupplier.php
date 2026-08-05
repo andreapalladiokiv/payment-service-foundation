@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Neutrino;
 
+use Override;
 use Techork\PaymentService\Common\Contract\FactSupplier;
 use Throwable;
 
@@ -23,14 +24,15 @@ use Throwable;
  * emitted at all in that case, so an absent lookup is distinguishable from a
  * lookup that genuinely reported "not prepaid".
  */
-final class NeutrinoCardFactSupplier implements FactSupplier
+final readonly class NeutrinoCardFactSupplier implements FactSupplier
 {
     public function __construct(
-        private readonly CardIntelligenceProvider $cards,
-        private readonly string $bin,
-        private readonly ?string $ip = null,
+        private CardIntelligenceProvider $cards,
+        private string                   $bin,
+        private ?string                  $ip = null,
     ) {}
 
+    #[Override]
     public function facts(): array
     {
         try {

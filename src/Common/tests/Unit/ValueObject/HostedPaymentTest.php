@@ -79,11 +79,16 @@ it('survives toPayload/fromPayload roundtrip', function () {
 it('dispatches to visitHostedPayment on visitor', function () {
     $visitor = new class implements PaymentInstrumentVisitor
     {
-        public function visitCreditCard(CreditCard $card): mixed { return 'card'; }
-        public function visitCash(Cash $cash): mixed { return 'cash'; }
-        public function visitToken(Token $token): mixed { return 'token'; }
-        public function visitPaymentMethod(PaymentMethod $paymentMethod): mixed { return 'pm'; }
-        public function visitHostedPayment(HostedPayment $hosted): mixed { return 'hosted:'.$hosted->successUrl; }
+        public function visitCreditCard(CreditCard $card): string
+        { return 'card'; }
+        public function visitCash(Cash $cash): string
+        { return 'cash'; }
+        public function visitToken(Token $token): string
+        { return 'token'; }
+        public function visitPaymentMethod(PaymentMethod $paymentMethod): string
+        { return 'pm'; }
+        public function visitHostedPayment(HostedPayment $hosted): string
+        { return 'hosted:'.$hosted->successUrl; }
     };
 
     $hosted = new HostedPayment(successUrl: 'https://x.test', cancelUrl: 'https://y.test');

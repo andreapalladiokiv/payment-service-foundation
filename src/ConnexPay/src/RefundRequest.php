@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\ConnexPay;
 
+use Override;
 use Techork\PaymentService\ConnexPay\Concern\ConnexPayRequestParameters;
 use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\GuzzleException;
@@ -26,6 +27,7 @@ final class RefundRequest extends AbstractRequest
 
     private const string SALE_NOT_SETTLED_MESSAGE = 'Sale has not been settled';
 
+    #[Override]
     public function getData(): array
     {
         $this->validate('money', 'transactionReference');
@@ -40,6 +42,7 @@ final class RefundRequest extends AbstractRequest
         ]);
     }
 
+    #[Override]
     public function sendData($data): RefundResponse
     {
         try {

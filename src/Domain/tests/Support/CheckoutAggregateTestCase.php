@@ -22,8 +22,8 @@ abstract class CheckoutAggregateTestCase extends AggregateRootTestCase
         return CheckoutAggregate::class;
     }
 
-    protected function handle(CreateCheckoutCommand $command): void
+    protected function handle(CreateCheckoutCommand $arguments): void
     {
-        $this->persistAggregateRoot(CheckoutAggregate::create($command));
+        $this->persistAggregateRoot(CheckoutAggregate::create($arguments));
     }
 }

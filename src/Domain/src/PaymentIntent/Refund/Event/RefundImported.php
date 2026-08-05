@@ -7,6 +7,7 @@ namespace Techork\PaymentService\Domain\PaymentIntent\Refund\Event;
 use EventSauce\EventSourcing\Serialization\SerializablePayload;
 use Money\Currency;
 use Money\Money;
+use Override;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\ValueObject\PaymentInstrumentFactory;
 use Techork\PaymentService\Domain\PaymentIntent\Refund\RefundStatus;
@@ -27,6 +28,7 @@ final readonly class RefundImported implements SerializablePayload
         public ?PaymentInstrument $retryInstrument = null,
     ) {}
 
+    #[Override]
     public function toPayload(): array
     {
         return [
@@ -38,6 +40,7 @@ final readonly class RefundImported implements SerializablePayload
         ];
     }
 
+    #[Override]
     public static function fromPayload(array $payload): static
     {
         return new self(

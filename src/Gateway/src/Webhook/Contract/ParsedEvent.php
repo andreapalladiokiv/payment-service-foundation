@@ -17,7 +17,9 @@ namespace Techork\PaymentService\Gateway\Webhook\Contract;
 final readonly class ParsedEvent
 {
     /**
-     * @param  T  $native
+     * @param string $type
+     * @param string $externalId
+     * @param object $native
      */
     public function __construct(
         public string $type,

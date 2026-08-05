@@ -2,7 +2,9 @@
 
 declare(strict_types=1);
 
+use GuzzleHttp\Exception\TransferException;
 use Mockery\MockInterface;
+use Omnipay\Common\Http\PsrClient;
 use Omnipay\Common\Message\RequestInterface;
 use Techork\PaymentService\Common\ValueObject\CreditCard\CheckResult;
 use Techork\PaymentService\ConnexPay\CaptureRequest;
@@ -64,7 +66,7 @@ it('unwraps the sale envelope from the raw HTTP response', function () {
             'sale' => captureSaleEnvelopePayload(),
         ]);
 
-    $request = new CaptureRequest(new \Omnipay\Common\Http\PsrClient, new \Symfony\Component\HttpFoundation\Request);
+    $request = new CaptureRequest(new PsrClient, new \Symfony\Component\HttpFoundation\Request);
     $request->initialize([
         'transactionReference' => 'auth-guid-abc',
         'deviceGuid' => 'd4d1267d-d619-4704-86cd-a9c6c3c1ec2c',
@@ -83,9 +85,9 @@ it('returns a not-successful response on Guzzle error', function () {
     $client = Mockery::mock(ConnexPayHttpClientInterface::class);
     $client->shouldReceive('post')
         ->once()
-        ->andThrow(new \GuzzleHttp\Exception\TransferException('Network error'));
+        ->andThrow(new TransferException('Network error'));
 
-    $request = new CaptureRequest(new \Omnipay\Common\Http\PsrClient, new \Symfony\Component\HttpFoundation\Request);
+    $request = new CaptureRequest(new PsrClient, new \Symfony\Component\HttpFoundation\Request);
     $request->initialize([
         'transactionReference' => 'auth-guid-abc',
         'deviceGuid' => 'd4d1267d-d619-4704-86cd-a9c6c3c1ec2c',

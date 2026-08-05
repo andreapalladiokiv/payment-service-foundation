@@ -45,7 +45,7 @@ it('marks an issued virtual card as successful', function () {
 });
 
 it('maps to a VirtualCardResult with MMYY expiration', function () {
-    $result = (new IssueVirtualCardResponse(Mockery::mock(RequestInterface::class), issueCardSuccessPayload()))
+    $result = new IssueVirtualCardResponse(Mockery::mock(RequestInterface::class), issueCardSuccessPayload())
         ->toVirtualCardResult();
 
     expect($result->success)->toBeTrue()

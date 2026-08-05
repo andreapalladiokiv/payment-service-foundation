@@ -116,7 +116,7 @@ it('expires the hosted page four hours out, in UTC', function () {
     $payload = hostedCpRequest()->getData()['_hostedPayload'];
 
     $expiration = new DateTimeImmutable($payload['Expiration'], new DateTimeZone('UTC'));
-    $expected = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->add(new DateInterval('PT4H'));
+    $expected = new DateTimeImmutable('now', new DateTimeZone('UTC'))->add(new DateInterval('PT4H'));
 
     expect(abs($expiration->getTimestamp() - $expected->getTimestamp()))->toBeLessThan(120);
 });

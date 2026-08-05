@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Domain\PaymentIntent;
 
+use Override;
 use Techork\PaymentService\Common\Contract\Challenge;
 use Techork\PaymentService\Common\Contract\ChallengeVisitor;
 use Techork\PaymentService\Common\ValueObject\Challenge\RedirectChallenge;
@@ -41,6 +42,7 @@ final class ChallengeArraySerializer implements ChallengeVisitor
         };
     }
 
+    #[Override]
     public function visitThreeDS(ThreeDSChallenge $challenge): array
     {
         return [
@@ -54,6 +56,7 @@ final class ChallengeArraySerializer implements ChallengeVisitor
         ];
     }
 
+    #[Override]
     public function visitRedirect(RedirectChallenge $challenge): array
     {
         return [

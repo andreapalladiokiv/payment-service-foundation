@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Neutrino;
 
+use Override;
 use Techork\PaymentService\Common\ValueObject\Country;
 use Throwable;
 
@@ -19,10 +20,11 @@ use Throwable;
  * the Neutrino v3 API and should be re-verified against a live response when
  * credentials are wired.
  */
-final class NeutrinoCardIntelligenceProvider implements CardIntelligenceProvider
+final readonly class NeutrinoCardIntelligenceProvider implements CardIntelligenceProvider
 {
-    public function __construct(private readonly NeutrinoHttpClientInterface $client) {}
+    public function __construct(private NeutrinoHttpClientInterface $client) {}
 
+    #[Override]
     public function lookupBin(string $bin, ?string $ip = null): ?CardIntelligence
     {
         $params = ['bin-number' => $bin];

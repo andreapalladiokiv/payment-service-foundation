@@ -6,6 +6,7 @@ namespace Techork\PaymentService\Neutrino;
 
 use GuzzleHttp\Client;
 use GuzzleHttp\ClientInterface;
+use Override;
 
 /**
  * HTTP client for the Neutrino API (https://www.neutrinoapi.com). Auth is a
@@ -33,6 +34,7 @@ final class NeutrinoClient implements NeutrinoHttpClientInterface
         ]);
     }
 
+    #[Override]
     public function request(string $endpoint, array $params): array
     {
         $response = $this->http->request('POST', ltrim($endpoint, '/'), [

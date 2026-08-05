@@ -8,7 +8,7 @@ use Techork\PaymentService\Common\ValueObject\Country;
 
 /**
  * Geolocation / reputation facts about a client IP that fraud rules match on.
- * Produced by an {@see \Techork\PaymentService\Neutrino\IpIntelligenceProvider}
+ * Produced by an {@see IpIntelligenceProvider}
  * (e.g. Neutrino `ip-info`).
  *
  * `country` is null when the IP could not be geolocated.

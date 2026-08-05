@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Techork\PaymentService\Gateway\Contract;
 
 use Money\Money;
+use Override;
 use Techork\PaymentService\Common\Contract\Challenge;
 use Techork\PaymentService\Common\ValueObject\CreditCard\CheckResult;
 
@@ -66,6 +67,7 @@ final readonly class AuthorizationResult extends GatewayResult
     /**
      * @param array<string, mixed> $metadata
      */
+    #[Override]
     public function withMetadata(array $metadata): self
     {
         return new self(
@@ -81,6 +83,7 @@ final readonly class AuthorizationResult extends GatewayResult
         );
     }
 
+    #[Override]
     public function withConvertedAmount(?Money $convertedAmount): self
     {
         return new self(

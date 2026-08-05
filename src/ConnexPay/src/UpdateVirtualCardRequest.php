@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace Techork\PaymentService\ConnexPay;
 
 use GuzzleHttp\Exception\GuzzleException;
+use InvalidArgumentException;
 use Money\Money;
 use Omnipay\Common\Message\AbstractRequest;
+use Override;
 use Techork\PaymentService\ConnexPay\Concern\ConnexPayRequestParameters;
 use Techork\PaymentService\Gateway\ValueObject\CardSpendCategory;
 use Techork\PaymentService\Gateway\ValueObject\PurchaseTypeBridge;
@@ -34,6 +36,7 @@ final class UpdateVirtualCardRequest extends AbstractRequest
         return $this->setParameter('spendCategory', $value);
     }
 
+    #[Override]
     public function getData(): array
     {
         $this->validate('money', 'transactionReference', 'spendCategory');
@@ -47,6 +50,7 @@ final class UpdateVirtualCardRequest extends AbstractRequest
         ];
     }
 
+    #[Override]
     public function sendData($data): UpdateVirtualCardResponse
     {
         $cardGuid = (string) $this->getParameter('transactionReference');
@@ -70,7 +74,7 @@ final class UpdateVirtualCardRequest extends AbstractRequest
     {
         $raw = $this->getSpendCategory();
         $category = CardSpendCategory::tryFrom($raw)
-            ?? throw new \InvalidArgumentException("Unknown CardSpendCategory '{$raw}'");
+            ?? throw new InvalidArgumentException("Unknown CardSpendCategory '{$raw}'");
 
         $purchaseType = PurchaseTypeBridge::fromCategory($category);
 

@@ -42,10 +42,10 @@ function firewallRequestFor(bool $withConnection = true, ?string $gatewayId = 'g
  */
 function supplierOf(array $facts): FactSupplier
 {
-    return new class($facts) implements FactSupplier
+    return new readonly class($facts) implements FactSupplier
     {
         /** @param array<string, mixed> $facts */
-        public function __construct(private readonly array $facts) {}
+        public function __construct(private array $facts) {}
 
         public function facts(): array
         {
@@ -62,10 +62,10 @@ function paymentIntentFirewall(array $rules, array $enrichment = []): PaymentInt
 {
     $schema = new PaymentIntentFactSchema;
 
-    $source = new class($rules) implements FirewallRuleSource
+    $source = new readonly class($rules) implements FirewallRuleSource
     {
         /** @param array<int, FirewallRule> $rules */
-        public function __construct(private readonly array $rules) {}
+        public function __construct(private array $rules) {}
 
         public function rulesFor(string $chain): iterable
         {
@@ -73,10 +73,10 @@ function paymentIntentFirewall(array $rules, array $enrichment = []): PaymentInt
         }
     };
 
-    $suppliers = new class($enrichment) implements EnrichmentSuppliers
+    $suppliers = new readonly class($enrichment) implements EnrichmentSuppliers
     {
         /** @param array<int, FactSupplier> $enrichment */
-        public function __construct(private readonly array $enrichment) {}
+        public function __construct(private array $enrichment) {}
 
         public function for(PaymentIntentFirewallRequest $request): iterable
         {
@@ -180,7 +180,7 @@ it('survives an enrichment supplier that fails, evaluating on what is known', fu
 });
 
 it('exposes exactly the roots its schema declares', function () {
-    $facts = (new RequestFactSupplier(firewallRequestFor()))->facts();
+    $facts = new RequestFactSupplier(firewallRequestFor())->facts();
 
     expect(array_keys($facts))->toBe(['payment_method', 'payment_intent'])
         // screening only appears when a supplier provides it, but the schema
@@ -189,7 +189,7 @@ it('exposes exactly the roots its schema declares', function () {
 });
 
 it('stringifies value objects so a rule reaches data and never behaviour', function () {
-    $facts = (new RequestFactSupplier(firewallRequestFor()))->facts();
+    $facts = new RequestFactSupplier(firewallRequestFor())->facts();
 
     expect($facts['payment_method']['billing_address']['country'])->toBe('GB')
         ->and($facts['payment_method']['connection']['ip'])->toBe('203.0.113.7')

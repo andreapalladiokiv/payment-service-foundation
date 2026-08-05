@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Tests\Support;
 
+use LogicException;
 use Techork\PaymentService\Domain\PaymentIntent\Command\CreatePaymentIntentCommand;
 use Techork\PaymentService\Domain\PaymentIntent\PaymentIntentAggregate;
 use Techork\PaymentService\Domain\PaymentIntent\ValueObject\PaymentIntentId;
@@ -22,9 +23,9 @@ abstract class PaymentIntentAggregateTestCase extends AggregateRootTestCase
         return PaymentIntentAggregate::class;
     }
 
-    protected function handle(CreatePaymentIntentCommand $command): void
+    protected function handle(CreatePaymentIntentCommand $arguments): void
     {
-        throw new \LogicException(
+        throw new LogicException(
             'PaymentIntentAggregate::create now requires a CreatePort. '
             . 'Call PaymentIntentAggregate::create(...) directly in the test instead of when($command).'
         );

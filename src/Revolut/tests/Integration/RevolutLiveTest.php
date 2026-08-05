@@ -32,10 +32,8 @@ const REVOLUT_LIVE_SKIP = 'Revolut has no virtual-card Sandbox; set REVOLUT_CLIE
 
 function revolutLiveConfigured(): bool
 {
-    foreach (['REVOLUT_CLIENT_ID', 'REVOLUT_PRIVATE_KEY', 'REVOLUT_REFRESH_TOKEN', 'REVOLUT_ISSUER'] as $var) {
-        if ((getenv($var) ?: '') === '') {
-            return false;
-        }
+    if (array_any(['REVOLUT_CLIENT_ID', 'REVOLUT_PRIVATE_KEY', 'REVOLUT_REFRESH_TOKEN', 'REVOLUT_ISSUER'], fn($var) => (getenv($var) ?: '') === '')) {
+        return false;
     }
 
     return true;

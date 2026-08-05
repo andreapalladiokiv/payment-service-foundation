@@ -7,6 +7,7 @@ namespace Techork\PaymentService\Domain\PaymentIntent\Event;
 use EventSauce\EventSourcing\Serialization\SerializablePayload;
 use Money\Currency;
 use Money\Money;
+use Override;
 use Techork\PaymentService\Common\Contract\ChallengeResult;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
@@ -32,6 +33,7 @@ final readonly class PaymentIntentFailed implements SerializablePayload
         public PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated,
     ) {}
 
+    #[Override]
     public function toPayload(): array
     {
         return [
@@ -49,6 +51,7 @@ final readonly class PaymentIntentFailed implements SerializablePayload
         ];
     }
 
+    #[Override]
     public static function fromPayload(array $payload): static
     {
         return new self(

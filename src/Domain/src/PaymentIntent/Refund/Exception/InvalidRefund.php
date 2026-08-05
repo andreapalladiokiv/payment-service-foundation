@@ -4,9 +4,10 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Domain\PaymentIntent\Refund\Exception;
 
+use DomainException;
 use Money\Currency;
 
-final class InvalidRefund extends \DomainException
+final class InvalidRefund extends DomainException
 {
     public static function nonPositiveAmount(): self
     {

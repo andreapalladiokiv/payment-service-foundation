@@ -18,11 +18,14 @@ abstract readonly class UuidValueObject implements Stringable
         return new static(Uuid::uuid7());
     }
 
-    public static function fromString(string $id): static
+    public static function fromString(string $aggregateRootId): static
     {
-        return new static(Uuid::fromString($id));
+        return new static(Uuid::fromString($aggregateRootId));
     }
 
+    /**
+     * @return non-empty-string
+     */
     public function toString(): string
     {
         return $this->uuid->toString();

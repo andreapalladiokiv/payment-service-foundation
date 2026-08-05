@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Techork\PaymentService\ConnexPay;
 
 use GuzzleHttp\Exception\GuzzleException;
+use Override;
 use Techork\PaymentService\Common\ValueObject\HostedPayment;
 use Techork\PaymentService\Gateway\Exception\UnsupportedInstrument;
 
@@ -29,6 +30,7 @@ use Techork\PaymentService\Gateway\Exception\UnsupportedInstrument;
  */
 final class PartialCaptureRequest extends PurchaseRequest
 {
+    #[Override]
     public function getData(): array
     {
         $this->validate('transactionReference');
@@ -47,12 +49,14 @@ final class PartialCaptureRequest extends PurchaseRequest
      * this class, and silence would let a later change to that invariant land
      * here as a duplicate charge.
      */
+    #[Override]
     public function visitHostedPayment(HostedPayment $hosted): never
     {
         throw UnsupportedInstrument::forGateway('connexpay', 'partialCapture', $hosted);
     }
 
-    public function sendData($data): PurchaseResponse
+    #[Override]
+    public function sendData($data): ConnexPayResponse
     {
         try {
             $this->getConnexPayClient()->post('/api/v1/void', [

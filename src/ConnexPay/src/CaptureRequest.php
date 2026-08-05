@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\ConnexPay;
 
+use Override;
 use Techork\PaymentService\ConnexPay\Concern\ConnexPayRequestParameters;
 use GuzzleHttp\Exception\GuzzleException;
 use Omnipay\Common\Message\AbstractRequest;
@@ -16,6 +17,7 @@ final class CaptureRequest extends AbstractRequest
 {
     use ConnexPayRequestParameters;
 
+    #[Override]
     public function getData(): array
     {
         $this->validate('transactionReference');
@@ -29,6 +31,7 @@ final class CaptureRequest extends AbstractRequest
         ]);
     }
 
+    #[Override]
     public function sendData($data): CaptureResponse
     {
         try {

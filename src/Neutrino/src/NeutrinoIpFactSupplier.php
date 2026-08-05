@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Neutrino;
 
+use Override;
 use Techork\PaymentService\Common\Contract\FactSupplier;
 use Throwable;
 
@@ -22,13 +23,14 @@ use Throwable;
  * proxy": rules referencing these facts simply do not match, instead of matching
  * on a fabricated false.
  */
-final class NeutrinoIpFactSupplier implements FactSupplier
+final readonly class NeutrinoIpFactSupplier implements FactSupplier
 {
     public function __construct(
-        private readonly IpIntelligenceProvider $ips,
-        private readonly string $ip,
+        private IpIntelligenceProvider $ips,
+        private string                 $ip,
     ) {}
 
+    #[Override]
     public function facts(): array
     {
         try {

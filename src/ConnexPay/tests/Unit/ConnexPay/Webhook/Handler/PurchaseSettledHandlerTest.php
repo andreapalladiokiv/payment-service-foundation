@@ -37,12 +37,12 @@ it('records VC fee when fetcher returns it and reference resolves', function () 
     $recorder = Mockery::mock(GatewayFeeRecorder::class);
     $recorder->shouldReceive('onVirtualCardFee')
         ->once()
-        ->withArgs(function (GatewayId $gid, string $vcId, Money $f, DateTimeImmutable $observedAt) use ($gatewayId, $virtualCardId, $fee) {
+        ->withArgs(function (GatewayId $gid, string $vcId, Money $f) use ($gatewayId, $virtualCardId, $fee) {
             return $gid->equals($gatewayId) && $vcId === $virtualCardId && $f === $fee;
         })
         ->andReturn(RecorderOutcome::Applied);
 
-    expect((new PurchaseSettledHandler($vcRepo, $recorder, $fetcher))(purchaseSettledEvent(), $gatewayId))
+    expect(new PurchaseSettledHandler($vcRepo, $recorder, $fetcher)(purchaseSettledEvent(), $gatewayId))
         ->toBe(HandlerOutcome::Processed);
 });
 

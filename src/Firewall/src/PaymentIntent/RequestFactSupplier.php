@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Firewall\PaymentIntent;
 
+use Override;
 use Techork\PaymentService\Common\Contract\FactSupplier;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\PaymentIntentFirewallRequest;
 
@@ -26,6 +27,7 @@ final readonly class RequestFactSupplier implements FactSupplier
 {
     public function __construct(private PaymentIntentFirewallRequest $request) {}
 
+    #[Override]
     public function facts(): array
     {
         $request = $this->request;

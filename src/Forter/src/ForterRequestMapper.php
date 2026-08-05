@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Techork\PaymentService\Forter;
 
 use Money\Currencies\ISOCurrencies;
+use InvalidArgumentException;
 use Money\Currency;
 use Money\Formatter\DecimalMoneyFormatter;
 use Money\Money;
@@ -104,6 +105,12 @@ final class ForterRequestMapper
 
     private function formatAmount(int $minorUnits, string $currencyCode): string
     {
+        // An amount in no currency is not an amount, and Money's Currency refuses the empty
+        // code anyway — but from inside its constructor, with nothing naming the caller.
+        if ($currencyCode === '') {
+            throw new InvalidArgumentException('A fraud-screening amount was given no currency code.');
+        }
+
         return $this->moneyFormatter->format(new Money($minorUnits, new Currency($currencyCode)));
     }
 }

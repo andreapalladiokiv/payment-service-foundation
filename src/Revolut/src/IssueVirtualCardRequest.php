@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Revolut;
 
+use DateMalformedStringException;
+use DateTimeImmutable;
 use GuzzleHttp\Exception\GuzzleException;
 use Money\Money;
 use Omnipay\Common\Message\AbstractRequest;
+use Override;
 use Ramsey\Uuid\Uuid;
 use Techork\PaymentService\Gateway\ValueObject\CardSpendCategory;
 use Techork\PaymentService\Revolut\Concern\MerchantCategoryMapper;
@@ -34,6 +37,7 @@ final class IssueVirtualCardRequest extends AbstractRequest
 
     private const string CARDS_PATH = '/api/1.0/cards';
 
+    #[Override]
     public function getData(): array
     {
         $this->validate('money');
@@ -80,6 +84,7 @@ final class IssueVirtualCardRequest extends AbstractRequest
         return $body;
     }
 
+    #[Override]
     public function sendData($data): IssueVirtualCardResponse
     {
         try {
@@ -140,6 +145,7 @@ final class IssueVirtualCardRequest extends AbstractRequest
 
     /**
      * @return array{end_date: string, end_date_action: string}|null
+     * @throws DateMalformedStringException
      */
     private function buildSpendingPeriod(): ?array
     {
@@ -149,7 +155,7 @@ final class IssueVirtualCardRequest extends AbstractRequest
         }
 
         return [
-            'end_date' => (new \DateTimeImmutable)->modify("+{$days} days")->format('Y-m-d'),
+            'end_date' => (new DateTimeImmutable)->modify("+{$days} days")->format('Y-m-d'),
             'end_date_action' => 'terminate',
         ];
     }

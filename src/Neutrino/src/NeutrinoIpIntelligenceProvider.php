@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Neutrino;
 
+use Override;
 use Techork\PaymentService\Common\ValueObject\Country;
 use Throwable;
 
@@ -17,10 +18,11 @@ use Throwable;
  * when credentials are wired; proxy/VPN signals may require the `ip-probe`
  * endpoint on some plans.
  */
-final class NeutrinoIpIntelligenceProvider implements IpIntelligenceProvider
+final readonly class NeutrinoIpIntelligenceProvider implements IpIntelligenceProvider
 {
-    public function __construct(private readonly NeutrinoHttpClientInterface $client) {}
+    public function __construct(private NeutrinoHttpClientInterface $client) {}
 
+    #[Override]
     public function lookupIp(string $ip): ?IpIntelligence
     {
         try {

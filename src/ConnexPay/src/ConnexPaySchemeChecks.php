@@ -33,7 +33,6 @@ final readonly class ConnexPaySchemeChecks
             'Z', 'P', 'W' => [CheckResult::Fail, CheckResult::Pass],
             'N', 'C' => [CheckResult::Fail, CheckResult::Fail],
             'U', 'G', 'I', 'R', 'S' => [CheckResult::Unavailable, CheckResult::Unavailable],
-            'E', '0' => [CheckResult::Unchecked, CheckResult::Unchecked],
             default => [CheckResult::Unchecked, CheckResult::Unchecked],
         };
     }
@@ -47,7 +46,6 @@ final readonly class ConnexPaySchemeChecks
         return match (strtoupper($letter)) {
             'M' => CheckResult::Pass,
             'N', 'S' => CheckResult::Fail,
-            'P' => CheckResult::Unchecked,
             'U', 'X' => CheckResult::Unavailable,
             default => CheckResult::Unchecked,
         };

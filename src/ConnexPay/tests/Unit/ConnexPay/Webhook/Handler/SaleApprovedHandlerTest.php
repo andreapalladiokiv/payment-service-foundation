@@ -75,7 +75,7 @@ it('forwards the fetched fee to FeeRecorder when present', function () {
     $recorder = Mockery::mock(GatewayFeeRecorder::class);
     $recorder->shouldReceive('onPaymentIntentFee')
         ->once()
-        ->withArgs(function (GatewayId $gid, string $pi, Money $f, DateTimeImmutable $observedAt) use ($gatewayId, $piId, $fee) {
+        ->withArgs(function (GatewayId $gid, string $pi, Money $f) use ($gatewayId, $piId, $fee) {
             return $gid->equals($gatewayId) && $pi === $piId && $f === $fee;
         })
         ->andReturn(RecorderOutcome::Applied);

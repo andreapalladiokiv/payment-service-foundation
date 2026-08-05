@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Domain\Checkout\Event;
 
+use DateTimeImmutable;
 use EventSauce\EventSourcing\Serialization\SerializablePayload;
 use Money\Currency;
 use Money\Money;
+use Override;
 use Techork\PaymentService\Domain\Subscription\ValueObject\SubscriptionPlan;
 
 final readonly class CheckoutCreated implements SerializablePayload
@@ -15,14 +17,15 @@ final readonly class CheckoutCreated implements SerializablePayload
      * @param  array<string, mixed>  $metadata
      */
     public function __construct(
-        public Money $amount,
-        public ?string $description,
-        public ?string $callbackUrl,
-        public ?\DateTimeImmutable $expiresAt = null,
-        public array $metadata = [],
-        public ?SubscriptionPlan $plan = null,
+        public Money              $amount,
+        public ?string            $description,
+        public ?string            $callbackUrl,
+        public ?DateTimeImmutable $expiresAt = null,
+        public array              $metadata = [],
+        public ?SubscriptionPlan  $plan = null,
     ) {}
 
+    #[Override]
     public function toPayload(): array
     {
         return [
@@ -36,13 +39,14 @@ final readonly class CheckoutCreated implements SerializablePayload
         ];
     }
 
+    #[Override]
     public static function fromPayload(array $payload): static
     {
         return new self(
             new Money($payload['amount'], new Currency($payload['currency'])),
             $payload['description'],
             $payload['callback_url'] ?? null,
-            isset($payload['expires_at']) ? new \DateTimeImmutable($payload['expires_at']) : null,
+            isset($payload['expires_at']) ? new DateTimeImmutable($payload['expires_at']) : null,
             $payload['metadata'] ?? [],
             isset($payload['plan']) ? SubscriptionPlan::fromArray($payload['plan']) : null,
         );

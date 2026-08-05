@@ -2,8 +2,10 @@
 
 declare(strict_types=1);
 
+use Techork\PaymentService\Common\Contract\ChallengeResult;
 use Techork\PaymentService\Common\ValueObject\MerchantDescriptor;
 use Techork\PaymentService\Common\ValueObject\ConnectionContext;
+use Techork\PaymentService\Domain\Subscription\Event\SubscriptionCancelled;
 use Techork\PaymentService\Tests\Support\StubPaymentIntentFirewall;
 use Techork\PaymentService\Domain\Checkout\CheckoutAggregate;
 use Techork\PaymentService\Domain\Checkout\Command\CreateCheckoutCommand;
@@ -28,10 +30,8 @@ use Techork\PaymentService\Domain\PaymentIntent\CaptureMethod;
 use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
 use Techork\PaymentService\Domain\PaymentIntent\Command\CapturePaymentIntentCommand;
 use Techork\PaymentService\Domain\PaymentIntent\Command\CreatePaymentIntentCommand;
-use Techork\PaymentService\Domain\PaymentIntent\Exception\PaymentIntentCannotBeCaptured;
 use Techork\PaymentService\Domain\PaymentIntent\PaymentIntentStatus;
 use Techork\PaymentService\Domain\PaymentIntent\PaymentIntentAggregate;
-use Techork\PaymentService\Common\Contract\Challenge;
 use Techork\PaymentService\Domain\PaymentIntent\Port\CreateOutcome;
 use Techork\PaymentService\Domain\PaymentIntent\Port\CreatePort;
 use Techork\PaymentService\Domain\PaymentIntent\Port\CapturePort;
@@ -204,7 +204,7 @@ function makeAuthorizedPiAggregate(): PaymentIntentAggregate
         public function merchantDescriptor(): MerchantDescriptor { return new MerchantDescriptor('CHECKOUT TEST'); }
         public function description(): string { return ''; }
         public function metadata(): array { return []; }
-        public function challengeResult(): ?\Techork\PaymentService\Common\Contract\ChallengeResult { return null; }
+        public function challengeResult(): ?ChallengeResult { return null; }
         public function initiation(): PaymentInitiation { return PaymentInitiation::CardholderInitiated; }
         public function connection(): ?ConnectionContext { return null; }
         public function gatewayId(): ?string { return null; }
@@ -383,7 +383,7 @@ it('throws CheckoutNotPayable when payment intent amount does not match checkout
         public function merchantDescriptor(): MerchantDescriptor { return new MerchantDescriptor('CHECKOUT TEST'); }
         public function description(): string { return ''; }
         public function metadata(): array { return []; }
-        public function challengeResult(): ?\Techork\PaymentService\Common\Contract\ChallengeResult { return null; }
+        public function challengeResult(): ?ChallengeResult { return null; }
         public function initiation(): PaymentInitiation { return PaymentInitiation::CardholderInitiated; }
         public function connection(): ?ConnectionContext { return null; }
         public function gatewayId(): ?string { return null; }
@@ -422,7 +422,7 @@ it('throws CheckoutNotPayable when the payment intent was already charged inline
         public function merchantDescriptor(): MerchantDescriptor { return new MerchantDescriptor('CHECKOUT TEST'); }
         public function description(): string { return ''; }
         public function metadata(): array { return []; }
-        public function challengeResult(): ?\Techork\PaymentService\Common\Contract\ChallengeResult { return null; }
+        public function challengeResult(): ?ChallengeResult { return null; }
         public function initiation(): PaymentInitiation { return PaymentInitiation::CardholderInitiated; }
         public function connection(): ?ConnectionContext { return null; }
         public function gatewayId(): ?string { return null; }
@@ -698,7 +698,7 @@ it('throws CheckoutNotPayable when subscription is cancelled', function () {
     $plan = makeCheckoutPlan();
     $subscription = makeChargedSubscription($plan);
     (fn () => $this->apply(
-        new \Techork\PaymentService\Domain\Subscription\Event\SubscriptionCancelled('user_request'),
+        new SubscriptionCancelled('user_request'),
     ))->call($subscription);
 
     given(new CheckoutCreated(makeCheckoutAmount(), null, null, null, [], $plan));
@@ -802,7 +802,7 @@ it('lets a failed capture propagate and records nothing', function () {
     try {
         $aggregate->pay(
             makePayCheckoutCommand($id, $paymentIntent),
-            makeFailingCheckoutCapturePort('Connection to gateway lost'),
+            makeFailingCheckoutCapturePort(),
         );
         $this->fail('the capture failure should have propagated');
     } catch (RuntimeException $e) {

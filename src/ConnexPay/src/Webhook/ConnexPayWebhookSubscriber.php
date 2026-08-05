@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\ConnexPay\Webhook;
 
+use Override;
 use Techork\PaymentService\ConnexPay\Webhook\Handler\PurchaseSettledHandler;
 use Techork\PaymentService\ConnexPay\Webhook\Handler\SaleApprovedHandler;
 use Techork\PaymentService\ConnexPay\Webhook\Handler\SaleDeclinedHandler;
@@ -25,6 +26,7 @@ final readonly class ConnexPayWebhookSubscriber implements WebhookSubscriber
         private PurchaseSettledHandler $purchaseSettled,
     ) {}
 
+    #[Override]
     public function subscribe(VerifierRegistry $verifiers, HandlerRegistry $handlers): void
     {
         $verifiers->register(self::KIND, $this->verifier, $this->parser);

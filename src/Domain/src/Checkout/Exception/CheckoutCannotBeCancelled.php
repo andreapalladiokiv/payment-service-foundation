@@ -4,9 +4,10 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Domain\Checkout\Exception;
 
+use DomainException;
 use Techork\PaymentService\Domain\Checkout\CheckoutStatus;
 
-final class CheckoutCannotBeCancelled extends \DomainException
+final class CheckoutCannotBeCancelled extends DomainException
 {
     public static function withStatus(CheckoutStatus $status): self
     {

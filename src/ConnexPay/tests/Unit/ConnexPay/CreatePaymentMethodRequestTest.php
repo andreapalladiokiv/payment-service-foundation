@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Omnipay\Common\Http\PsrClient as OmnipayClient;
 use Symfony\Component\HttpFoundation\Request as HttpRequest;
 use Techork\PaymentService\Common\Contract\DecryptInterface;
+use Techork\PaymentService\Common\Contract\EncryptInterface;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
 use Techork\PaymentService\Common\ValueObject\CardBrand;
 use Techork\PaymentService\Common\ValueObject\Cash;
@@ -113,7 +114,7 @@ it('builds a verify payload from a raw credit card', function () {
     $decrypter->shouldReceive('decrypt')->andReturnUsing(fn (string $d): string => $d);
 
     $card = new CreditCard(
-        Number::fromNumber('4012000098765439', new class implements \Techork\PaymentService\Common\Contract\EncryptInterface {
+        Number::fromNumber('4012000098765439', new class implements EncryptInterface {
             public function encrypt(string $d): string { return $d; }
         }),
         Expiration::fromMonthAndYear(12, 2030),

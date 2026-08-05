@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\ConnexPay\Webhook;
 
+use Override;
 use Psr\Http\Message\ServerRequestInterface;
 use Techork\PaymentService\Gateway\Contract\GatewayCredential;
 use Techork\PaymentService\Gateway\Webhook\Contract\SignatureVerifier as SignatureVerifierContract;
@@ -24,11 +25,12 @@ use Techork\PaymentService\Gateway\Webhook\Contract\SignatureVerifier as Signatu
  */
 final readonly class SignatureVerifier implements SignatureVerifierContract
 {
+    #[Override]
     public function verify(ServerRequestInterface $request, GatewayCredential $gateway): bool
     {
         $credentials = $gateway->getCredentials();
-        $expectedUsername = (string) ($credentials['username'] ?? '');
-        $expectedPassword = (string) ($credentials['password'] ?? '');
+        $expectedUsername = $credentials['username'] ?? '';
+        $expectedPassword = $credentials['password'] ?? '';
 
         if ($expectedUsername === '' || $expectedPassword === '') {
             return false;
@@ -40,11 +42,19 @@ final readonly class SignatureVerifier implements SignatureVerifierContract
         }
 
         $decoded = base64_decode(substr($authHeader, 6), true);
-        if ($decoded === false || ! str_contains($decoded, ':')) {
+        if ($decoded === false) {
             return false;
         }
 
-        [$username, $password] = explode(':', $decoded, 2);
+        // The split is the check: without a colon there is one part, which is not a
+        // credential pair. Replaces a str_contains() that asserted the same thing twice
+        // over while leaving the destructuring unproven.
+        $parts = explode(':', $decoded, 2);
+        if (count($parts) !== 2) {
+            return false;
+        }
+
+        [$username, $password] = $parts;
 
         // Constant-time comparison on both fields to avoid timing leaks
         // on either component.

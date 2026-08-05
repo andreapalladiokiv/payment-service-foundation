@@ -44,7 +44,7 @@ function makeForterScreeningRequest(int $amountMinorUnits = 12345, string $curre
  */
 function fakeForterClient(array $response = [], ?Throwable $throws = null): ForterHttpClientInterface
 {
-    return new class($response, $throws) implements ForterHttpClientInterface
+    return new readonly class($response, $throws) implements ForterHttpClientInterface
     {
         /** @param array<string, mixed> $response */
         public function __construct(private array $response, private ?Throwable $throws) {}

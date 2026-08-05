@@ -32,7 +32,7 @@ it('maps the PCI-safe card, billing and connection onto the Forter payload', fun
 });
 
 it('formats the amount as a decimal string under amountUSD', function () {
-    $payload = (new ForterRequestMapper)->toOrderPayload(makeForterScreeningRequest(amountMinorUnits: 12345));
+    $payload = (new ForterRequestMapper)->toOrderPayload(makeForterScreeningRequest());
 
     expect($payload['totalAmount'])->toBe(['amountUSD' => '123.45'])
         ->and($payload['payment'][0]['amount'])->toBe(['amountUSD' => '123.45']);

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Common\ValueObject\ThreeDS;
 
+use Override;
 use Techork\PaymentService\Common\Contract\ChallengeResult;
 use Techork\PaymentService\Common\Contract\ChallengeResultVisitor;
 
@@ -24,6 +25,7 @@ final readonly class ThreeDSResult implements ChallengeResult
         public ?ThreeDSVersion $version = null,
     ) {}
 
+    #[Override]
     public function accept(ChallengeResultVisitor $visitor): mixed
     {
         return $visitor->visitThreeDS($this);

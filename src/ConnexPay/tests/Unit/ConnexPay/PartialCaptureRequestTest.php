@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use GuzzleHttp\Exception\TransferException;
 use Money\Currency;
 use Money\Money;
 use Omnipay\Common\Http\PsrClient as OmnipayClient;
@@ -139,7 +140,7 @@ it('does not run the sale when the void fails', function () {
     $client->shouldReceive('post')
         ->once()
         ->with('/api/v1/void', Mockery::any())
-        ->andThrow(new \GuzzleHttp\Exception\TransferException('void exploded'));
+        ->andThrow(new TransferException('void exploded'));
 
     $request = new PartialCaptureRequest(new OmnipayClient, new HttpRequest);
     $request->initialize([

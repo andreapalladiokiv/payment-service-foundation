@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Firewall\PaymentIntent;
 
+use Override;
 use Psr\Log\LoggerInterface;
 use Techork\PaymentService\Domain\PaymentIntent\Port\FirewallDecision;
 use Techork\PaymentService\Domain\PaymentIntent\Port\PaymentIntentFirewallPort;
@@ -43,6 +44,7 @@ final readonly class PaymentIntentFirewall implements PaymentIntentFirewallPort
         private string $chainName = self::CHAIN,
     ) {}
 
+    #[Override]
     public function evaluate(PaymentIntentFirewallRequest $request): FirewallDecision
     {
         $facts = new FactCollector(

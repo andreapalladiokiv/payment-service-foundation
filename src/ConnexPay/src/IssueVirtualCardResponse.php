@@ -4,21 +4,25 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\ConnexPay;
 
+use Override;
 use Techork\PaymentService\Gateway\Contract\VirtualCardResponseInterface;
 use Techork\PaymentService\Gateway\Contract\VirtualCardResult;
 
 final class IssueVirtualCardResponse extends ConnexPayResponse implements VirtualCardResponseInterface
 {
+    #[Override]
     public function isSuccessful(): bool
     {
         return ! empty($this->data['card']['cardGuid']);
     }
 
+    #[Override]
     public function getTransactionReference(): ?string
     {
         return $this->data['card']['cardGuid'] ?? null;
     }
 
+    #[Override]
     public function getMessage(): ?string
     {
         return $this->data['message']
@@ -27,6 +31,7 @@ final class IssueVirtualCardResponse extends ConnexPayResponse implements Virtua
             ?? null;
     }
 
+    #[Override]
     public function toVirtualCardResult(): VirtualCardResult
     {
         if (! $this->isSuccessful()) {

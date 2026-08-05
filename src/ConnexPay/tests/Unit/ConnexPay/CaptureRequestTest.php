@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use Money\Currency;
+use Money\Money;
 use Omnipay\Common\Http\PsrClient as OmnipayClient;
 use Symfony\Component\HttpFoundation\Request as HttpRequest;
 use Techork\PaymentService\ConnexPay\CaptureRequest;
@@ -9,7 +11,7 @@ use Techork\PaymentService\ConnexPay\CaptureRequest;
 it('builds capture data with DeviceGuid and AuthOnlyGuid', function () {
     $request = new CaptureRequest(new OmnipayClient, new HttpRequest);
     $request->initialize([
-        'money' => new \Money\Money(5000, new \Money\Currency('USD')),
+        'money' => new Money(5000, new Currency('USD')),
         'transactionReference' => 'auth-guid-abc',
         'deviceGuid' => 'device-123',
     ]);

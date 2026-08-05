@@ -29,12 +29,12 @@ function firewallWith(array $rules): ChainEvaluator
         }
     };
 
-    $source = new class($rules) implements FirewallRuleSource
+    $source = new readonly class($rules) implements FirewallRuleSource
     {
         /**
          * @param  array<int, FirewallRule>  $rules
          */
-        public function __construct(private readonly array $rules) {}
+        public function __construct(private array $rules) {}
 
         public function rulesFor(string $chain): iterable
         {
@@ -146,7 +146,7 @@ it('logs which rule was skipped and why', function () {
         }
     };
 
-    (new ChainEvaluator($source, new RuleEvaluator(new RuleCompiler($schema), $schema), $logger))
+    new ChainEvaluator($source, new RuleEvaluator(new RuleCompiler($schema), $schema), $logger)
         ->evaluate('authorization', ['card' => []]);
 
     expect($logged)->toHaveCount(1)

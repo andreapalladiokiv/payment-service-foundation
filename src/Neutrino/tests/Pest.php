@@ -12,7 +12,7 @@ use Techork\PaymentService\Neutrino\NeutrinoHttpClientInterface;
  */
 function fakeNeutrinoClient(array $responses = [], ?Throwable $throws = null): NeutrinoHttpClientInterface
 {
-    return new class($responses, $throws) implements NeutrinoHttpClientInterface
+    return new readonly class($responses, $throws) implements NeutrinoHttpClientInterface
     {
         /** @param array<string, array<string, mixed>> $responses */
         public function __construct(private array $responses, private ?Throwable $throws) {}

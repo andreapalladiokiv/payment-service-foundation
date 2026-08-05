@@ -6,8 +6,7 @@ namespace Techork\PaymentService\ConnexPay\Webhook\Handler;
 
 use ArrayObject;
 use DateTimeImmutable;
-use Money\Currency;
-use Money\Money;
+use Override;
 use Techork\PaymentService\ConnexPay\Webhook\ServiceFeeFetcher;
 use Techork\PaymentService\ConnexPay\Webhook\SaleCorrelation;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
@@ -41,6 +40,7 @@ final readonly class SaleApprovedHandler implements WebhookEventHandler
         private ServiceFeeFetcher $feeFetcher,
     ) {}
 
+    #[Override]
     public function __invoke(object $event, GatewayId $gatewayId): HandlerOutcome
     {
         /** @var ArrayObject $event */

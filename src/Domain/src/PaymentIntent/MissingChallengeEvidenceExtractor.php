@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Domain\PaymentIntent;
 
+use Override;
 use Techork\PaymentService\Common\Contract\ChallengeResultVisitor;
 use Techork\PaymentService\Common\ValueObject\Challenge\RedirectResult;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSResult;
@@ -35,6 +36,7 @@ use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSStatus;
  */
 final class MissingChallengeEvidenceExtractor implements ChallengeResultVisitor
 {
+    #[Override]
     public function visitThreeDS(ThreeDSResult $result): ?string
     {
         $claimsSuccess = in_array($result->status, [
@@ -54,6 +56,7 @@ final class MissingChallengeEvidenceExtractor implements ChallengeResultVisitor
             : null;
     }
 
+    #[Override]
     public function visitRedirect(RedirectResult $result): ?string
     {
         // Its evidence is the transaction it names, and the type already requires a

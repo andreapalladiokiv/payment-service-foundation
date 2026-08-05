@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Forter;
 
+use Override;
 use Techork\PaymentService\Common\Contract\FactSupplier;
+use Throwable;
 
 /**
  * Exposes a Forter screening verdict as firewall facts under the `screening`
@@ -36,6 +38,7 @@ final class ForterFactSupplier implements FactSupplier
         private readonly FraudScreeningRequest $request,
     ) {}
 
+    #[Override]
     public function facts(): array
     {
         $verdict = $this->screen();
@@ -72,7 +75,7 @@ final class ForterFactSupplier implements FactSupplier
 
         try {
             $this->verdict = $this->screening->screen($this->request);
-        } catch (\Throwable) {
+        } catch (Throwable) {
             // Provider unavailability is a missing signal, not a failed
             // assessment — the contract says a verdict, never an exception.
             $this->verdict = null;

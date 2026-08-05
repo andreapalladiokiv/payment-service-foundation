@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Firewall\PaymentIntent;
 
+use Override;
 use Techork\PaymentService\Firewall\Dsl\FactSchema;
 use Techork\PaymentService\Firewall\Dsl\FieldType;
 
@@ -31,11 +32,13 @@ use Techork\PaymentService\Firewall\Dsl\FieldType;
  */
 final readonly class PaymentIntentFactSchema implements FactSchema
 {
+    #[Override]
     public function roots(): array
     {
         return ['payment_method', 'payment_intent', 'screening'];
     }
 
+    #[Override]
     public function typeOf(string $path): FieldType
     {
         return self::paths()[$path] ?? FieldType::Mixed;

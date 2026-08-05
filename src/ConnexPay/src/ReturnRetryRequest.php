@@ -7,6 +7,7 @@ namespace Techork\PaymentService\ConnexPay;
 use GuzzleHttp\Exception\GuzzleException;
 use Money\Money;
 use Omnipay\Common\Message\AbstractRequest;
+use Override;
 use RuntimeException;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\Contract\PaymentInstrumentVisitor;
@@ -30,12 +31,15 @@ use Techork\PaymentService\Gateway\Contract\GatewayCredential;
  *
  * Expects: money, transactionReference (SaleGuid), instrument (the
  * alternative card / token / stored payment method).
+ *
+ * @implements PaymentInstrumentVisitor<array>
  */
 final class ReturnRetryRequest extends AbstractRequest implements PaymentInstrumentVisitor
 {
     use ConnexPayRequestParameters;
     use InstrumentParameters;
 
+    #[Override]
     public function getData(): array
     {
         $this->validate('money', 'transactionReference', 'instrument');
@@ -54,6 +58,7 @@ final class ReturnRetryRequest extends AbstractRequest implements PaymentInstrum
         ]);
     }
 
+    #[Override]
     public function visitCreditCard(CreditCard $card): array
     {
         $decrypter = $this->getDecrypter();
@@ -79,6 +84,7 @@ final class ReturnRetryRequest extends AbstractRequest implements PaymentInstrum
         return $data;
     }
 
+    #[Override]
     public function visitToken(Token $token): array
     {
         /** @var GatewayCredential $gateway */
@@ -90,6 +96,7 @@ final class ReturnRetryRequest extends AbstractRequest implements PaymentInstrum
         return ['Guid' => $reference];
     }
 
+    #[Override]
     public function visitPaymentMethod(PaymentMethod $paymentMethod): array
     {
         /** @var GatewayCredential $gateway */
@@ -101,16 +108,19 @@ final class ReturnRetryRequest extends AbstractRequest implements PaymentInstrum
         return ['Guid' => $reference];
     }
 
+    #[Override]
     public function visitCash(Cash $cash): never
     {
         throw new RuntimeException('Cash is not a valid retry refund instrument.');
     }
 
+    #[Override]
     public function visitHostedPayment(HostedPayment $hosted): never
     {
         throw new RuntimeException('HostedPayment is not a valid retry refund instrument.');
     }
 
+    #[Override]
     public function sendData($data): RefundResponse
     {
         try {

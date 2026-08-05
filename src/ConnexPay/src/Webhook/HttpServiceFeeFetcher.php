@@ -7,6 +7,7 @@ namespace Techork\PaymentService\ConnexPay\Webhook;
 use GuzzleHttp\Exception\GuzzleException;
 use Money\Currency;
 use Money\Money;
+use Override;
 use Psr\Log\LoggerInterface;
 use Techork\PaymentService\ConnexPay\ConnexPayClient;
 use Techork\PaymentService\ConnexPay\ConnexPayPurchasesClient;
@@ -37,20 +38,21 @@ final readonly class HttpServiceFeeFetcher implements ServiceFeeFetcher
         private LoggerInterface $logger,
     ) {}
 
+    #[Override]
     public function fetchSaleFee(GatewayId $gatewayId, string $saleGuid): ?Money
     {
         $credential = $this->credentialRepository->findOrFail($gatewayId);
         $credentials = $credential->getCredentials();
 
         $client = new ConnexPayClient(
-            username: (string) ($credentials['username'] ?? ''),
-            password: (string) ($credentials['password'] ?? ''),
-            environment: (string) ($credentials['environment'] ?? 'sandbox'),
+            username: $credentials['username'] ?? '',
+            password: $credentials['password'] ?? '',
+            environment: $credentials['environment'] ?? 'sandbox',
         );
 
         try {
             $response = $client->post('/api/v1/Search/Sales/false/1/1', [
-                'MerchantGuid' => (string) ($credentials['merchant_guid'] ?? ''),
+                'MerchantGuid' => $credentials['merchant_guid'] ?? '',
                 'SaleGuid' => $saleGuid,
             ]);
         } catch (GuzzleException $e) {
@@ -71,15 +73,16 @@ final readonly class HttpServiceFeeFetcher implements ServiceFeeFetcher
         return $this->extractFee($row, 'sale', $saleGuid, $gatewayId);
     }
 
+    #[Override]
     public function fetchPurchaseFee(GatewayId $gatewayId, string $cardGuid): ?Money
     {
         $credential = $this->credentialRepository->findOrFail($gatewayId);
         $credentials = $credential->getCredentials();
 
         $client = new ConnexPayPurchasesClient(
-            username: (string) ($credentials['username'] ?? ''),
-            password: (string) ($credentials['password'] ?? ''),
-            environment: (string) ($credentials['environment'] ?? 'sandbox'),
+            username: $credentials['username'] ?? '',
+            password: $credentials['password'] ?? '',
+            environment: $credentials['environment'] ?? 'sandbox',
         );
 
         try {
@@ -87,7 +90,7 @@ final readonly class HttpServiceFeeFetcher implements ServiceFeeFetcher
             // the Purchases API. Confirm against sandbox if/when the
             // first real settlement webhook fires.
             $response = $client->post('/api/v1/Search/Purchases/false/1/1', [
-                'MerchantGuid' => (string) ($credentials['merchant_guid'] ?? ''),
+                'MerchantGuid' => $credentials['merchant_guid'] ?? '',
                 'CardGuid' => $cardGuid,
             ]);
         } catch (GuzzleException $e) {
@@ -133,13 +136,19 @@ final readonly class HttpServiceFeeFetcher implements ServiceFeeFetcher
 
         // ConnexPay Sales API quotes amounts in major-currency units
         // (decimal), matching how IssueVirtualCard etc. send them.
-        $cents = (int) round((float) $rawAmount * 100);
+        $cents = (int) round((float) $rawAmount * 100.0);
         if ($cents <= 0) {
             return null;
         }
 
-        $currencyCode = (string) ($row['currency'] ?? $row['Currency'] ?? 'USD');
+        $currencyCode = strtoupper((string) ($row['currency'] ?? $row['Currency'] ?? 'USD'));
 
-        return new Money($cents, new Currency(strtoupper($currencyCode)));
+        // A fee quoted in no currency is not a fee. Falling back to the 'USD' default above
+        // only covers an absent key, not a present-but-empty one.
+        if ($currencyCode === '') {
+            return null;
+        }
+
+        return new Money($cents, new Currency($currencyCode));
     }
 }

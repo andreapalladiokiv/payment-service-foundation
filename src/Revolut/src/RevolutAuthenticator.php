@@ -6,6 +6,7 @@ namespace Techork\PaymentService\Revolut;
 
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
+use JsonException;
 use RuntimeException;
 
 /**
@@ -161,7 +162,9 @@ final class RevolutAuthenticator
     }
 
     /**
-     * @param  array<string, mixed>  $value
+     * @param array<string, mixed> $value
+     * @return string
+     * @throws JsonException
      */
     private function jsonEncode(array $value): string
     {

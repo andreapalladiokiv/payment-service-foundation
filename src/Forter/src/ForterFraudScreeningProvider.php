@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Forter;
 
+use Override;
 use Throwable;
 
 /**
@@ -27,6 +28,7 @@ final class ForterFraudScreeningProvider implements FraudScreeningProvider
         $this->mapper = $mapper ?? new ForterRequestMapper;
     }
 
+    #[Override]
     public function screen(FraudScreeningRequest $request): FraudVerdict
     {
         try {

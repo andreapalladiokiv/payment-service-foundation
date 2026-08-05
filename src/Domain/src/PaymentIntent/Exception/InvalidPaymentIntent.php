@@ -4,9 +4,10 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Domain\PaymentIntent\Exception;
 
+use DomainException;
 use EventSauce\EventSourcing\AggregateRootId;
 
-final class InvalidPaymentIntent extends \DomainException
+final class InvalidPaymentIntent extends DomainException
 {
     public static function nonPositiveAmount(): self
     {

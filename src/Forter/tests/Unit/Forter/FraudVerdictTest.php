@@ -14,13 +14,13 @@ it('exposes the four fraud decisions with expected string values', function () {
 });
 
 it('reports approved and declined verdicts', function () {
-    expect((new FraudVerdict(FraudDecision::Approve))->isApproved())->toBeTrue()
-        ->and((new FraudVerdict(FraudDecision::Approve))->isDeclined())->toBeFalse()
-        ->and((new FraudVerdict(FraudDecision::Decline, 'CC_BLOCKED'))->isDeclined())->toBeTrue();
+    expect(new FraudVerdict(FraudDecision::Approve)->isApproved())->toBeTrue()
+        ->and(new FraudVerdict(FraudDecision::Approve)->isDeclined())->toBeFalse()
+        ->and(new FraudVerdict(FraudDecision::Decline, 'CC_BLOCKED')->isDeclined())->toBeTrue();
 });
 
 it('treats not-reviewed and errored as inconclusive but approve/decline as conclusive', function (FraudDecision $decision, bool $inconclusive) {
-    expect((new FraudVerdict($decision))->isInconclusive())->toBe($inconclusive);
+    expect(new FraudVerdict($decision)->isInconclusive())->toBe($inconclusive);
 })->with([
     [FraudDecision::Approve, false],
     [FraudDecision::Decline, false],

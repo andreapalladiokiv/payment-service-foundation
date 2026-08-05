@@ -21,7 +21,12 @@ trait RevolutRequestParameters
         return $this->setParameter('revolutClient', $value);
     }
 
-    public function setMoney(Money $value): self
+    /**
+     * `static`, not `self`: this overrides {@see \Omnipay\Common\Message\AbstractRequest::setMoney},
+     * which is annotated `@return $this`. Naming the using class instead would promise a
+     * fixed type where the parent promises the called one.
+     */
+    public function setMoney(Money $value): static
     {
         return $this->setParameter('money', $value);
     }
@@ -164,7 +169,7 @@ trait RevolutRequestParameters
     {
         $value = $this->getParameter('fetchSensitiveDetails');
 
-        return $value === null ? true : (bool) $value;
+        return $value === null || $value;
     }
 
     /**
@@ -174,7 +179,7 @@ trait RevolutRequestParameters
      */
     protected function formatMoney(Money $money): string
     {
-        return (new DecimalMoneyFormatter(new ISOCurrencies))->format($money);
+        return new DecimalMoneyFormatter(new ISOCurrencies)->format($money);
     }
 
     /**

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Techork\PaymentService\Common\ValueObject;
 
 use InvalidArgumentException;
+use Override;
 use Stringable;
 
 /**
@@ -25,6 +26,7 @@ final readonly class IpAddress implements Stringable
         return $this->value;
     }
 
+    #[Override]
     public function __toString(): string
     {
         return $this->value;

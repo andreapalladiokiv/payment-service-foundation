@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Common\ValueObject\CreditCard;
 
+use Override;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\Contract\PaymentInstrumentVisitor;
 use Techork\PaymentService\Common\ValueObject\Cash;
@@ -26,6 +27,7 @@ final class CardSummaryExtractor implements PaymentInstrumentVisitor
         return $instrument->accept(new self);
     }
 
+    #[Override]
     public function visitCreditCard(CreditCard $card): ?CardSummary
     {
         return new CardSummary(
@@ -37,21 +39,25 @@ final class CardSummaryExtractor implements PaymentInstrumentVisitor
         );
     }
 
+    #[Override]
     public function visitToken(Token $token): ?CardSummary
     {
         return $token->instrument->accept($this);
     }
 
+    #[Override]
     public function visitPaymentMethod(PaymentMethod $paymentMethod): ?CardSummary
     {
         return $paymentMethod->instrument->accept($this);
     }
 
+    #[Override]
     public function visitCash(Cash $cash): ?CardSummary
     {
         return null;
     }
 
+    #[Override]
     public function visitHostedPayment(HostedPayment $hosted): ?CardSummary
     {
         return null;

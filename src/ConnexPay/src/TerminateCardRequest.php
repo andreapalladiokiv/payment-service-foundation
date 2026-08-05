@@ -6,6 +6,7 @@ namespace Techork\PaymentService\ConnexPay;
 
 use GuzzleHttp\Exception\GuzzleException;
 use Omnipay\Common\Message\AbstractRequest;
+use Override;
 use Techork\PaymentService\ConnexPay\Concern\ConnexPayRequestParameters;
 
 /**
@@ -18,6 +19,7 @@ final class TerminateCardRequest extends AbstractRequest
 {
     use ConnexPayRequestParameters;
 
+    #[Override]
     public function getData(): array
     {
         $this->validate('transactionReference');
@@ -25,6 +27,7 @@ final class TerminateCardRequest extends AbstractRequest
         return [];
     }
 
+    #[Override]
     public function sendData($data): TerminateCardResponse
     {
         $cardGuid = $this->getParameter('transactionReference');
@@ -35,7 +38,7 @@ final class TerminateCardRequest extends AbstractRequest
             return new TerminateCardResponse($this, [
                 'terminated' => true,
                 'cardGuid' => $cardGuid,
-                ...($response ?? []),
+                ...$response,
             ]);
         } catch (GuzzleException $e) {
             return new TerminateCardResponse($this, [

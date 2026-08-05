@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Domain\PaymentIntent;
 
+use Override;
 use Techork\PaymentService\Common\Contract\ChallengeResultVisitor;
 use Techork\PaymentService\Common\ValueObject\Challenge\RedirectResult;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSResult;
@@ -28,6 +29,7 @@ use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSStatus;
  */
 final class ChallengeFailureReasonExtractor implements ChallengeResultVisitor
 {
+    #[Override]
     public function visitThreeDS(ThreeDSResult $result): ?string
     {
         return in_array($result->status, [
@@ -39,6 +41,7 @@ final class ChallengeFailureReasonExtractor implements ChallengeResultVisitor
             : "3DS authentication: {$result->status->value}";
     }
 
+    #[Override]
     public function visitRedirect(RedirectResult $result): ?string
     {
         return null;

@@ -168,7 +168,7 @@ function connexpayProbeWithoutVolatile(array $response): array
     $clean = [];
 
     foreach ($response as $key => $value) {
-        if (in_array((string) $key, CONNEXPAY_PROBE_VOLATILE, true)) {
+        if (in_array($key, CONNEXPAY_PROBE_VOLATILE, true)) {
             continue;
         }
 
@@ -187,7 +187,7 @@ function connexpayProbeShape(array $response): array
     $shape = [];
 
     foreach ($response as $key => $value) {
-        if (in_array((string) $key, CONNEXPAY_PROBE_VOLATILE, true)) {
+        if (in_array($key, CONNEXPAY_PROBE_VOLATILE, true)) {
             $shape[$key] = '(volatile)';
 
             continue;
@@ -262,8 +262,8 @@ function connexpayProbeSend(int $case, array $extra = [], array $nested = []): a
 
     return [
         'outcome' => $processed ? 'ACCEPTED' : 'ACCEPTED-NOT-PROCESSED',
-        'detail' => (string) ($response['status'] ?? '(no status)')
-            .' | '.(string) ($response['processorResponseMessage'] ?? '(no processor message)')
+        'detail' => ($response['status'] ?? '(no status)')
+            .' | '. ($response['processorResponseMessage'] ?? '(no processor message)')
             .' | amount='.json_encode($response['amount'] ?? null)
             .($echoed === [] ? ' | no currency echoed' : ' | ECHOED '.implode(',', $echoed)),
         'guid' => isset($response['guid']) ? (string) $response['guid'] : null,
@@ -323,8 +323,8 @@ function connexpayProbeVoid(?string $guid): string
             'AuthOnlyGuid' => $guid,
         ]);
 
-        return 'voided: '.(string) ($response['status'] ?? '(no status)');
-    } catch (Throwable $e) {
+        return 'voided: '. ($response['status'] ?? '(no status)');
+    } catch (Throwable) {
         // Sandbox auths are processed asynchronously; an immediate void can lose
         // the race. One retry, then report loudly so the hold can be voided by
         // hand in the CXP portal (search the CCYPROBE-* OrderNumber).
@@ -336,7 +336,7 @@ function connexpayProbeVoid(?string $guid): string
                 'AuthOnlyGuid' => $guid,
             ]);
 
-            return 'voided on retry: '.(string) ($response['status'] ?? '(no status)');
+            return 'voided on retry: '. ($response['status'] ?? '(no status)');
         } catch (Throwable $retry) {
             return '!! NOT VOIDED — void by hand in the CXP portal: '.$retry->getMessage();
         }

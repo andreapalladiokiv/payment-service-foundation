@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Techork\PaymentService\Revolut;
 
 use Omnipay\Common\Message\AbstractResponse;
+use Override;
 use Techork\PaymentService\Gateway\Contract\VirtualCardResponseInterface;
 use Techork\PaymentService\Gateway\Contract\VirtualCardResult;
 use Techork\PaymentService\Revolut\Concern\RevolutExpiry;
@@ -16,21 +17,25 @@ use Techork\PaymentService\Revolut\Concern\RevolutExpiry;
  */
 final class UpdateVirtualCardResponse extends AbstractResponse implements VirtualCardResponseInterface
 {
+    #[Override]
     public function isSuccessful(): bool
     {
         return ! isset($this->data['error']) && ($this->data['id'] ?? null) !== null;
     }
 
+    #[Override]
     public function getTransactionReference(): ?string
     {
         return $this->data['id'] ?? null;
     }
 
+    #[Override]
     public function getMessage(): ?string
     {
         return $this->data['error'] ?? $this->data['message'] ?? null;
     }
 
+    #[Override]
     public function toVirtualCardResult(): VirtualCardResult
     {
         if (! $this->isSuccessful()) {

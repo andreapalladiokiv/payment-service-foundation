@@ -6,6 +6,7 @@ namespace Techork\PaymentService\Forter;
 
 use GuzzleHttp\Client;
 use GuzzleHttp\ClientInterface;
+use Override;
 
 /**
  * HTTP client for the Forter REST API (https://api.forter.com).
@@ -39,6 +40,7 @@ final class ForterClient implements ForterHttpClientInterface
         ]);
     }
 
+    #[Override]
     public function postOrder(string $orderId, array $body): array
     {
         $headers = [

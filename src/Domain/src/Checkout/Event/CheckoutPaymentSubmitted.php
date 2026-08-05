@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Domain\Checkout\Event;
 
+use Override;
 use Techork\PaymentService\Domain\PaymentIntent\ValueObject\PaymentIntentId;
 use Techork\PaymentService\Domain\Subscription\ValueObject\SubscriptionId;
 use EventSauce\EventSourcing\Serialization\SerializablePayload;
@@ -15,6 +16,7 @@ final readonly class CheckoutPaymentSubmitted implements SerializablePayload
         public ?SubscriptionId $subscriptionId = null,
     ) {}
 
+    #[Override]
     public function toPayload(): array
     {
         return [
@@ -23,6 +25,7 @@ final readonly class CheckoutPaymentSubmitted implements SerializablePayload
         ];
     }
 
+    #[Override]
     public static function fromPayload(array $payload): static
     {
         return new self(

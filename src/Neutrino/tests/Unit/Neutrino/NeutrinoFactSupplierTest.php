@@ -13,9 +13,9 @@ use Techork\PaymentService\Neutrino\NeutrinoIpFactSupplier;
 
 function cardProviderReturning(CardIntelligence|Throwable|null $answer): CardIntelligenceProvider
 {
-    return new class($answer) implements CardIntelligenceProvider
+    return new readonly class($answer) implements CardIntelligenceProvider
     {
-        public function __construct(private readonly CardIntelligence|Throwable|null $answer) {}
+        public function __construct(private CardIntelligence|Throwable|null $answer) {}
 
         public function lookupBin(string $bin, ?string $ip = null): ?CardIntelligence
         {
@@ -30,9 +30,9 @@ function cardProviderReturning(CardIntelligence|Throwable|null $answer): CardInt
 
 function ipProviderReturning(IpIntelligence|Throwable|null $answer): IpIntelligenceProvider
 {
-    return new class($answer) implements IpIntelligenceProvider
+    return new readonly class($answer) implements IpIntelligenceProvider
     {
-        public function __construct(private readonly IpIntelligence|Throwable|null $answer) {}
+        public function __construct(private IpIntelligence|Throwable|null $answer) {}
 
         public function lookupIp(string $ip): ?IpIntelligence
         {
@@ -85,15 +85,15 @@ it('exposes IP intelligence under the connection facts, including the host domai
 it('emits nothing when a lookup finds nothing, so absence stays distinguishable from a negative', function () {
     // Emitting is_prepaid => false for a BIN we could not resolve would let a
     // rule match on a fact we never learned.
-    expect((new NeutrinoCardFactSupplier(cardProviderReturning(null), '411111'))->facts())->toBe([])
-        ->and((new NeutrinoIpFactSupplier(ipProviderReturning(null), '203.0.113.7'))->facts())->toBe([]);
+    expect(new NeutrinoCardFactSupplier(cardProviderReturning(null), '411111')->facts())->toBe([])
+        ->and(new NeutrinoIpFactSupplier(ipProviderReturning(null), '203.0.113.7')->facts())->toBe([]);
 });
 
 it('treats a provider failure as a missing signal rather than an exception', function () {
     $boom = new RuntimeException('neutrino is down');
 
-    expect((new NeutrinoCardFactSupplier(cardProviderReturning($boom), '411111'))->facts())->toBe([])
-        ->and((new NeutrinoIpFactSupplier(ipProviderReturning($boom), '203.0.113.7'))->facts())->toBe([]);
+    expect(new NeutrinoCardFactSupplier(cardProviderReturning($boom), '411111')->facts())->toBe([])
+        ->and(new NeutrinoIpFactSupplier(ipProviderReturning($boom), '203.0.113.7')->facts())->toBe([]);
 });
 
 it('keeps a null issuer country null rather than stringifying it', function () {

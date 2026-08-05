@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace Techork\PaymentService\Domain\PaymentIntent\Event;
 
 use DateTimeImmutable;
+use DateTimeInterface;
 use EventSauce\EventSourcing\Serialization\SerializablePayload;
 use Money\Currency;
 use Money\Money;
+use Override;
 
 /**
  * The processor / acquirer fee paid for this PaymentIntent, as observed
@@ -26,15 +28,17 @@ final readonly class PaymentIntentFeeRecorded implements SerializablePayload
         public DateTimeImmutable $observedAt,
     ) {}
 
+    #[Override]
     public function toPayload(): array
     {
         return [
             'fee_amount' => $this->fee->getAmount(),
             'fee_currency' => $this->fee->getCurrency()->getCode(),
-            'observed_at' => $this->observedAt->format(DateTimeImmutable::ATOM),
+            'observed_at' => $this->observedAt->format(DateTimeInterface::ATOM),
         ];
     }
 
+    #[Override]
     public static function fromPayload(array $payload): static
     {
         return new self(

@@ -22,8 +22,8 @@ abstract class SubscriptionAggregateTestCase extends AggregateRootTestCase
         return SubscriptionAggregate::class;
     }
 
-    protected function handle(CreateSubscriptionCommand $command): void
+    protected function handle(CreateSubscriptionCommand $arguments): void
     {
-        $this->persistAggregateRoot(SubscriptionAggregate::create($command));
+        $this->persistAggregateRoot(SubscriptionAggregate::create($arguments));
     }
 }

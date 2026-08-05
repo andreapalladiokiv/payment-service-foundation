@@ -28,7 +28,7 @@ it('records the failure with the gateway-provided message', function () {
         'processorMessage' => 'Insufficient funds',
     ]);
 
-    expect((new SaleDeclinedHandler($resolver, $recorder))($event, $gatewayId))
+    expect(new SaleDeclinedHandler($resolver, $recorder)($event, $gatewayId))
         ->toBe(HandlerOutcome::Processed);
 });
 
@@ -44,7 +44,7 @@ it('falls back to a generic reason when none provided', function () {
 
     $event = new ArrayObject(['eventType' => 'sale.card.auth.declined', 'guid' => 'sale-guid-d2']);
 
-    expect((new SaleDeclinedHandler($resolver, $recorder))($event, GatewayId::generate()))
+    expect(new SaleDeclinedHandler($resolver, $recorder)($event, GatewayId::generate()))
         ->toBe(HandlerOutcome::Processed);
 });
 

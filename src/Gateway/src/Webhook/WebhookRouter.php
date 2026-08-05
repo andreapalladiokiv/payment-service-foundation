@@ -24,12 +24,12 @@ use Techork\PaymentService\Gateway\Webhook\Contract\StoredWebhookCall;
  *   - dispatch: given a {@see StoredWebhookCall} DTO, re-parse the payload and
  *     invoke the handler registered for `(kind, event-type)`.
  */
-class WebhookRouter
+readonly class WebhookRouter
 {
     public function __construct(
-        private readonly GatewayCredentialRepository $credentials,
-        private readonly VerifierRegistry $verifiers,
-        private readonly HandlerRegistry $handlers,
+        private GatewayCredentialRepository $credentials,
+        private VerifierRegistry            $verifiers,
+        private HandlerRegistry             $handlers,
     ) {}
 
     public function identifyGateway(ServerRequestInterface $request): ?GatewayMatch

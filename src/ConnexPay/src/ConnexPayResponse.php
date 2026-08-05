@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Techork\PaymentService\ConnexPay;
 
 use Omnipay\Common\Message\AbstractResponse;
+use Override;
 use Techork\PaymentService\Common\Contract\Challenge;
 use Techork\PaymentService\Common\ValueObject\Challenge\ThreeDSChallenge;
 use Techork\PaymentService\Common\ValueObject\CreditCard\CheckResult;
@@ -14,11 +15,13 @@ use Techork\PaymentService\Gateway\Contract\TransactionMetadataProvider;
 
 class ConnexPayResponse extends AbstractResponse implements CardChecksProvider, ChallengeProvider, TransactionMetadataProvider
 {
+    #[Override]
     public function isSuccessful(): bool
     {
         return ($this->data['wasProcessed'] ?? false) === true;
     }
 
+    #[Override]
     public function getTransactionReference(): ?string
     {
         return $this->data['guid'] ?? null;
@@ -31,6 +34,7 @@ class ConnexPayResponse extends AbstractResponse implements CardChecksProvider, 
      * {@see CaptureRequest::sendData()} already unwraps), so it must be
      * persisted with the reference or it's gone until a backfill.
      */
+    #[Override]
     public function getTransactionMetadata(): array
     {
         $code = $this->data['connexPayTransaction']['incomingTransCode']
@@ -42,11 +46,13 @@ class ConnexPayResponse extends AbstractResponse implements CardChecksProvider, 
             : ['incoming_transaction_code' => (string) $code];
     }
 
+    #[Override]
     public function getMessage(): ?string
     {
         return $this->data['processorResponseMessage'] ?? $this->data['status'] ?? null;
     }
 
+    #[Override]
     public function getChallenge(): ?Challenge
     {
         $threeDS = $this->data['threeDSecure'] ?? $this->data['ThreeDSecure'] ?? null;
@@ -74,6 +80,7 @@ class ConnexPayResponse extends AbstractResponse implements CardChecksProvider, 
         );
     }
 
+    #[Override]
     public function getAddressLineCheck(): ?CheckResult
     {
         $avs = $this->avsLetter();
@@ -81,6 +88,7 @@ class ConnexPayResponse extends AbstractResponse implements CardChecksProvider, 
         return $avs === null ? null : ConnexPaySchemeChecks::avsToLineAndPostal($avs)[0];
     }
 
+    #[Override]
     public function getPostalCodeCheck(): ?CheckResult
     {
         $avs = $this->avsLetter();
@@ -88,6 +96,7 @@ class ConnexPayResponse extends AbstractResponse implements CardChecksProvider, 
         return $avs === null ? null : ConnexPaySchemeChecks::avsToLineAndPostal($avs)[1];
     }
 
+    #[Override]
     public function getCvcCheck(): ?CheckResult
     {
         $cvv = $this->data['cvvVerificationCode'] ?? $this->data['CvvVerificationCode'] ?? null;

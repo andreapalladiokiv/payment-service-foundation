@@ -64,7 +64,7 @@ it('exposes one string property matching its constructor parameter', function ()
     // parameter round-trips unaided — an inner object would not, which is why
     // PhoneNumber needed a dedicated normalizer to stop every phone-bearing
     // aggregate from failing to reconstitute.
-    $properties = (new ReflectionClass(MerchantDescriptor::class))->getProperties(ReflectionProperty::IS_PRIVATE);
+    $properties = new ReflectionClass(MerchantDescriptor::class)->getProperties(ReflectionProperty::IS_PRIVATE);
     $instance = new MerchantDescriptor('ACME STORE');
 
     $names = array_map(
@@ -73,7 +73,7 @@ it('exposes one string property matching its constructor parameter', function ()
     );
 
     expect($names)->toBe(['descriptor'])
-        ->and((new ReflectionMethod(MerchantDescriptor::class, '__construct'))->getParameters()[0]->getName())
+        ->and(new ReflectionMethod(MerchantDescriptor::class, '__construct')->getParameters()[0]->getName())
         ->toBe('descriptor');
 
     // The round-trip PropertyNormalizer actually performs.

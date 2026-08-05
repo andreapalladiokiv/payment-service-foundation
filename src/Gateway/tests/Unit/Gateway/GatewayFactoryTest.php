@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Omnipay\Common\AbstractGateway;
 use Techork\PaymentService\Gateway\Contract\CustomerRepository;
 use Techork\PaymentService\Gateway\Contract\Gateway;
 use Techork\PaymentService\Gateway\Contract\GatewayCredential;
@@ -28,9 +29,9 @@ function makeGatewayFactory(): GatewayFactory
 
 it('registers and lists gateway mappings', function () {
     $factory = makeGatewayFactory();
-    $factory->replace(['TestGateway' => \Omnipay\Common\AbstractGateway::class]);
+    $factory->replace(['TestGateway' => AbstractGateway::class]);
 
-    expect($factory->all())->toBe(['TestGateway' => \Omnipay\Common\AbstractGateway::class]);
+    expect($factory->all())->toBe(['TestGateway' => AbstractGateway::class]);
 });
 
 it('throws RuntimeException for unregistered gateway name', function () {
@@ -49,7 +50,7 @@ it('caches gateway instances per credential key', function () {
     $factory->shouldReceive('createForCredential')->andReturn($gateway);
 
     $gwId = GatewayId::generate();
-    $credential = makeCredential(name: 'Stripe', credentials: ['apiKey' => 'sk_test'], key: $gwId);
+    $credential = makeCredential(credentials: ['apiKey' => 'sk_test'], key: $gwId);
 
     $first = $factory->createForCredential($credential);
     $second = $factory->createForCredential($credential);
@@ -64,8 +65,8 @@ it('creates separate instances for different credential keys', function () {
     $factory = Mockery::mock(GatewayFactory::class);
     $factory->shouldReceive('createForCredential')->andReturn($gw1, $gw2);
 
-    $cred1 = makeCredential(name: 'Stripe', key: GatewayId::generate());
-    $cred2 = makeCredential(name: 'Stripe', key: GatewayId::generate());
+    $cred1 = makeCredential(key: GatewayId::generate());
+    $cred2 = makeCredential(key: GatewayId::generate());
 
     $first = $factory->createForCredential($cred1);
     $second = $factory->createForCredential($cred2);

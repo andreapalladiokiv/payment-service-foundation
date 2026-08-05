@@ -9,7 +9,7 @@ use Techork\PaymentService\Common\ValueObject\Country;
 /**
  * BIN-derived facts about a card that fraud rules match on — the issuing
  * bank's country and the card's category. Produced by a
- * {@see \Techork\PaymentService\Neutrino\CardIntelligenceProvider}.
+ * {@see CardIntelligenceProvider}.
  *
  * None of this is derivable from the BIN digits alone; it requires a BIN
  * reference dataset. `isPrepaid` / `isCommercial` are kept as explicit flags

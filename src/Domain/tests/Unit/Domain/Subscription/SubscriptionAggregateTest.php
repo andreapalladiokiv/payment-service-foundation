@@ -2,15 +2,14 @@
 
 declare(strict_types=1);
 
+use Techork\PaymentService\Common\Contract\ChallengeResult;
 use Techork\PaymentService\Common\ValueObject\MerchantDescriptor;
 use Techork\PaymentService\Common\ValueObject\ConnectionContext;
 use Techork\PaymentService\Tests\Support\StubPaymentIntentFirewall;
 use Techork\PaymentService\Domain\PaymentIntent\CaptureMethod;
 use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
 use Techork\PaymentService\Domain\PaymentIntent\Command\CreatePaymentIntentCommand;
-use Techork\PaymentService\Common\Contract\Challenge;
 use Techork\PaymentService\Domain\PaymentIntent\Command\CapturePaymentIntentCommand;
-use Techork\PaymentService\Domain\PaymentIntent\Exception\PaymentIntentCannotBeCaptured;
 use Techork\PaymentService\Domain\PaymentIntent\PaymentIntentStatus;
 use Techork\PaymentService\Domain\PaymentIntent\Port\CaptureOutcome;
 use Techork\PaymentService\Domain\PaymentIntent\Port\CapturePort;
@@ -158,7 +157,7 @@ function makeAuthorizedPiForSubscription(?Money $amount = null): PaymentIntentAg
         public function merchantDescriptor(): MerchantDescriptor { return new MerchantDescriptor('SUBSCRIPTION'); }
         public function description(): string { return ''; }
         public function metadata(): array { return []; }
-        public function challengeResult(): ?\Techork\PaymentService\Common\Contract\ChallengeResult { return null; }
+        public function challengeResult(): ?ChallengeResult { return null; }
         public function initiation(): PaymentInitiation { return PaymentInitiation::CardholderInitiated; }
         public function connection(): ?ConnectionContext { return null; }
         public function gatewayId(): ?string { return null; }
@@ -420,7 +419,7 @@ it('lets a failed capture propagate, staying trialing and recording nothing', fu
     $aggregate = $this->retrieveAggregateRoot($id);
 
     try {
-        $aggregate->activate(makeActivateCommand($id), makeFailingSubscriptionCapturePort('Connection to gateway lost'));
+        $aggregate->activate(makeActivateCommand($id), makeFailingSubscriptionCapturePort());
         $this->fail('the capture failure should have propagated');
     } catch (RuntimeException $e) {
         expect($e->getMessage())->toBe('Connection to gateway lost');
@@ -473,7 +472,7 @@ it('throws SubscriptionNotActivatable when the payment intent was already charge
         public function merchantDescriptor(): MerchantDescriptor { return new MerchantDescriptor('SUBSCRIPTION'); }
         public function description(): string { return ''; }
         public function metadata(): array { return []; }
-        public function challengeResult(): ?\Techork\PaymentService\Common\Contract\ChallengeResult { return null; }
+        public function challengeResult(): ?ChallengeResult { return null; }
         public function initiation(): PaymentInitiation { return PaymentInitiation::CardholderInitiated; }
         public function connection(): ?ConnectionContext { return null; }
         public function gatewayId(): ?string { return null; }
@@ -693,7 +692,7 @@ it('records SubscriptionCancellationReverted while period still active', functio
     );
 
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->revertCancellation(makeRevertCancellationCommand($id));
+    $aggregate->revertCancellation();
     $this->persistAggregateRoot($aggregate);
 
     then(new SubscriptionCancellationReverted);
@@ -709,7 +708,7 @@ it('throws SubscriptionNotCancellable when reverting without pending cancellatio
     );
 
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->revertCancellation(makeRevertCancellationCommand($id));
+    $aggregate->revertCancellation();
 })->throws(SubscriptionNotCancellable::class, 'not scheduled');
 
 // ──────────────────────────────────────────────
