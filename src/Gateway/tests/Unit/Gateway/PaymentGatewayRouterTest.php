@@ -30,6 +30,7 @@ use Techork\PaymentService\Gateway\GatewayFactory;
 use Techork\PaymentService\Gateway\PaymentGatewayRouter;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 use Techork\PaymentService\Gateway\ValueObject\CardSpendCategory;
+use Techork\PaymentService\Gateway\Contract\CustomerReferenceProvider;
 
 function makeRouterCredential(): GatewayCredential
 {
@@ -800,4 +801,222 @@ it('hands a retry refund the alternative instrument and everything needed to rea
         ->and($seen['clientUniqueId'])->toBe("$piId:refund")
         ->and($seen['instrument'])->toBe($instrument)
         ->and($seen)->toHaveKeys(['gateway', 'decrypter', 'referenceResolver']);
+});
+
+// ──────────────────────────────────────────────
+//  The four entry points nothing reached
+//
+//  cancel, createPaymentMethod, issueVirtualCard and terminateVirtualCard had no test
+//  between them. Two of the three result builders were reachable only through these,
+//  so buildRegistration and the virtual-card branch were unexecuted in full — including
+//  the refusal of a success that names no transaction, which was added to all three
+//  builders and pinned in only two.
+// ──────────────────────────────────────────────
+
+it('cancels through the gateway void, naming the transaction to void', function () {
+    // `void` is what backs cancel, and the reference is the whole of what it needs. It used to be
+    // looked up from the payment intent inside the router; now the caller supplies it, and a call
+    // that dropped it would leave the gateway voiding nothing.
+    $seen = null;
+    $router = makeRouter(omnipay: makeOmnipayCapturing('void', makeSuccessResponse('void_1'), $seen));
+
+    $result = $router->cancel(GatewayId::generate(), 'auth_ref_1', 'cuid-1');
+
+    expect($result->success)->toBeTrue()
+        ->and($result->reference)->toBe('void_1')
+        ->and($seen['transactionReference'])->toBe('auth_ref_1')
+        ->and($seen['clientUniqueId'])->toBe('cuid-1');
+});
+
+it('reports a refused cancellation with the gateway message', function () {
+    $router = makeRouter(omnipay: makeOmnipayWithMethod('void', makeFailureResponse('Already settled')));
+
+    $result = $router->cancel(GatewayId::generate(), 'auth_ref_1');
+
+    expect($result->success)->toBeFalse()
+        ->and($result->message)->toBe('Already settled');
+});
+
+it('refuses a cancellation the gateway called successful without naming it', function () {
+    // The same rule as everywhere else: nothing could be reconciled against a void that names no
+    // transaction, so reporting success would put an unverifiable cancellation in the stream.
+    $router = makeRouter(omnipay: makeOmnipayWithMethod('void', makeUnnamedSuccessResponse()));
+
+    expect($router->cancel(GatewayId::generate(), 'auth_ref_1')->message)
+        ->toBe('The gateway reported success without naming a transaction reference.');
+});
+
+it('registers a payment method and hands the gateway everything the request needs', function () {
+    // Six parameters, and the instrument, decrypter and reference resolver are what let the
+    // provider build its request at all — a call that lost them would fail on send() and be
+    // reported as the gateway refusing.
+    $seen = null;
+    $router = makeRouter(omnipay: makeOmnipayCapturing('createPaymentMethod', makeSuccessResponse('pm_1'), $seen));
+    $instrument = Mockery::mock(PaymentInstrument::class);
+    $instrument->shouldReceive('toPayload')->andReturn([]);
+    $address = new BillingAddress('Ada', 'Lovelace', '1 Main St', 'London', new Country('GB'), 'E1 6AN');
+
+    $result = $router->createPaymentMethod(GatewayId::generate(), $instrument, $address, 'cuid-2');
+
+    expect($result->success)->toBeTrue()
+        ->and($result->reference)->toBe('pm_1')
+        ->and($seen['instrument'])->toBe($instrument)
+        ->and($seen['billingAddress'])->toBe($address)
+        ->and($seen['clientUniqueId'])->toBe('cuid-2')
+        ->and($seen)->toHaveKeys(['gateway', 'decrypter', 'referenceResolver']);
+});
+
+it('carries the customer reference a registration response reports', function () {
+    // The reason RegistrationResult has the field: a provider that creates a customer alongside the
+    // instrument reports it here, and losing it means the next payment registers a second customer
+    // for the same cardholder.
+    $response = Mockery::mock(ResponseInterface::class, CustomerReferenceProvider::class);
+    $response->shouldReceive('isSuccessful')->andReturn(true);
+    $response->shouldReceive('getTransactionReference')->andReturn('pm_2');
+    $response->shouldReceive('getCustomerReference')->andReturn('cus_42');
+
+    $router = makeRouter(omnipay: makeOmnipayWithMethod('createPaymentMethod', $response));
+    $instrument = Mockery::mock(PaymentInstrument::class);
+    $instrument->shouldReceive('toPayload')->andReturn([]);
+
+    expect($router->createPaymentMethod(GatewayId::generate(), $instrument)->customerReference)->toBe('cus_42');
+});
+
+it('folds the AVS and CVC checks onto a registration result', function () {
+    // These are the whole point of registering through the gateway rather than storing a card: the
+    // issuer's verdict on the address and the security code arrives once, here, and nowhere else.
+    $response = Mockery::mock(ResponseInterface::class, CardChecksProvider::class);
+    $response->shouldReceive('isSuccessful')->andReturn(true);
+    $response->shouldReceive('getTransactionReference')->andReturn('pm_3');
+    $response->shouldReceive('getAddressLineCheck')->andReturn(CheckResult::Pass);
+    $response->shouldReceive('getPostalCodeCheck')->andReturn(CheckResult::Fail);
+    $response->shouldReceive('getCvcCheck')->andReturn(CheckResult::Unchecked);
+
+    $router = makeRouter(omnipay: makeOmnipayWithMethod('createPaymentMethod', $response));
+    $instrument = Mockery::mock(PaymentInstrument::class);
+    $instrument->shouldReceive('toPayload')->andReturn([]);
+
+    $result = $router->createPaymentMethod(GatewayId::generate(), $instrument);
+
+    expect($result->addressLineCheck)->toBe(CheckResult::Pass)
+        ->and($result->postalCodeCheck)->toBe(CheckResult::Fail)
+        ->and($result->cvcCheck)->toBe(CheckResult::Unchecked);
+});
+
+it('refuses a registration the gateway called successful without naming it', function () {
+    // buildRegistration's copy of the rule, which was the one no test reached.
+    $router = makeRouter(omnipay: makeOmnipayWithMethod('createPaymentMethod', makeUnnamedSuccessResponse()));
+    $instrument = Mockery::mock(PaymentInstrument::class);
+    $instrument->shouldReceive('toPayload')->andReturn([]);
+
+    $result = $router->createPaymentMethod(GatewayId::generate(), $instrument);
+
+    expect($result->success)->toBeFalse()
+        ->and($result->message)->toBe('The gateway reported success without naming a transaction reference.');
+});
+
+it('terminates a virtual card by its guid', function () {
+    $seen = null;
+    $router = makeRouter(omnipay: makeOmnipayCapturing('terminateVirtualCard', makeSuccessResponse('term_1'), $seen));
+
+    $result = $router->terminateVirtualCard(GatewayId::generate(), 'card-guid-1');
+
+    expect($result->success)->toBeTrue()
+        // The guid travels as `transactionReference`, which is the provider requests' own name for
+        // the thing being acted on — a rename on either side silently terminates nothing.
+        ->and($seen['transactionReference'])->toBe('card-guid-1');
+});
+
+it('reports a refused termination with the gateway message', function () {
+    $router = makeRouter(omnipay: makeOmnipayWithMethod('terminateVirtualCard', makeFailureResponse('Card already closed')));
+
+    expect($router->terminateVirtualCard(GatewayId::generate(), 'card-guid-1')->message)->toBe('Card already closed');
+});
+
+it('refuses to issue a virtual card for a payment intent with no recorded transaction', function () {
+    // A virtual card is funded by an authorization, so without its reference there is nothing to
+    // fund the card from. This throws rather than answering a failed result: it is a caller error,
+    // not a gateway refusal.
+    $txRepo = Mockery::mock(GatewayTransactionRepository::class);
+    $txRepo->shouldReceive('findForPaymentIntent')->andReturn(null);
+
+    $router = makeRouter(omnipay: makeOmnipayWithMethod('issueVirtualCard', makeSuccessResponse('card_1')), transactionRepo: $txRepo);
+
+    expect(fn () => $router->issueVirtualCard(
+        GatewayId::generate(),
+        'pi-missing',
+        new Money(5000, new Currency('USD')),
+        CardSpendCategory::TravelAir,
+    ))->toThrow(RuntimeException::class, "Transaction reference for payment intent 'pi-missing' not found");
+});
+
+it('passes the stored authorization reference and incoming transaction code to the issuer', function () {
+    // The metadata lookup exists to spare the gateway a Search/Sales round trip whose guid filters
+    // ConnexPay silently ignores — so a call that dropped the code would still work and would
+    // quietly cost a request per card.
+    $txRepo = Mockery::mock(GatewayTransactionRepository::class);
+    $txRepo->shouldReceive('findForPaymentIntent')->andReturn('auth_ref_9');
+    $txRepo->shouldReceive('findMetadataForPaymentIntent')->andReturn(['incoming_transaction_code' => 'ICT-77']);
+
+    $seen = null;
+    $router = makeRouter(
+        omnipay: makeOmnipayCapturing('issueVirtualCard', makeSuccessResponse('card_1'), $seen),
+        transactionRepo: $txRepo,
+    );
+
+    $result = $router->issueVirtualCard(
+        GatewayId::generate(),
+        'pi-1',
+        new Money(5000, new Currency('USD')),
+        CardSpendCategory::TravelAir,
+        firstName: 'Ada',
+        lastName: 'Lovelace',
+        clientUniqueId: 'cuid-3',
+    );
+
+    expect($result->success)->toBeTrue()
+        ->and($seen['transactionReference'])->toBe('auth_ref_9')
+        ->and($seen['incomingTransactionCode'])->toBe('ICT-77')
+        ->and($seen['spendCategory'])->toBe(CardSpendCategory::TravelAir->value)
+        ->and($seen['firstName'])->toBe('Ada')
+        ->and($seen['clientUniqueId'])->toBe('cuid-3');
+});
+
+it('prefers a provider virtual-card result over anything it could infer', function () {
+    // A card carries a number, a CVV and an expiry that no generic result can hold, so a response
+    // able to describe itself is asked to, and the router does not second-guess it.
+    $card = VirtualCardResult::succeeded('card-guid-2');
+    $response = Mockery::mock(ResponseInterface::class, VirtualCardResponseInterface::class);
+    $response->shouldReceive('toVirtualCardResult')->andReturn($card);
+
+    $txRepo = Mockery::mock(GatewayTransactionRepository::class);
+    $txRepo->shouldReceive('findForPaymentIntent')->andReturn('auth_ref_9');
+    $txRepo->shouldReceive('findMetadataForPaymentIntent')->andReturn([]);
+
+    $router = makeRouter(omnipay: makeOmnipayWithMethod('issueVirtualCard', $response), transactionRepo: $txRepo);
+
+    expect($router->issueVirtualCard(
+        GatewayId::generate(),
+        'pi-1',
+        new Money(5000, new Currency('USD')),
+        CardSpendCategory::TravelAir,
+    ))->toBe($card);
+});
+
+it('refuses a card the gateway called issued without naming it', function () {
+    $txRepo = Mockery::mock(GatewayTransactionRepository::class);
+    $txRepo->shouldReceive('findForPaymentIntent')->andReturn('auth_ref_9');
+    $txRepo->shouldReceive('findMetadataForPaymentIntent')->andReturn([]);
+
+    $router = makeRouter(omnipay: makeOmnipayWithMethod('issueVirtualCard', makeUnnamedSuccessResponse()), transactionRepo: $txRepo);
+
+    $result = $router->issueVirtualCard(
+        GatewayId::generate(),
+        'pi-1',
+        new Money(5000, new Currency('USD')),
+        CardSpendCategory::TravelAir,
+    );
+
+    expect($result->success)->toBeFalse()
+        ->and($result->message)->toBe('The gateway reported success without naming a transaction reference.');
 });
