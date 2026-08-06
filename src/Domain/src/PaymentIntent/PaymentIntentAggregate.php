@@ -55,7 +55,6 @@ use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CancelRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CaptureRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\ConfirmChallengeRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CreateRequest;
-use Techork\PaymentService\Domain\PaymentIntent\Port\Request\InitiateChallengeRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\PaymentIntentFirewallRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\VerifyChallengeRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Refund\Command\CreateRefundCommand;
@@ -261,6 +260,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                     $command->merchantDescriptor(),
                     $command->description(),
                     self::firewallRefusalReason($decision),
+                    FailureCode::Blocked,
                     $evidence,
                     $command->initiation(),
                 ));
@@ -268,20 +268,50 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                 return $self;
             }
 
-            // Authentication is required. Whether one is already in hand decides which question
-            // gets asked, and both go to the same port: start one, or find out what a presented
-            // result is actually worth. The second exists because that result reaches us from
-            // the caller and the coherence check on it establishes only that its fields agree —
-            // so without asking, attaching a well-formed one would be enough to satisfy every
-            // step-up rule in the chain.
-            $authentication = self::authenticate(
-                $challenges ?? throw ChallengeCannotBeRaised::noPortInstalled($decision->reason),
-                $command,
-                $decision,
-                $evidence,
-            );
+            // Authentication is required, and this is where a server-to-server payment differs
+            // from a checkout. There is no cardholder session here to conduct one in — no browser
+            // to fingerprint, nothing to render an ACS page into, and on a stored instrument no
+            // pan the caller could authenticate with even if there were. Starting an
+            // authentication we cannot finish would hold the payment open on something no client
+            // can act on, which is the state this package spent a while removing.
+            //
+            // So: no evidence, no payment, said now and said in a form a program can branch on.
+            // The caller runs the authentication through the endpoints that exist for it and
+            // sends the payment again with the result.
+            if ($evidence === null) {
+                $self->recordThat(new PaymentIntentFailed(
+                    $command->amount(),
+                    $command->instrument(),
+                    $command->captureMethod(),
+                    $command->billingAddress(),
+                    $command->metadata(),
+                    $command->merchantDescriptor(),
+                    $command->description(),
+                    self::authenticationRequiredReason($decision),
+                    FailureCode::AuthenticationRequired,
+                    null,
+                    $command->initiation(),
+                ));
 
-            if ($authentication->wasRefused()) {
+                return $self;
+            }
+
+            // Evidence was presented, so it gets weighed rather than taken. This is the step that
+            // keeps the whole arrangement from being a bypass: presenting a result is what carries
+            // a payment past a step-up rule, and a well-formed result is indistinguishable from an
+            // invented one by looking at it. The port checks it against the authentications this
+            // service issued — for which card, for how much, and whether it has been spent — not
+            // against what the request says about itself.
+            $authentication = ($challenges ?? throw ChallengeCannotBeRaised::noPortInstalled($decision->reason))
+                ->verify(new VerifyChallengeRequest(
+                    paymentIntentId: $command->paymentIntentId(),
+                    presented: $evidence,
+                    amount: $command->amount(),
+                    instrument: $command->instrument(),
+                    reason: $decision->reason,
+                ));
+
+            if (! $authentication->wasPassed()) {
                 $self->recordThat(new PaymentIntentFailed(
                     $command->amount(),
                     $command->instrument(),
@@ -291,6 +321,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                     $command->merchantDescriptor(),
                     $command->description(),
                     self::challengeRefusalReason($authentication),
+                    FailureCode::AuthenticationFailed,
                     $evidence,
                     $command->initiation(),
                 ));
@@ -298,28 +329,9 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                 return $self;
             }
 
-            // On the artefact rather than on `wasRaised()`, which says the same thing: the two
-            // cannot disagree, and reading the field is what makes that visible here.
-            if ($authentication->challenge !== null) {
-                $self->recordThat(new PaymentIntentRequiresAction(
-                    $command->amount(),
-                    $command->instrument(),
-                    $command->captureMethod(),
-                    $command->billingAddress(),
-                    $command->metadata(),
-                    $command->merchantDescriptor(),
-                    $command->description(),
-                    $authentication->challenge,
-                    $command->initiation(),
-                ));
-
-                return $self;
-            }
-
-            // Authenticated with nothing for the cardholder to do — the frictionless case, and
-            // the common one. The payment proceeds now, carrying the provider's own result
-            // rather than the caller's copy of it, since that is the evidence the acquirer will
-            // be shown.
+            // What proceeds is the provider's answer, not the caller's copy of it — that is the
+            // evidence the acquirer will be shown, and asking is pointless if the reply is the
+            // question.
             $evidence = $authentication->result;
         }
 
@@ -343,6 +355,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                 $command->merchantDescriptor(),
                 $command->description(),
                 $e->reason,
+                FailureCode::GatewayDeclined,
                 $evidence,
                 $command->initiation(),
             ));
@@ -458,7 +471,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         try {
             $port->cancel(new CancelRequest($this->aggregateRootId()));
         } catch (GatewayDeclinedException $e) {
-            $this->recordThat($this->failedFromState($e->reason));
+            $this->recordThat($this->failedFromState($e->reason, FailureCode::GatewayDeclined));
 
             return;
         }
@@ -491,7 +504,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         $failureReason = $result->accept(new ChallengeFailureReasonExtractor);
 
         if ($failureReason !== null) {
-            $this->recordThat($this->failedFromState($failureReason, $result));
+            $this->recordThat($this->failedFromState($failureReason, FailureCode::AuthenticationFailed, $result));
 
             return;
         }
@@ -516,7 +529,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                 initiation: $this->initiation,
             ));
         } catch (GatewayDeclinedException $e) {
-            $this->recordThat($this->failedFromState($e->reason, $result));
+            $this->recordThat($this->failedFromState($e->reason, FailureCode::GatewayDeclined, $result));
 
             return;
         }
@@ -662,6 +675,21 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
     }
 
     /**
+     * Why a payment was refused for want of an authentication nobody could start here.
+     *
+     * Phrased for the operator reading a failed payment back, and paired with
+     * {@see FailureCode::AuthenticationRequired}, which is the part a caller acts on. The chain's
+     * own breadcrumb rides along because knowing WHICH rule asked is the difference between a
+     * merchant fixing a rule and a merchant retrying forever.
+     */
+    private static function authenticationRequiredReason(FirewallDecision $decision): string
+    {
+        return $decision->reason === null || $decision->reason === ''
+            ? 'Authentication is required before this payment can be placed.'
+            : "Authentication is required before this payment can be placed: {$decision->reason}";
+    }
+
+    /**
      * Why an authentication ended the payment.
      *
      * Prefixed like the firewall's own refusal and for the same reason: nothing left this
@@ -673,42 +701,6 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         return $outcome->reason === null || $outcome->reason === ''
             ? 'Authentication was refused.'
             : "Authentication was refused: {$outcome->reason}";
-    }
-
-    /**
-     * Ask the one question the situation calls for.
-     *
-     * Two questions, one port, and which one gets asked turns on whether the caller brought a
-     * result. Presenting one does not settle anything by itself — it arrives from outside, and
-     * the coherence check it passed establishes that its fields agree with each other, not that
-     * an issuer ever saw the cardholder. So it is weighed rather than taken, and an
-     * implementation content to take it says so by answering with what it was given.
-     */
-    private static function authenticate(
-        ChallengePort $challenges,
-        CreatePaymentIntentCommand $command,
-        FirewallDecision $decision,
-        ?ChallengeResult $presented,
-    ): ChallengeOutcome {
-        if ($presented !== null) {
-            return $challenges->verify(new VerifyChallengeRequest(
-                paymentIntentId: $command->paymentIntentId(),
-                presented: $presented,
-                amount: $command->amount(),
-                instrument: $command->instrument(),
-                reason: $decision->reason,
-            ));
-        }
-
-        return $challenges->initiate(new InitiateChallengeRequest(
-            paymentIntentId: $command->paymentIntentId(),
-            amount: $command->amount(),
-            instrument: $command->instrument(),
-            billingAddress: $command->billingAddress(),
-            connection: $command->connection(),
-            initiation: $command->initiation(),
-            reason: $decision->reason,
-        ));
     }
 
     private function chargeOrAuthorize(
@@ -733,7 +725,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
     }
 
 
-    private function failedFromState(string $reason, ?ChallengeResult $challengeResult = null): PaymentIntentFailed
+    private function failedFromState(string $reason, FailureCode $code, ?ChallengeResult $challengeResult = null): PaymentIntentFailed
     {
         return new PaymentIntentFailed(
             $this->amount,
@@ -744,6 +736,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
             $this->merchantDescriptor(),
             $this->description,
             $reason,
+            $code,
             $challengeResult ?? $this->challengeResult,
             $this->initiation,
         );

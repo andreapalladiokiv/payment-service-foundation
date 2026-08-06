@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Domain\PaymentIntent\Port;
 
-use Techork\PaymentService\Domain\PaymentIntent\Port\Request\InitiateChallengeRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\VerifyChallengeRequest;
 
 /**
@@ -43,11 +42,6 @@ use Techork\PaymentService\Domain\PaymentIntent\Port\Request\VerifyChallengeRequ
  */
 interface ChallengePort
 {
-    /**
-     * Begin authenticating the cardholder for this payment.
-     */
-    public function initiate(InitiateChallengeRequest $request): ChallengeOutcome;
-
     /**
      * Establish what an already-presented result is actually worth.
      *

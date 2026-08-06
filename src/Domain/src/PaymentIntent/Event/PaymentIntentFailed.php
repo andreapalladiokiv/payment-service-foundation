@@ -15,6 +15,7 @@ use Techork\PaymentService\Common\ValueObject\MerchantDescriptor;
 use Techork\PaymentService\Common\ValueObject\PaymentInstrumentFactory;
 use Techork\PaymentService\Domain\PaymentIntent\CaptureMethod;
 use Techork\PaymentService\Domain\PaymentIntent\ChallengeResultArraySerializer;
+use Techork\PaymentService\Domain\PaymentIntent\FailureCode;
 use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
 
 final readonly class PaymentIntentFailed implements SerializablePayload
@@ -28,7 +29,12 @@ final readonly class PaymentIntentFailed implements SerializablePayload
         public array $metadata,
         public MerchantDescriptor $merchantDescriptor,
         public string $description,
+        /**
+         * The sentence an operator reads: a rule identifier, an acquirer's own words. Never
+         * parsed — {@see $code} is what a program branches on.
+         */
         public string $reason,
+        public FailureCode $code,
         public ?ChallengeResult $challengeResult = null,
         public PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated,
     ) {}
@@ -46,6 +52,7 @@ final readonly class PaymentIntentFailed implements SerializablePayload
             'merchant_descriptor' => (string) $this->merchantDescriptor,
             'description' => $this->description,
             'reason' => $this->reason,
+            'code' => $this->code->value,
             'challenge_result' => $this->challengeResult === null ? null : ChallengeResultArraySerializer::toArray($this->challengeResult),
             'initiation' => $this->initiation->value,
         ];
@@ -63,6 +70,9 @@ final readonly class PaymentIntentFailed implements SerializablePayload
             new MerchantDescriptor($payload['merchant_descriptor']),
             $payload['description'],
             $payload['reason'],
+            // Rows written before the field existed say so rather than being assigned a
+            // classification nobody made at the time.
+            FailureCode::tryFrom((string) ($payload['code'] ?? '')) ?? FailureCode::Unspecified,
             isset($payload['challenge_result']) ? ChallengeResultArraySerializer::fromArray($payload['challenge_result']) : null,
             PaymentInitiation::from($payload['initiation'] ?? PaymentInitiation::CardholderInitiated->value),
         );

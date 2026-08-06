@@ -105,9 +105,13 @@ hold a BIN and a last four and deliberately never a card number, while authentic
 needs the pan, the expiry and the holder. Widening the fact vocabulary to supply them would have
 turned the language an operator writes rules in into an argument list for one protocol.
 
-So the decision travels, and the aggregate that holds the instrument acts on it, through
-`Domain\PaymentIntent\Port\ChallengePort`. A `FirewallDecision` has nowhere to put an artefact,
-which is what keeps the two jobs apart.
+So the decision travels and the aggregate acts on it. What that means depends on the caller: a
+payment-intent call refuses with `FailureCode::AuthenticationRequired`, because a
+server-to-server request has no cardholder session to authenticate in, and the merchant runs the
+authentication separately and sends the payment again with the result — which
+`Domain\PaymentIntent\Port\ChallengePort` then verifies against the authentications the service
+issued. A `FirewallDecision` has nowhere to put an artefact, which is what keeps the two jobs
+apart.
 
 ## Inspecting everything
 
