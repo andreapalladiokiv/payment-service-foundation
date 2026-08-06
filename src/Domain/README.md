@@ -74,13 +74,20 @@ stored-credential series flagged needs a distinction this enum does not draw.
 FirewallDecision` is defined here and consulted by
 `PaymentIntentAggregate::create()` itself, not by the application flow, before
 the gateway call is spent. A chain answers with a `FirewallVerdict` of `Allow`,
-`Deny` or `NoMatch`, plus a `degraded` flag for a rule that could not be
-evaluated; only `FirewallDecision::permits()` — an explicit `Allow` on a
-non-degraded chain — proceeds, and everything else parks the payment on a
-`ThreeDSChallenge` at `RequiresAction`: the firewall never blocks a payment on
-its own, it routes to stronger authentication. Implementations must not throw for
-business outcomes and must not pick the fail-open/fail-closed default themselves
-— that is the caller's. The default `NullPaymentIntentFirewall` denies.
+`Deny` or `Challenge`, and all three are actions a caller can carry out: an
+allow proceeds to the gateway, a denial records `PaymentIntentFailed` with a
+prefixed reason so it cannot be read as an acquirer's answer, and a challenge
+records `PaymentIntentRequiresAction` with the challenge the decision carries.
+
+Two things a decision cannot be. There is no "nothing matched" — what the
+absence of a match means belongs to the chain, which says so through its own
+strategy — and a `Challenge` verdict cannot arrive without a `Challenge` on it:
+`FirewallPortViolation` (a `LogicException`, not a `DomainException`, so an
+application mapping business outcomes onto refusals cannot swallow it) rather
+than an intent parked on nothing. Implementations must not throw for business
+outcomes; they must throw for a chain they cannot evaluate or a challenge they
+cannot raise. The default `NullPaymentIntentFirewall` allows — nothing is
+installed, so nothing is inspected.
 
 **Refunds.** `Refund` is a child aggregate on the same event stream (the
 parent uses EventSauce's `AggregateRootWithAggregates`), keyed by `RefundId`;

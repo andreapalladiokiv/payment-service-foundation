@@ -29,13 +29,16 @@ final readonly class PaymentIntentRequiresAction implements SerializablePayload
         public MerchantDescriptor $merchantDescriptor,
         public string $description,
         /**
-         * Null when the payment must be authenticated and nobody has raised a challenge yet —
-         * a firewall that demanded a step-up with no challenge integration behind it. A
-         * {@see Challenge} is evidence that a handoff to an external system has already
-         * happened and carries what the client needs to render it, so there is nothing
-         * truthful to put here until the ACS has actually been asked.
+         * What the client is to present, and the reason this state is exitable.
+         *
+         * Never null, on either of the two paths that record this event: a gateway that
+         * answered with a step-up returns the artefact with it, and a firewall that demands one
+         * owes it by contract. It was briefly nullable, for a firewall with no challenge
+         * integration behind it — which described the deployment accurately and left the payment
+         * parked on nothing, unable to proceed and indistinguishable from an authentication in
+         * flight. Both sources now refuse instead.
          */
-        public ?Challenge $challenge,
+        public Challenge $challenge,
         public PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated,
     ) {}
 
@@ -51,7 +54,7 @@ final readonly class PaymentIntentRequiresAction implements SerializablePayload
             'metadata' => $this->metadata,
             'merchant_descriptor' => (string) $this->merchantDescriptor,
             'description' => $this->description,
-            'challenge' => $this->challenge === null ? null : ChallengeArraySerializer::toArray($this->challenge),
+            'challenge' => ChallengeArraySerializer::toArray($this->challenge),
             'initiation' => $this->initiation->value,
         ];
     }
@@ -67,7 +70,7 @@ final readonly class PaymentIntentRequiresAction implements SerializablePayload
             $payload['metadata'] ?? [],
             new MerchantDescriptor($payload['merchant_descriptor']),
             $payload['description'],
-            isset($payload['challenge']) ? ChallengeArraySerializer::fromArray($payload['challenge']) : null,
+            ChallengeArraySerializer::fromArray($payload['challenge']),
             PaymentInitiation::from($payload['initiation'] ?? PaymentInitiation::CardholderInitiated->value),
         );
     }

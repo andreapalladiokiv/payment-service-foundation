@@ -35,6 +35,7 @@ use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentFailed;
 use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentFeeRecorded;
 use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentImported;
 use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentRequiresAction;
+use Techork\PaymentService\Domain\PaymentIntent\Exception\FirewallPortViolation;
 use Techork\PaymentService\Domain\PaymentIntent\Exception\InvalidPaymentIntent;
 use Techork\PaymentService\Domain\PaymentIntent\Exception\PaymentIntentCannotBeCancelled;
 use Techork\PaymentService\Domain\PaymentIntent\Exception\PaymentIntentCannotBeCaptured;
@@ -260,10 +261,15 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                 return $self;
             }
 
-            // A challenge is required. It arrives on the decision when something was able to
-            // raise one, and stays null when nothing was — "required, not yet started" is a
-            // truthful state, where the alternative was manufacturing a ThreeDSChallenge out of
-            // the payment intent's own id.
+            // A challenge is required, and the decision carries it: a port that demands one owes
+            // the artefact to present, which is the whole of what this branch does with it. The
+            // aggregate does not make one up — that is what it used to do, minting a
+            // ThreeDSChallenge out of the payment intent's own id — and it does not park the
+            // payment on an absent one either, because an intent waiting on a challenge no
+            // client can answer is stuck rather than pending.
+            $challenge = $decision->challenge
+                ?? throw FirewallPortViolation::challengeDemandedWithoutOne($decision->reason);
+
             $self->recordThat(new PaymentIntentRequiresAction(
                 $command->amount(),
                 $command->instrument(),
@@ -272,7 +278,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                 $command->metadata(),
                 $command->merchantDescriptor(),
                 $command->description(),
-                $decision->challenge,
+                $challenge,
                 $command->initiation(),
             ));
 

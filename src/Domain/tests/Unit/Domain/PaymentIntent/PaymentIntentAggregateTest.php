@@ -45,6 +45,7 @@ use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentFailed;
 use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentFeeRecorded;
 use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentImported;
 use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentRequiresAction;
+use Techork\PaymentService\Domain\PaymentIntent\Exception\FirewallPortViolation;
 use Techork\PaymentService\Domain\PaymentIntent\Exception\InvalidPaymentIntent;
 use Techork\PaymentService\Domain\PaymentIntent\Exception\PaymentIntentCannotBeCancelled;
 use Techork\PaymentService\Domain\PaymentIntent\Exception\PaymentIntentCannotBeCaptured;
@@ -2314,11 +2315,12 @@ it('fails the payment without touching the gateway when a rule rejects it', func
         ->and($aggregate->challenge())->toBeNull();
 });
 
-it('parks with the challenge the firewall raised, and with none when it raised none', function (?ThreeDSChallenge $raised) {
-    // The step-up path. The challenge is whatever something able to raise one produced; null means
-    // "required, nobody started it", which is a truthful state for a deployment with no challenge
-    // integration and the reason the domain no longer needs to invent an artefact to have
-    // something to record.
+it('parks with the challenge the firewall raised', function () {
+    // The step-up path. The challenge is whatever something able to raise one produced, and the
+    // domain records that and nothing else — where it used to mint a ThreeDSChallenge from the
+    // payment intent's own id because it had nothing to put here.
+    $raised = new ThreeDSChallenge(transactionId: 'ds-txn-1', acsUrl: 'https://acs.example/c', creq: 'creq');
+
     $gateway = Mockery::mock(CreatePort::class);
     $gateway->shouldNotReceive('create');
 
@@ -2332,10 +2334,26 @@ it('parks with the challenge the firewall raised, and with none when it raised n
 
     expect($aggregate->status())->toBe(PaymentIntentStatus::RequiresAction)
         ->and($aggregate->challenge())->toBe($raised);
-})->with([
-    'raised' => fn () => new ThreeDSChallenge(transactionId: 'ds-txn-1', acsUrl: 'https://acs.example/c', creq: 'creq'),
-    'none raised' => fn () => null,
-]);
+});
+
+it('refuses to park a payment on a challenge the firewall did not supply', function () {
+    // A port is documented to owe the artefact with this verdict, and the engine that ships here
+    // throws rather than return the pair apart. This covers the hand-rolled port that does not:
+    // the alternative is an intent in RequiresAction with nothing for a client to present, unable
+    // to proceed and unable to be refused.
+    //
+    // Not a DomainException, deliberately. An application that maps those onto a declined payment
+    // would report this one as an ordinary refusal and lose the defect — the payment was fine, the
+    // collaborator was not.
+    $gateway = Mockery::mock(CreatePort::class);
+    $gateway->shouldNotReceive('create');
+
+    expect(fn () => PaymentIntentAggregate::create(
+        makeCreatePiCommand($this->aggregateRootId()),
+        $gateway,
+        StubPaymentIntentFirewall::returning(FirewallDecision::challenge('matched rule 9')),
+    ))->toThrow(FirewallPortViolation::class, 'matched rule 9');
+});
 
 it('passes the domain data it holds to the firewall', function () {
     $id = $this->aggregateRootId();
@@ -2534,7 +2552,9 @@ it('inspects rather than throwing when an incoherent result arrives with the pay
     // A challenge verdict rather than a denial, so what this proves is the firewall being
     // CONSULTED. A rejection would end in Failed, and that could not be told apart from the
     // incoherent result having failed the payment by itself.
-    $firewall = StubPaymentIntentFirewall::returning(FirewallDecision::challenge('stub'));
+    $firewall = StubPaymentIntentFirewall::returning(
+        FirewallDecision::challenge('stub', challenge: makeThreeDSChallenge()),
+    );
 
     $aggregate = PaymentIntentAggregate::create(
         makeCreatePiCommand(

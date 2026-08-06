@@ -7,6 +7,7 @@ namespace Techork\PaymentService\Firewall\Chain;
 use Techork\PaymentService\Domain\PaymentIntent\Port\FirewallDecision;
 use Techork\PaymentService\Firewall\Challenge\ChallengeInitiator;
 use Techork\PaymentService\Firewall\Dsl\RuleEvaluator;
+use Techork\PaymentService\Firewall\Exception\ChallengeNotRaised;
 use Techork\PaymentService\Firewall\Exception\UnevaluableChain;
 use Techork\PaymentService\Firewall\Rule\FirewallRuleSource;
 
@@ -27,6 +28,12 @@ use Techork\PaymentService\Firewall\Rule\FirewallRuleSource;
  * That step is the challenge. Raising it here rather than inside each strategy means a new
  * traversal cannot forget it, and means a strategy never touches the initiator, the facts or the
  * chain name.
+ *
+ * It is also where the challenge stops being optional. A strategy may report that one is required
+ * before any exists — it decides, it does not raise — but a decision that leaves this class with
+ * that verdict carries the artefact or does not leave at all. That invariant is the whole value
+ * of the outcome to a caller: parking a payment on a challenge nobody raised gives the client
+ * nothing to present and the intent no way out of the state.
  */
 final readonly class ChainEvaluator
 {
@@ -40,6 +47,7 @@ final readonly class ChainEvaluator
      * @param  array<string, mixed>  $facts  root-keyed; the key set is the sandbox
      *
      * @throws UnevaluableChain when a rule in the chain cannot be evaluated
+     * @throws ChallengeNotRaised when the chain demands a challenge nothing can raise
      */
     public function evaluate(string $chain, array $facts): FirewallDecision
     {
@@ -52,11 +60,12 @@ final readonly class ChainEvaluator
             return $decision;
         }
 
-        // A null answer is kept as a null: "required, nobody raised one" is the truthful shape,
-        // and it is what a deployment with no challenge integration gets. The verdict stands
-        // either way — the subject may not proceed without a challenge.
-        $raised = $this->challenges?->initiate($chain, $facts);
+        if ($this->challenges === null) {
+            throw ChallengeNotRaised::noInitiator($chain);
+        }
 
-        return $raised === null ? $decision : $decision->withChallenge($raised);
+        return $decision->withChallenge(
+            $this->challenges->initiate($chain, $facts) ?? throw ChallengeNotRaised::initiatorDeclined($chain),
+        );
     }
 }

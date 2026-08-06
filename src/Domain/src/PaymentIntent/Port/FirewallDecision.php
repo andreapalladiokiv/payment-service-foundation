@@ -27,9 +27,11 @@ use Techork\PaymentService\Common\Contract\Challenge;
  * real answers; the difference matters when reading back why a payment went the way it did.
  *
  * `$challenge` carries the step-up to present when the verdict is
- * {@see FirewallVerdict::Challenge} and something was able to raise one. Null with that verdict
- * means authentication is required and nobody has initiated it yet — which is a truthful
- * answer, unlike a fabricated challenge with no ACS behind it.
+ * {@see FirewallVerdict::Challenge}. It is nullable because deciding that a subject must be
+ * challenged happens before any challenge exists — an implementation builds the decision first
+ * and attaches the artefact after obtaining it — but a decision RETURNED BY A PORT with that
+ * verdict must carry one. See {@see PaymentIntentFirewallPort} for why, and for what a caller is
+ * entitled to do when it does not.
  */
 final readonly class FirewallDecision
 {
@@ -59,10 +61,10 @@ final readonly class FirewallDecision
     /**
      * The subject may proceed only once it has passed a challenge.
      *
-     * `$challenge` is what the client needs to present it. It is optional because the verdict is
-     * a decision and the challenge is an artefact someone has to go and obtain: a deployment
-     * with no challenge integration still reaches this outcome, and saying "required, none
-     * raised" is honest where inventing one is not.
+     * `$challenge` is what the client needs to present it, and is optional here only because the
+     * verdict is a decision while the challenge is an artefact someone has to go and obtain —
+     * see {@see withChallenge()}, which is how it arrives. Handing this decision to a caller
+     * without one is the contract violation described on {@see PaymentIntentFirewallPort}.
      */
     public static function challenge(?string $reason = null, bool $matched = true, ?Challenge $challenge = null): self
     {
