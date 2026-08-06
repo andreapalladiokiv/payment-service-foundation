@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace Techork\PaymentService\ConnexPay\Webhook;
 
 use Override;
-use Psr\Http\Message\ServerRequestInterface;
 use Techork\PaymentService\Gateway\Contract\GatewayCredential;
+use Techork\PaymentService\Gateway\Webhook\Contract\InboundWebhook;
 use Techork\PaymentService\Gateway\Webhook\Contract\SignatureVerifier as SignatureVerifierContract;
 
 /**
@@ -26,7 +26,7 @@ use Techork\PaymentService\Gateway\Webhook\Contract\SignatureVerifier as Signatu
 final readonly class SignatureVerifier implements SignatureVerifierContract
 {
     #[Override]
-    public function verify(ServerRequestInterface $request, GatewayCredential $gateway): bool
+    public function verify(InboundWebhook $webhook, GatewayCredential $gateway): bool
     {
         $credentials = $gateway->getCredentials();
         $expectedUsername = $credentials['username'] ?? '';
@@ -36,7 +36,7 @@ final readonly class SignatureVerifier implements SignatureVerifierContract
             return false;
         }
 
-        $authHeader = $request->getHeaderLine('Authorization');
+        $authHeader = $webhook->header('Authorization');
         if (! str_starts_with($authHeader, 'Basic ')) {
             return false;
         }

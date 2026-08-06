@@ -9,6 +9,7 @@ use Techork\PaymentService\Gateway\Contract\GatewayCredentialRepository;
 use Techork\PaymentService\Gateway\PaymentGatewayRouter;
 use Techork\PaymentService\Gateway\Webhook\Contract\GatewayMatch;
 use Techork\PaymentService\Gateway\Webhook\Contract\HandlerOutcome;
+use Techork\PaymentService\Gateway\Webhook\Contract\InboundWebhook;
 use Techork\PaymentService\Gateway\Webhook\Contract\SignatureVerifier;
 use Techork\PaymentService\Gateway\Webhook\Contract\StoredWebhookCall;
 
@@ -34,6 +35,14 @@ readonly class WebhookRouter
 
     public function identifyGateway(ServerRequestInterface $request): ?GatewayMatch
     {
+        // Once, here, before anything is offered a candidate. Reading it inside the loop is what
+        // broke this: a verifier that consumed the body left every later candidate checking its
+        // signature against an empty string, so only the first credential of a kind could ever
+        // authenticate — and a tenant that could not authenticate is indistinguishable from a
+        // tenant with the wrong secret. See {@see InboundWebhook} for why this is a read rather
+        // than a rewind.
+        $webhook = InboundWebhook::from($request);
+
         foreach ($this->credentials->all() as $credential) {
             $kind = $credential->getGatewayName();
             $verifier = $this->verifiers->verifier($kind);
@@ -47,14 +56,11 @@ readonly class WebhookRouter
                 continue;
             }
 
-            if (! $verifier->verify($request, $credential)) {
+            if (! $verifier->verify($webhook, $credential)) {
                 continue;
             }
 
-            $parsedBody = $request->getParsedBody();
-            $payload = is_array($parsedBody) ? $parsedBody : [];
-
-            $parsed = $parser->parse($payload);
+            $parsed = $parser->parse($webhook->fields());
 
             return new GatewayMatch(
                 gatewayId: $credential->getId(),

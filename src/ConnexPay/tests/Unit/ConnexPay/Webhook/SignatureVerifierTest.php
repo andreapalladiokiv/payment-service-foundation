@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use Techork\PaymentService\Gateway\Webhook\Contract\InboundWebhook;
+
 use Nyholm\Psr7\ServerRequest;
 use Techork\PaymentService\ConnexPay\Webhook\SignatureVerifier;
 use Techork\PaymentService\Gateway\Contract\GatewayCredential;
@@ -30,11 +32,11 @@ function makeConnexPayCredential(array $credentials): GatewayCredential
     };
 }
 
-function makeRequestWithBasic(string $username, string $password): ServerRequest
+function makeRequestWithBasic(string $username, string $password): InboundWebhook
 {
-    return new ServerRequest('POST', '/webhooks', [
+    return InboundWebhook::from(new ServerRequest('POST', '/webhooks', [
         'Authorization' => 'Basic '.base64_encode($username.':'.$password),
-    ]);
+    ]));
 }
 
 it('accepts a request with matching Basic credentials', function () {
@@ -62,7 +64,7 @@ it('rejects a request when Authorization header is missing', function () {
     $verifier = new SignatureVerifier;
     $gateway = makeConnexPayCredential(['username' => 'cp-bridge', 'password' => 's3cret!']);
 
-    $request = new ServerRequest('POST', '/webhooks');
+    $request = InboundWebhook::from(new ServerRequest('POST', '/webhooks'));
 
     expect($verifier->verify($request, $gateway))->toBeFalse();
 });
@@ -71,7 +73,7 @@ it('rejects a request when scheme is not Basic', function () {
     $verifier = new SignatureVerifier;
     $gateway = makeConnexPayCredential(['username' => 'cp-bridge', 'password' => 's3cret!']);
 
-    $request = new ServerRequest('POST', '/webhooks', ['Authorization' => 'Bearer token-123']);
+    $request = InboundWebhook::from(new ServerRequest('POST', '/webhooks', ['Authorization' => 'Bearer token-123']));
 
     expect($verifier->verify($request, $gateway))->toBeFalse();
 });
