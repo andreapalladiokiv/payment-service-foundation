@@ -41,6 +41,9 @@ final class IssuedAuthentications implements ChallengePort
     /** @var array<string, array{amount: Money, instrument: array<string, mixed>, spent: bool}> */
     private array $issued = [];
 
+    /** How many times anything asked this port to weigh evidence. */
+    public int $verifications = 0;
+
     /**
      * What the merchant's own authentication endpoint does after polling the MPI: record what was
      * obtained, for which payment method and which amount.
@@ -61,6 +64,8 @@ final class IssuedAuthentications implements ChallengePort
 
     public function verify(VerifyChallengeRequest $request): ChallengeOutcome
     {
+        $this->verifications++;
+
         $presented = $request->presented;
 
         if (! $presented instanceof ThreeDSResult) {
@@ -221,4 +226,102 @@ it('tells the two refusals apart in a way a merchant can act on', function () {
     expect($missing?->code)->toBe(ErrorCode::AuthenticationRequired)
         ->and($rejected?->code)->toBe(ErrorCode::AuthenticationFailed)
         ->and($missing?->reason)->toContain('matched rule 9');
+});
+
+// ─────────────────────────────────────────────────────────
+//  The other 3DS path: a challenge the gateway raised itself
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Both halves of this were already pinned and the join was not. One test asserts that `create()`
+ * records `PaymentIntentRequiresAction`; another starts by REPLAYING that event and asserts what
+ * `confirmChallenge()` does with it. Nothing ran the two in sequence on one aggregate, so the
+ * handover was proved by construction — the second test hand-writes the event the first produces,
+ * and both use the same `makeThreeDSChallenge()`, which means a challenge mangled in between
+ * would have been invisible to either.
+ *
+ * This is the path that still parks, and the only one that should: the gateway opened the payment
+ * and handed back somewhere to send the cardholder, so there is something to present and a
+ * pending interaction to wait on. No `ChallengePort` is involved — that port is for evidence a
+ * merchant brings to a payment-intent call, and the two arrangements must not reach into each
+ * other.
+ */
+function gatewayRaisedChallenge(): Techork\PaymentService\Common\ValueObject\Challenge\ThreeDSChallenge
+{
+    return new Techork\PaymentService\Common\ValueObject\Challenge\ThreeDSChallenge(
+        authenticationId: 'b93c3892-1b22-41e9-bfa7-7d5337631112',
+        url: 'https://acs.issuer.example/challenge',
+        payload: 'creq=eyJ0aHJlZURTU2VydmVyVHJhbnNJRCI6ImI5M2MzODkyIn0',
+    );
+}
+
+it('parks on the gateway challenge and finishes it on the same aggregate', function () {
+    // create() through to confirmChallenge() without an event replay in between, which is the
+    // part nothing covered.
+    $raised = gatewayRaisedChallenge();
+    $result = threeDSAuthentication();
+
+    $aggregate = PaymentIntentAggregate::create(
+        makeCreatePiCommand(PaymentIntentId::generate(), CaptureMethod::Immediate),
+        makePayChallengePort($raised),
+        StubPaymentIntentFirewall::allowing(),
+    );
+
+    expect($aggregate->status())->toBe(PaymentIntentStatus::RequiresAction);
+
+    $aggregate->confirmChallenge($result, makeExternallyCompletedConfirmPort());
+
+    expect($aggregate->status())->toBe(PaymentIntentStatus::Charged)
+        ->and($aggregate->challengeResult())->toBe($result);
+});
+
+it('parks on the gateway challenge itself, field for field', function () {
+    // What the client is sent has to be what the gateway said. Both existing tests used one
+    // helper on both sides of the handover, so a challenge rebuilt or narrowed in the middle
+    // would have compared equal to itself. This asserts the fields a client actually needs — an
+    // address and what to post there — rather than object equality.
+    $raised = gatewayRaisedChallenge();
+
+    $parked = PaymentIntentAggregate::create(
+        makeCreatePiCommand(PaymentIntentId::generate()),
+        makePayChallengePort($raised),
+        StubPaymentIntentFirewall::allowing(),
+    )->challenge();
+
+    expect($parked)->toBe($raised)
+        ->and($parked?->transactionId())->toBe('b93c3892-1b22-41e9-bfa7-7d5337631112')
+        ->and($parked->url)->toBe('https://acs.issuer.example/challenge')
+        ->and($parked->payload)->toStartWith('creq=');
+});
+
+it('keeps the two challenge paths out of each other', function () {
+    // The firewall allowed this payment, so nothing asked for a step-up; the gateway raised one
+    // on its own. A ChallengePort is supplied and must go untouched — if the aggregate ever
+    // routed a gateway-raised challenge through it, a merchant would be asked to verify evidence
+    // for an authentication that has not happened yet.
+    $challenges = new IssuedAuthentications;
+
+    $aggregate = PaymentIntentAggregate::create(
+        makeCreatePiCommand(PaymentIntentId::generate()),
+        makePayChallengePort(gatewayRaisedChallenge()),
+        StubPaymentIntentFirewall::allowing(),
+        $challenges,
+    );
+
+    expect($aggregate->status())->toBe(PaymentIntentStatus::RequiresAction)
+        ->and($challenges->verifications)->toBe(0);
+});
+
+it('refuses to confirm a challenge on a payment that is not waiting for one', function () {
+    // The guard that makes the parked state meaningful: a result cannot complete a payment that
+    // never parked, so an answered challenge cannot be pointed at a different payment.
+    $aggregate = PaymentIntentAggregate::create(
+        makeCreatePiCommand(PaymentIntentId::generate(), CaptureMethod::Immediate),
+        makePaySuccessPort(),
+        StubPaymentIntentFirewall::allowing(),
+    );
+
+    expect($aggregate->status())->toBe(PaymentIntentStatus::Charged)
+        ->and(fn () => $aggregate->confirmChallenge(threeDSAuthentication(), makeExternallyCompletedConfirmPort()))
+        ->toThrow(Techork\PaymentService\Domain\PaymentIntent\Exception\PaymentIntentChallengeNotPending::class);
 });
