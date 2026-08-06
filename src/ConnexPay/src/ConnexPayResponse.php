@@ -52,78 +52,55 @@ class ConnexPayResponse extends AbstractResponse implements CardChecksProvider, 
         return $this->data['processorResponseMessage'] ?? $this->data['status'] ?? null;
     }
 
+    /**
+     * The 3DS step ConnexPay is waiting on, read from the fields it actually returns.
+     *
+     * It used to look for `threeDSecure.acsUrl` and `cReq` behind an `authenticationStatus` of
+     * `Challenge`. No ConnexPay response has ever contained any of those names. There is no
+     * `threeDSecure` block at all: a pending authentication comes back as HTTP 202 with a `status`
+     * of `3DS - Pending Fingerprint` or `3DS - Pending User Challenge`, a `redirectUrl`, and — on
+     * the fingerprint step only — a `redirectUrlRequestPayload`.
+     *
+     * The consequence was not a dormant branch. A 202 carries no `wasProcessed`, so
+     * {@see isSuccessful()} answered false, and with no challenge found either, every ConnexPay
+     * payment that needed 3DS was recorded as an acquirer decline.
+     *
+     * `payload` is the form body verbatim — `threeDSMethodData=<base64>`, not the base64 alone —
+     * because that is what the browser posts. Absent on the challenge step, which is why a
+     * challenge carries a url and only sometimes something to send with it.
+     *
+     * `guid` is the identity, and for this gateway it is the right one. ConnexPay does not publish
+     * a `threeDSServerTransID` field: it is buried inside the base64 payload, exists only on the
+     * fingerprint step, and is not what resumes anything — the merchant completes the step and
+     * calls the same endpoint again against this transaction. The value is stable across both
+     * steps.
+     */
     #[Override]
     public function getChallenge(): ?Challenge
     {
-        $threeDS = $this->data['threeDSecure'] ?? $this->data['ThreeDSecure'] ?? null;
+        $status = $this->data['status'] ?? null;
 
-        if ($threeDS === null) {
+        if (! is_string($status) || ! str_starts_with($status, '3DS - Pending')) {
             return null;
         }
 
-        $status = $threeDS['authenticationStatus'] ?? $threeDS['AuthenticationStatus'] ?? null;
-        if ($status !== 'Challenge') {
+        $url = $this->data['redirectUrl'] ?? null;
+        $guid = $this->data['guid'] ?? null;
+
+        // Both or nothing. A step with nowhere to send the cardholder cannot be presented, and one
+        // that cannot be named cannot be resumed; reporting no challenge lets the caller treat the
+        // payment as unresolved rather than holding it against something unusable.
+        if (! is_string($url) || $url === '' || ! is_string($guid) || $guid === '') {
             return null;
         }
 
-        $url = $threeDS['acsUrl'] ?? $threeDS['AcsUrl'] ?? null;
-
-        // Whichever of the two the step calls for. ConnexPay hands the ACS's fingerprinting
-        // endpoint back in the same `acsUrl` field it later uses for the challenge endpoint, and
-        // pairs it with whichever payload belongs to that step — so both are read here, and
-        // which one arrived is left to whoever renders the form.
-        $payload = $threeDS['cReq']
-            ?? $threeDS['CReq']
-            ?? $threeDS['threeDSMethodData']
-            ?? $threeDS['ThreeDSMethodData']
-            ?? null;
-
-        // The protocol's own identifier, and the only one that will still mean anything when the
-        // result comes back. It travels inside the base64 method payload rather than as a field
-        // of its own; the sale reference this used to fall back on is ConnexPay's, not 3DS's,
-        // and matching a later authentication result against it was never possible.
-        $authenticationId = self::threeDSServerTransactionId($payload)
-            ?? $threeDS['threeDSServerTransID']
-            ?? $threeDS['ThreeDSServerTransID']
-            ?? null;
-
-        if ($url === null || $authenticationId === null) {
-            return null;
-        }
+        $payload = $this->data['redirectUrlRequestPayload'] ?? null;
 
         return new ThreeDSChallenge(
-            authenticationId: (string) $authenticationId,
-            url: (string) $url,
-            payload: $payload === null ? null : (string) $payload,
+            authenticationId: $guid,
+            url: $url,
+            payload: is_string($payload) && $payload !== '' ? $payload : null,
         );
-    }
-
-    /**
-     * Dig the `threeDSServerTransID` out of a base64 3DS Method payload.
-     *
-     * The payload is base64 JSON — `{"threeDSMethodNotificationURL": …, "threeDSServerTransID": …}`
-     * — because that is the shape the ACS is handed by the browser. Reading it here is not
-     * parsing someone's internals: the field is the standard's, it is the identity the whole
-     * authentication is keyed on, and no vendor publishes it anywhere more convenient.
-     *
-     * Null for a challenge-step payload, which is a CReq and carries no such thing.
-     */
-    private static function threeDSServerTransactionId(mixed $payload): ?string
-    {
-        if (! is_string($payload) || $payload === '') {
-            return null;
-        }
-
-        $decoded = base64_decode($payload, true);
-
-        if ($decoded === false) {
-            return null;
-        }
-
-        $fields = json_decode($decoded, true);
-        $id = is_array($fields) ? ($fields['threeDSServerTransID'] ?? null) : null;
-
-        return is_string($id) && $id !== '' ? $id : null;
     }
 
     #[Override]
