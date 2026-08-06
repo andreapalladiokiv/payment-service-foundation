@@ -144,11 +144,13 @@ enum ErrorCode: string
     case Unspecified = 'unspecified';
 
     /**
-     * Whether money was moved for, and a record created against, this request.
+     * Whether a payment exists to read back.
      *
-     * True means a payment exists and failed: there is a payment intent to read back, with a
-     * reason and an event trail. False means the request was refused and nothing was created, so
-     * there is nothing to look up and the caller's own request is what to change.
+     * True means one was created and recorded as failed: there is a payment intent with a reason
+     * and an event trail behind it. That is not the same as money having moved, and deliberately
+     * so — {@see AuthenticationRequired} never reaches an acquirer, and the intent it leaves is
+     * still a thing the merchant can fetch, audit and count. False means the request was refused
+     * outright, nothing was created, and the caller's own request is what to change.
      *
      * It exists because that is the one thing a flat list cannot say on its own, and it is the
      * difference between "fix your call" and "the money did not move". Kept as a method rather
