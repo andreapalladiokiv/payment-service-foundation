@@ -66,18 +66,64 @@ class ConnexPayResponse extends AbstractResponse implements CardChecksProvider, 
             return null;
         }
 
-        $acsUrl = $threeDS['acsUrl'] ?? $threeDS['AcsUrl'] ?? null;
-        $reference = $this->getTransactionReference();
+        $url = $threeDS['acsUrl'] ?? $threeDS['AcsUrl'] ?? null;
 
-        if ($acsUrl === null || $reference === null) {
+        // Whichever of the two the step calls for. ConnexPay hands the ACS's fingerprinting
+        // endpoint back in the same `acsUrl` field it later uses for the challenge endpoint, and
+        // pairs it with whichever payload belongs to that step — so both are read here, and
+        // which one arrived is left to whoever renders the form.
+        $payload = $threeDS['cReq']
+            ?? $threeDS['CReq']
+            ?? $threeDS['threeDSMethodData']
+            ?? $threeDS['ThreeDSMethodData']
+            ?? null;
+
+        // The protocol's own identifier, and the only one that will still mean anything when the
+        // result comes back. It travels inside the base64 method payload rather than as a field
+        // of its own; the sale reference this used to fall back on is ConnexPay's, not 3DS's,
+        // and matching a later authentication result against it was never possible.
+        $authenticationId = self::threeDSServerTransactionId($payload)
+            ?? $threeDS['threeDSServerTransID']
+            ?? $threeDS['ThreeDSServerTransID']
+            ?? null;
+
+        if ($url === null || $authenticationId === null) {
             return null;
         }
 
         return new ThreeDSChallenge(
-            transactionId: $reference,
-            acsUrl: $acsUrl,
-            creq: $threeDS['cReq'] ?? $threeDS['CReq'] ?? null,
+            authenticationId: (string) $authenticationId,
+            url: (string) $url,
+            payload: $payload === null ? null : (string) $payload,
         );
+    }
+
+    /**
+     * Dig the `threeDSServerTransID` out of a base64 3DS Method payload.
+     *
+     * The payload is base64 JSON — `{"threeDSMethodNotificationURL": …, "threeDSServerTransID": …}`
+     * — because that is the shape the ACS is handed by the browser. Reading it here is not
+     * parsing someone's internals: the field is the standard's, it is the identity the whole
+     * authentication is keyed on, and no vendor publishes it anywhere more convenient.
+     *
+     * Null for a challenge-step payload, which is a CReq and carries no such thing.
+     */
+    private static function threeDSServerTransactionId(mixed $payload): ?string
+    {
+        if (! is_string($payload) || $payload === '') {
+            return null;
+        }
+
+        $decoded = base64_decode($payload, true);
+
+        if ($decoded === false) {
+            return null;
+        }
+
+        $fields = json_decode($decoded, true);
+        $id = is_array($fields) ? ($fields['threeDSServerTransID'] ?? null) : null;
+
+        return is_string($id) && $id !== '' ? $id : null;
     }
 
     #[Override]

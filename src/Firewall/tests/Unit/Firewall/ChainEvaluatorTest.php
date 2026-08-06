@@ -9,19 +9,15 @@ use Techork\PaymentService\Firewall\Dsl\FieldType;
 use Techork\PaymentService\Firewall\Dsl\RuleCompiler;
 use Techork\PaymentService\Firewall\Dsl\RuleEvaluator;
 use Techork\PaymentService\Firewall\Rule\FirewallRule;
-use Techork\PaymentService\Common\Contract\Challenge;
-use Techork\PaymentService\Common\ValueObject\Challenge\ThreeDSChallenge;
 use Techork\PaymentService\Firewall\Chain\ChainStrategy;
 use Techork\PaymentService\Firewall\Chain\FirstMatchWins;
-use Techork\PaymentService\Firewall\Challenge\ChallengeInitiator;
-use Techork\PaymentService\Firewall\Exception\ChallengeNotRaised;
 use Techork\PaymentService\Firewall\Exception\UnevaluableChain;
 use Techork\PaymentService\Firewall\Rule\FirewallRuleSource;
 
 /**
  * @param  array<int, FirewallRule>  $rules
  */
-function firewallWith(array $rules, ?ChainStrategy $strategy = null, ?ChallengeInitiator $challenges = null): ChainEvaluator
+function firewallWith(array $rules, ?ChainStrategy $strategy = null): ChainEvaluator
 {
     $schema = new class implements FactSchema
     {
@@ -56,7 +52,7 @@ function firewallWith(array $rules, ?ChainStrategy $strategy = null, ?ChallengeI
         }
     };
 
-    return new ChainEvaluator($source, new RuleEvaluator(new RuleCompiler($schema), $schema), $challenges);
+    return new ChainEvaluator($source, new RuleEvaluator(new RuleCompiler($schema), $schema));
 }
 
 it('returns the first matching rule and stops there', function () {
@@ -173,84 +169,34 @@ it('says which chain could not be evaluated, not only which rule', function () {
 //  Challenge, the third action
 // ─────────────────────────────────────────────────────────
 
-/**
- * @param  Challenge|null  $raised  what the integrator answers; null models an integration that
- *                                  is installed and could not raise one
- */
-function firewallChallengeInitiator(?Challenge $raised, ?array &$seen = null): ChallengeInitiator
-{
-    return new class($raised, $seen) implements ChallengeInitiator
-    {
-        public function __construct(private ?Challenge $raised, private ?array &$seen) {}
-
-        public function initiate(string $chain, array $facts): ?Challenge
-        {
-            $this->seen = ['chain' => $chain, 'facts' => $facts];
-
-            return $this->raised;
-        }
-    };
-}
-
-it('asks the initiator for a challenge when a rule demands one', function () {
-    // The seam that replaced a fabrication. The chain decides a step-up is needed; it cannot
-    // produce one, because a Challenge is evidence that a handoff to an ACS already happened and
-    // carries what the client needs to render it. So it asks whoever can.
-    $raised = new ThreeDSChallenge(transactionId: 'ds-txn-1', acsUrl: 'https://acs.example/c', creq: 'creq');
-
+it('reports a challenge verdict and does not try to carry it out', function () {
+    // The engine used to raise the step-up too, through an initiator it was handed. It could not:
+    // what it holds are the facts the rules matched on, which carry a BIN and a last four and
+    // deliberately never a card number, while authenticating a cardholder needs the pan, the
+    // expiry and the holder. Widening the facts to supply them would have turned the vocabulary an
+    // operator writes rules in into an argument list for one protocol.
+    //
+    // So the chain answers, and the aggregate that holds the instrument does the rest through
+    // ChallengePort. What this pins is the boundary: a third action comes back like the other two,
+    // and nothing about a challenge artefact appears in the decision.
     $decision = firewallWith([
         new FirewallRule(FirewallVerdict::Challenge, ['card.country' => ['values' => ['GB']]], id: 'step-up'),
-    ], null, firewallChallengeInitiator($raised))->evaluate('authorization', ['card' => ['country' => 'GB']]);
+    ])->evaluate('authorization', ['card' => ['country' => 'GB']]);
 
     expect($decision->requiresChallenge())->toBeTrue()
         ->and($decision->permits())->toBeFalse()
-        ->and($decision->challenge)->toBe($raised)
+        ->and($decision->isDenied())->toBeFalse()
+        ->and($decision->matched)->toBeTrue()
         ->and($decision->reason)->toBe('matched rule step-up');
 });
 
-it('hands the initiator the chain and the very facts the rules matched on', function () {
-    // So an integrator acts on what the decision was actually made from, rather than re-deriving
-    // it and possibly disagreeing with the rule that fired.
-    $seen = null;
-    $raised = new ThreeDSChallenge(transactionId: 'ds-txn-2', acsUrl: 'https://acs.example/c', creq: 'creq');
+it('answers a challenge fallthrough the same way, for a chain that steps up the unrecognised', function () {
+    // Reached without any rule matching, so it also pins that the verdict survives the strategy's
+    // default path rather than only the matched one.
+    $decision = firewallWith([], FirstMatchWins::withDefault(FirewallVerdict::Challenge, 'step-up-unknown'))
+        ->evaluate('authorization', ['card' => ['country' => 'GB']]);
 
-    firewallWith([
-        new FirewallRule(FirewallVerdict::Challenge, id: 'step-up'),
-    ], null, firewallChallengeInitiator($raised, $seen))->evaluate('authorization', ['card' => ['country' => 'GB']]);
-
-    expect($seen['chain'])->toBe('authorization')
-        ->and($seen['facts'])->toBe(['card' => ['country' => 'GB']]);
+    expect($decision->requiresChallenge())->toBeTrue()
+        ->and($decision->matched)->toBeFalse()
+        ->and($decision->reason)->toBe('no rule matched (step-up-unknown)');
 });
-
-it('refuses to answer with a challenge verdict the initiator could not fulfil', function () {
-    // The null used to be kept and called truthful — "required, nobody raised one". It was
-    // truthful and unusable: what a caller does with this outcome is park a payment on something
-    // the client presents, so a decision with nothing to present parks it on nothing. That is the
-    // same unactionable outcome NoMatch was removed for, one level down.
-    expect(fn () => firewallWith([
-        new FirewallRule(FirewallVerdict::Challenge, id: 'step-up'),
-    ], null, firewallChallengeInitiator(null))->evaluate('authorization', ['card' => []]))
-        ->toThrow(ChallengeNotRaised::class, 'the installed initiator raised none');
-});
-
-it('refuses a chain that demands a challenge with no integration installed at all', function () {
-    // Distinguished from the above because the operator's problem is a different one: a chain was
-    // authored in terms this deployment cannot carry out. Nothing is wrong with the rule and
-    // nothing is wrong with the payment — the two were never connected up.
-    expect(fn () => firewallWith([
-        new FirewallRule(FirewallVerdict::Challenge, id: 'step-up'),
-    ])->evaluate('authorization', ['card' => []]))
-        ->toThrow(ChallengeNotRaised::class, 'no '.ChallengeInitiator::class.' is installed');
-});
-
-it('does not consult the initiator for a verdict that is not a challenge', function (FirewallVerdict $verdict) {
-    // An allow needs no step-up and a denial cannot be answered by one, so neither should reach an
-    // integration that may cost a network round trip.
-    $seen = null;
-
-    firewallWith([
-        new FirewallRule($verdict, id: 'r'),
-    ], null, firewallChallengeInitiator(null, $seen))->evaluate('authorization', ['card' => []]);
-
-    expect($seen)->toBeNull();
-})->with(['allow' => FirewallVerdict::Allow, 'deny' => FirewallVerdict::Deny]);

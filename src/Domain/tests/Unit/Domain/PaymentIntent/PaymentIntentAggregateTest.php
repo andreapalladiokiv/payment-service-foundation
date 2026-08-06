@@ -45,7 +45,7 @@ use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentFailed;
 use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentFeeRecorded;
 use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentImported;
 use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentRequiresAction;
-use Techork\PaymentService\Domain\PaymentIntent\Exception\FirewallPortViolation;
+use Techork\PaymentService\Domain\PaymentIntent\Exception\ChallengeCannotBeRaised;
 use Techork\PaymentService\Domain\PaymentIntent\Exception\InvalidPaymentIntent;
 use Techork\PaymentService\Domain\PaymentIntent\Exception\PaymentIntentCannotBeCancelled;
 use Techork\PaymentService\Domain\PaymentIntent\Exception\PaymentIntentCannotBeCaptured;
@@ -82,6 +82,7 @@ use Techork\PaymentService\Domain\PaymentIntent\Refund\RefundStatus;
 use Techork\PaymentService\Domain\PaymentIntent\Refund\ValueObject\RefundId;
 use Techork\PaymentService\Domain\PaymentIntent\ValueObject\PaymentIntentId;
 use Techork\PaymentService\Tests\Support\PaymentIntentAggregateTestCase;
+use Techork\PaymentService\Tests\Support\StubChallengePort;
 use Techork\PaymentService\Tests\Support\StubPaymentIntentFirewall;
 use function EventSauce\EventSourcing\PestTooling\given;
 use function EventSauce\EventSourcing\PestTooling\then;
@@ -178,9 +179,9 @@ function makePiThreeDSResult(ThreeDSStatus $status = ThreeDSStatus::Successful):
 function makeThreeDSChallenge(): ThreeDSChallenge
 {
     return new ThreeDSChallenge(
-        transactionId: 'gw-txn-123',
-        acsUrl: 'https://acs.example.com/challenge',
-        creq: 'base64-creq',
+        authenticationId: 'gw-txn-123',
+        url: 'https://acs.example.com/challenge',
+        payload: 'base64-creq',
     );
 }
 
@@ -1991,7 +1992,7 @@ it('PaymentIntentRequiresAction survives serialization roundtrip (3DS)', functio
     $restored = PaymentIntentRequiresAction::fromPayload($event->toPayload());
 
     expect($restored->challenge)->toBeInstanceOf(ThreeDSChallenge::class)
-        ->and($restored->challenge->acsUrl)->toBe('https://acs.example.com/challenge');
+        ->and($restored->challenge->url)->toBe('https://acs.example.com/challenge');
 
     then();
 });
@@ -2315,11 +2316,13 @@ it('fails the payment without touching the gateway when a rule rejects it', func
         ->and($aggregate->challenge())->toBeNull();
 });
 
-it('parks with the challenge the firewall raised', function () {
-    // The step-up path. The challenge is whatever something able to raise one produced, and the
-    // domain records that and nothing else — where it used to mint a ThreeDSChallenge from the
-    // payment intent's own id because it had nothing to put here.
-    $raised = new ThreeDSChallenge(transactionId: 'ds-txn-1', acsUrl: 'https://acs.example/c', creq: 'creq');
+it('parks on the challenge the port raised', function () {
+    // The step-up path end to end. The firewall says a step-up is needed and nothing more; the
+    // port goes and starts one; the aggregate records what came back. It does not make one up —
+    // that is what it used to do, minting a ThreeDSChallenge out of the payment intent's own id —
+    // and it cannot park on an absent one, because there is no outcome that carries none.
+    $raised = makeThreeDSChallenge();
+    $challenges = StubChallengePort::raising($raised);
 
     $gateway = Mockery::mock(CreatePort::class);
     $gateway->shouldNotReceive('create');
@@ -2327,32 +2330,64 @@ it('parks with the challenge the firewall raised', function () {
     $aggregate = PaymentIntentAggregate::create(
         makeCreatePiCommand($this->aggregateRootId()),
         $gateway,
-        StubPaymentIntentFirewall::returning(
-            FirewallDecision::challenge('matched rule 9', challenge: $raised),
-        ),
+        StubPaymentIntentFirewall::returning(FirewallDecision::challenge('matched rule 9')),
+        $challenges,
     );
 
     expect($aggregate->status())->toBe(PaymentIntentStatus::RequiresAction)
-        ->and($aggregate->challenge())->toBe($raised);
+        ->and($aggregate->challenge())->toBe($raised)
+        ->and($challenges->initiated)->not->toBeNull()
+        ->and($challenges->verified)->toBeNull();
 });
 
-it('refuses to park a payment on a challenge the firewall did not supply', function () {
-    // A port is documented to owe the artefact with this verdict, and the engine that ships here
-    // throws rather than return the pair apart. This covers the hand-rolled port that does not:
-    // the alternative is an intent in RequiresAction with nothing for a client to present, unable
-    // to proceed and unable to be refused.
-    //
-    // Not a DomainException, deliberately. An application that maps those onto a declined payment
-    // would report this one as an ordinary refusal and lose the defect — the payment was fine, the
-    // collaborator was not.
-    $gateway = Mockery::mock(CreatePort::class);
-    $gateway->shouldNotReceive('create');
+it('hands the port the instrument, which is the reason it is not the firewall asking', function () {
+    // Facts carry a BIN and a last four; an authentication request carries the pan, the expiry
+    // and the holder. That gap is why raising a step-up could not stay behind the firewall's fact
+    // bag, so what this pins is that the full instrument reaches the port.
+    $command = makeCreatePiCommand($this->aggregateRootId());
+    $challenges = StubChallengePort::raising(makeThreeDSChallenge());
 
-    expect(fn () => PaymentIntentAggregate::create(
-        makeCreatePiCommand($this->aggregateRootId()),
+    PaymentIntentAggregate::create(
+        $command,
+        Mockery::mock(CreatePort::class),
+        StubPaymentIntentFirewall::returning(FirewallDecision::challenge('matched rule 9')),
+        $challenges,
+    );
+
+    expect($challenges->initiated?->instrument)->toBe($command->instrument())
+        ->and($challenges->initiated?->amount)->toEqual($command->amount())
+        ->and($challenges->initiated?->paymentIntentId->toString())->toBe($command->paymentIntentId()->toString())
+        ->and($challenges->initiated?->reason)->toBe('matched rule 9');
+});
+
+it('proceeds to the gateway when the authentication passed with nothing to answer', function () {
+    // Frictionless, and the common case. The old contract could only answer "here is a challenge"
+    // or "I could not raise one", so the ordinary outcome of a successful authentication had no
+    // shape to arrive in and would have failed the payment.
+    $resolved = makePiThreeDSResult();
+    $gateway = makePaySuccessPort();
+
+    $aggregate = PaymentIntentAggregate::create(
+        makeCreatePiCommand($this->aggregateRootId(), CaptureMethod::Immediate),
         $gateway,
         StubPaymentIntentFirewall::returning(FirewallDecision::challenge('matched rule 9')),
-    ))->toThrow(FirewallPortViolation::class, 'matched rule 9');
+        StubChallengePort::passing($resolved),
+    );
+
+    expect($aggregate->status())->toBe(PaymentIntentStatus::Charged)
+        ->and($aggregate->challengeResult())->toBe($resolved);
+});
+
+it('refuses a payment whose step-up nothing is installed to carry out', function () {
+    // Neither a pass nor a decline. Waving it through would let a chain's step-up rules stop
+    // protecting anything the moment nobody wired an authenticator; failing it would blame the
+    // cardholder for a wiring mistake. It is thrown, and thrown as a LogicException so an
+    // application that maps business outcomes onto refusals cannot swallow it.
+    expect(fn () => PaymentIntentAggregate::create(
+        makeCreatePiCommand($this->aggregateRootId()),
+        Mockery::mock(CreatePort::class),
+        StubPaymentIntentFirewall::returning(FirewallDecision::challenge('matched rule 9')),
+    ))->toThrow(ChallengeCannotBeRaised::class, 'matched rule 9');
 });
 
 it('passes the domain data it holds to the firewall', function () {
@@ -2369,53 +2404,105 @@ it('passes the domain data it holds to the firewall', function () {
         ->and($firewall->received?->amount)->toEqual(makeAmount());
 });
 
-it('does not consult the firewall for a merchant-initiated payment', function () {
-    // Nobody is present to answer a challenge, so a step-up could only fail.
+it('consults the firewall on a merchant-initiated payment, which it used to skip', function () {
+    // The skip reasoned that nobody is present to answer a step-up, which is true and was never
+    // the whole question. A rule that decided this payment must not happen says nothing about who
+    // is present, so skipping meant every deny rule in the chain went unasked on exactly the
+    // traffic nobody is watching.
     $id = $this->aggregateRootId();
     $firewall = StubPaymentIntentFirewall::denying();
+
+    $gateway = Mockery::mock(CreatePort::class);
+    $gateway->shouldNotReceive('create');
 
     $aggregate = PaymentIntentAggregate::create(
         makeCreatePiCommand($id, CaptureMethod::Immediate, initiation: PaymentInitiation::MerchantRecurring),
-        makePaySuccessPort(),
+        $gateway,
         $firewall,
     );
 
-    expect($firewall->received)->toBeNull()
-        ->and($aggregate->status())->toBe(PaymentIntentStatus::Charged);
+    expect($firewall->received)->not->toBeNull()
+        ->and($firewall->received?->initiation)->toBe(PaymentInitiation::MerchantRecurring)
+        ->and($aggregate->status())->toBe(PaymentIntentStatus::Failed);
 });
 
-it('does not consult the firewall when 3DS already succeeded', function () {
-    // The liability shift is already claimed; a second step-up is redundant.
+it('refuses a step-up demanded of a payment with no cardholder to answer it', function () {
+    // The part of the old skip that was right, kept where it belongs. Inspection happens; what
+    // cannot happen is the authentication, and the port says so rather than the chain going
+    // unconsulted. A chain that should not ask this of unattended traffic scopes its rules on the
+    // `payment_intent.initiation` fact, which is why that fact now reaches it.
+    $gateway = Mockery::mock(CreatePort::class);
+    $gateway->shouldNotReceive('create');
+
+    $aggregate = PaymentIntentAggregate::create(
+        makeCreatePiCommand($this->aggregateRootId(), CaptureMethod::Immediate, initiation: PaymentInitiation::MerchantRecurring),
+        $gateway,
+        StubPaymentIntentFirewall::returning(FirewallDecision::challenge('step up')),
+        StubChallengePort::refusing('no cardholder present'),
+    );
+
+    expect($aggregate->status())->toBe(PaymentIntentStatus::Failed);
+});
+
+it('consults the firewall even when a finished authentication came with the payment', function (ThreeDSStatus $status) {
+    // The bypass this closed, and it was reachable by anyone: the result arrives in the create
+    // command, the coherence check on it establishes that its fields agree with each other and
+    // nothing about whether an issuer ever saw the cardholder — so attaching a well-formed one
+    // walked past every deny rule in the chain.
+    //
+    // Info is in the dataset because it was the cheapest way through: a data-share-only result
+    // counts as a success without any cardholder having been challenged at all.
     $id = $this->aggregateRootId();
     $firewall = StubPaymentIntentFirewall::denying();
 
+    $gateway = Mockery::mock(CreatePort::class);
+    $gateway->shouldNotReceive('create');
+
     $aggregate = PaymentIntentAggregate::create(
-        makeCreatePiCommand($id, CaptureMethod::Immediate, challengeResult: makePiThreeDSResult()),
-        makePaySuccessPort(),
+        makeCreatePiCommand($id, CaptureMethod::Immediate, challengeResult: makePiThreeDSResult($status)),
+        $gateway,
         $firewall,
     );
 
-    expect($firewall->received)->toBeNull()
+    expect($firewall->received)->not->toBeNull()
+        ->and($aggregate->status())->toBe(PaymentIntentStatus::Failed);
+})->with([
+    'authenticated' => ThreeDSStatus::Successful,
+    'data share only' => ThreeDSStatus::Info,
+]);
+
+it('weighs a presented result rather than taking it, when the chain asks for a step-up', function () {
+    // Which of the port's two questions gets asked turns on whether the caller brought a result.
+    // It is weighed, not accepted, and what proceeds to the gateway is the provider's answer.
+    $verified = makePiThreeDSResult();
+
+    $challenges = StubChallengePort::passing($verified);
+    $gateway = makePaySuccessPort();
+
+    $aggregate = PaymentIntentAggregate::create(
+        makeCreatePiCommand($this->aggregateRootId(), CaptureMethod::Immediate, challengeResult: makePiThreeDSResult()),
+        $gateway,
+        StubPaymentIntentFirewall::returning(FirewallDecision::challenge('step up')),
+        $challenges,
+    );
+
+    expect($challenges->verified)->not->toBeNull()
+        ->and($challenges->initiated)->toBeNull()
         ->and($aggregate->status())->toBe(PaymentIntentStatus::Charged);
 });
 
-it('does not consult the firewall when 3DS returned Info', function () {
-    // The consequence of counting Info as success: a data-share-only result
-    // satisfies the firewall's demand for a step-up, even though no cardholder
-    // was challenged. Pinned deliberately — it is the reachable way to skip
-    // inspection with a completed 3DS call, so it must break loudly if the
-    // success set is ever narrowed again.
-    $id = $this->aggregateRootId();
-    $firewall = StubPaymentIntentFirewall::denying();
+it('fails the payment when a presented result does not check out', function () {
+    $gateway = Mockery::mock(CreatePort::class);
+    $gateway->shouldNotReceive('create');
 
     $aggregate = PaymentIntentAggregate::create(
-        makeCreatePiCommand($id, CaptureMethod::Immediate, challengeResult: makePiThreeDSResult(ThreeDSStatus::Info)),
-        makePaySuccessPort(),
-        $firewall,
+        makeCreatePiCommand($this->aggregateRootId(), CaptureMethod::Immediate, challengeResult: makePiThreeDSResult()),
+        $gateway,
+        StubPaymentIntentFirewall::returning(FirewallDecision::challenge('step up')),
+        StubChallengePort::refusing('not the authentication it claims to be'),
     );
 
-    expect($firewall->received)->toBeNull()
-        ->and($aggregate->status())->toBe(PaymentIntentStatus::Charged);
+    expect($aggregate->status())->toBe(PaymentIntentStatus::Failed);
 });
 
 it('lets an allowed payment reach the gateway, whether a rule said so or the chain fell through', function (bool $matched) {
@@ -2553,7 +2640,7 @@ it('inspects rather than throwing when an incoherent result arrives with the pay
     // CONSULTED. A rejection would end in Failed, and that could not be told apart from the
     // incoherent result having failed the payment by itself.
     $firewall = StubPaymentIntentFirewall::returning(
-        FirewallDecision::challenge('stub', challenge: makeThreeDSChallenge()),
+        FirewallDecision::challenge('stub'),
     );
 
     $aggregate = PaymentIntentAggregate::create(
@@ -2564,6 +2651,7 @@ it('inspects rather than throwing when an incoherent result arrives with the pay
         ),
         makePaySuccessPort(),
         $firewall,
+        StubChallengePort::raising(makeThreeDSChallenge()),
     );
 
     expect($firewall->received)->not->toBeNull()

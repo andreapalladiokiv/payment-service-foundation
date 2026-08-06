@@ -94,30 +94,40 @@ written by implementing the interface, without touching the engine.
 
 ## The three actions
 
-`Allow`, `Deny` and `Challenge`, all of them things a caller can carry out.
-There is deliberately no "nothing matched": silence is not an action, and what
-the absence of a match means is the chain's business, which its strategy
-answers.
+`Allow`, `Deny` and `Challenge`, all of them things a caller can carry out. There is deliberately
+no "nothing matched": silence is not an action, and what the absence of a match means is the
+chain's business, which its strategy answers.
 
-`Challenge` is the middle answer, and the reason a firewall need not choose
-between waving a suspicious payment through and refusing a legitimate one. The
-firewall decides one is needed and cannot produce one — a `Challenge` is
-evidence that a handoff to an ACS already happened — so `ChainEvaluator` asks a
-`ChallengeInitiator`, the contract a 3DS integration implements. That step lives
-in the evaluator rather than in each strategy, so a new traversal cannot forget
-it.
+`Challenge` is the middle answer, and the reason a firewall need not choose between waving a
+suspicious payment through and refusing a legitimate one. **The engine does not carry it out.** It
+briefly did, through a `ChallengeInitiator` it was handed — and could not: the facts it works from
+hold a BIN and a last four and deliberately never a card number, while authenticating a cardholder
+needs the pan, the expiry and the holder. Widening the fact vocabulary to supply them would have
+turned the language an operator writes rules in into an argument list for one protocol.
 
-An initiator gets the chain name and the facts, and the facts are the matching
-view only: `source.bin` and `last4`, never a PAN, and nothing of the browser
-beyond `connection.ip` and `user_agent`. What an ACS call needs beyond that is
-the initiator's own business — key off `payment_intent.id` for what the
-application's vault holds, take request-scoped context through the constructor.
-Widening the fact schema to carry ACS arguments would make every integration's
-requirements a change to the vocabulary an admin panel offers.
+So the decision travels, and the aggregate that holds the instrument acts on it, through
+`Domain\PaymentIntent\Port\ChallengePort`. A `FirewallDecision` has nowhere to put an artefact,
+which is what keeps the two jobs apart.
+
+## Inspecting everything
+
+Two kinds of payment used to skip the chain, and both were safe only while the firewall's one
+power was to demand a step-up:
+
+- a **merchant-initiated** payment, on the reasoning that nobody is present to answer one. True,
+  and beside the point once a rule can refuse a payment outright — skipping meant every deny rule
+  went unasked on exactly the traffic nobody is watching. It is inspected now, and a `Challenge`
+  verdict on it is refused by the port rather than attempted.
+- a payment arriving with a **finished 3DS result**, on the reasoning that the liability shift is
+  already claimed. Also true, and also beside the point: that result comes from the caller, and
+  the coherence check on it establishes that its fields agree with each other, not that an issuer
+  ever saw the cardholder. Attaching a well-formed one walked past the whole chain.
+
+`payment_intent.initiation` and `payment_intent.is_cardholder_initiated` exist because of the
+first: a chain that must not step up unattended traffic now says so in a rule instead of relying
+on never being asked.
 
 ## When a chain has no answer
-
-Two failures, both thrown rather than folded into a verdict.
 
 `UnevaluableChain` — a rule that will not compile. This used to be survivable:
 the rule was skipped and the decision carried a `degraded` flag. The flag was
@@ -126,17 +136,13 @@ worth and the one caller there is treated it like everything else that did not
 permit, so a `Deny` rule with a typo above an `Allow` that matched stopped
 protecting anything while the payment went through.
 
-`ChallengeNotRaised` — the chain demanded a challenge and none exists, either
-because no initiator is installed or because the installed one returned null.
-The alternative was returning the verdict with a null challenge, which is
-truthful and unusable: it parks a payment on nothing to present, unable to
-proceed, unable to be refused, indistinguishable from an authentication still in
-flight.
+The cost is real and worth stating: one malformed rule stops payments on that
+chain instead of quietly weakening them. That is the trade this package chooses
+— an operator's emergency, not a silent discount on protection.
 
-The cost is real and worth stating: one malformed rule, or one unreachable ACS,
-stops payments on that chain instead of quietly weakening them. That is the
-trade this package chooses — an operator's emergency, not a silent discount on
-protection.
+A step-up that nothing can carry out is the same kind of problem and is handled
+the same way, one layer up: `ChallengeCannotBeRaised`, thrown by the aggregate
+when a chain asks for authentication on a deployment with no `ChallengePort`.
 
 ## Contents
 
@@ -146,7 +152,6 @@ protection.
 | `Chain\ChainStrategy` | the traversal — which rules are visited, which answer wins, what an unmentioned subject gets |
 | `Chain\FirstMatchWins` | the classic packet-filter walk; whitelist and blacklist are its two defaults |
 | `Chain\RuleMatcher` | asks one rule whether it matches, so a strategy is about traversal only |
-| `Challenge\ChallengeInitiator` | the seam a 3DS integration implements to raise the step-up a chain asked for |
 | `Rule\FirewallRule` | one rule: verdict + conditions + optional raw expression + id |
 | `Rule\FirewallRuleSource` | supplies a chain's rules in order **and** its strategy — the seam that keeps storage out of the engine |
 | `Common\Contract\FactSupplier` (shared kernel, not this package) | contributes a slice of the fact tree; no arguments, so this package learns no vendor vocabulary |

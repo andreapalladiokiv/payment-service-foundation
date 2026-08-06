@@ -60,8 +60,11 @@ fixed-amount), `MerchantUnscheduled` (on-demand card-on-file). It lives in
 `Common\ValueObject` rather than here, because the gateway package has to name
 it to put the indicator on the wire and cannot see this one. It rides on the
 creation-flow events (`RequiresAction` / `Authorized` / `Charged` / `Failed`)
-and gates the cardholder-facing controls — fraud screening and a 3DS step-up
-apply only to CIT, since an MIT payment has no cardholder to answer one.
+and it is what a firewall rule scopes a step-up on. Inspection itself applies to
+every payment: an MIT is screened like anything else, and what it cannot do is
+answer a challenge, so a `Challenge` verdict on one is refused rather than
+attempted. Chains that should not ask match on
+`payment_intent.is_cardholder_initiated`.
 
 That is a rule about step-ups, not about authentication: EMV 3DS
 requestor-initiated (3RI) obtains a cryptogram with no cardholder present, so an
@@ -74,19 +77,41 @@ stored-credential series flagged needs a distinction this enum does not draw.
 FirewallDecision` is defined here and consulted by
 `PaymentIntentAggregate::create()` itself, not by the application flow, before
 the gateway call is spent. A chain answers with a `FirewallVerdict` of `Allow`,
-`Deny` or `Challenge`, and all three are actions a caller can carry out: an
-allow proceeds to the gateway, a denial records `PaymentIntentFailed` with a
-prefixed reason so it cannot be read as an acquirer's answer, and a challenge
-records `PaymentIntentRequiresAction` with the challenge the decision carries.
+`Deny` or `Challenge`, and all three are actions a caller can carry out. There is
+no "nothing matched" — what the absence of a match means belongs to the chain,
+which says so through its own strategy — and no challenge artefact on the
+decision, because deciding that a cardholder must be authenticated and
+authenticating them are different jobs.
 
-Two things a decision cannot be. There is no "nothing matched" — what the
-absence of a match means belongs to the chain, which says so through its own
-strategy — and a `Challenge` verdict cannot arrive without a `Challenge` on it:
-`FirewallPortViolation` (a `LogicException`, not a `DomainException`, so an
-application mapping business outcomes onto refusals cannot swallow it) rather
-than an intent parked on nothing. Implementations must not throw for business
-outcomes; they must throw for a chain they cannot evaluate or a challenge they
-cannot raise. The default `NullPaymentIntentFirewall` allows — nothing is
+Every payment is inspected. Two used to be skipped: a merchant-initiated one, on
+the reasoning that nobody is present to answer a step-up, and one arriving with a
+finished 3DS result, on the reasoning that the liability shift is already
+claimed. Both reasons were sound and both were about the step-up only; once a
+rule could refuse a payment outright, the skips meant deny rules went unasked —
+and the second was reachable by anyone, since the result comes from the caller
+and the coherence check on it says its fields agree, not that an issuer saw the
+cardholder. One skip remains: a non-card instrument, which the firewall request
+cannot describe.
+
+**Challenges the firewall asked for.** `ChallengePort` is the aggregate's own
+port for the authentication a `Challenge` verdict demands, sitting beside
+`ConfirmChallengePort` — this one talks to whoever authenticates cardholders,
+that one talks to the gateway and places the payment afterwards. It takes the
+full instrument, which is why it could not live behind the firewall's fact bag: a
+rule matches on a BIN and a last four, an authentication request needs the pan.
+
+It answers a `ChallengeOutcome` with three cases, because an authentication has
+three endings: `raised` parks the payment at `RequiresAction` with the artefact
+to present, `passed` sends it to the acquirer carrying the provider's own result
+(the frictionless case, and the common one), and `refused` fails it. Which of the
+port's two questions gets asked turns on whether a result came in with the
+payment: `initiate` when none did, `verify` when one did — weighed rather than
+taken, since the alternative is that presenting one satisfies any step-up rule.
+A chain demanding a step-up with no port installed raises
+`ChallengeCannotBeRaised`, a `LogicException` so an application mapping business
+outcomes onto refusals cannot swallow it.
+
+The default firewall is `NullPaymentIntentFirewall`, which allows — nothing is
 installed, so nothing is inspected.
 
 **Refunds.** `Refund` is a child aggregate on the same event stream (the

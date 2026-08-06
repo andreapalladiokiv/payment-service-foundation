@@ -15,7 +15,7 @@ function challengeTagVisitor(): ChallengeVisitor
     {
         public function visitThreeDS(ThreeDSChallenge $challenge): string
         {
-            return 'three_ds:'.$challenge->transactionId;
+            return 'three_ds:'.$challenge->authenticationId;
         }
 
         public function visitRedirect(RedirectChallenge $challenge): string
@@ -27,10 +27,9 @@ function challengeTagVisitor(): ChallengeVisitor
 
 it('dispatches ThreeDSChallenge to visitThreeDS', function () {
     $challenge = new ThreeDSChallenge(
-        transactionId: 'txn-1',
-        acsUrl: 'https://acs.example.com',
-        creq: 'base64data',
-        clientSecret: 'secret',
+        authenticationId: 'txn-1',
+        url: 'https://acs.example.com',
+        payload: 'base64data',
     );
 
     expect($challenge->accept(challengeTagVisitor()))->toBe('three_ds:txn-1');
@@ -46,19 +45,18 @@ it('dispatches RedirectChallenge to visitRedirect', function () {
     expect($challenge->accept(challengeTagVisitor()))->toBe('redirect:pay-99');
 });
 
-it('allows Stripe-style ThreeDSChallenge without creq', function () {
+it('allows a step with no payload, which is a plain redirect', function () {
     $challenge = new ThreeDSChallenge(
-        transactionId: 'pi_stripe_1',
-        acsUrl: 'https://hooks.stripe.com/3d_secure_2/...',
-        clientSecret: 'pi_stripe_1_secret_abc',
+        authenticationId: 'pi_stripe_1',
+        url: 'https://hooks.stripe.com/3d_secure_2/...',
     );
 
-    expect($challenge->creq)->toBeNull()
-        ->and($challenge->clientSecret)->toBe('pi_stripe_1_secret_abc');
+    expect($challenge->payload)->toBeNull()
+        ->and($challenge->url)->toBe('https://hooks.stripe.com/3d_secure_2/...');
 });
 
 it('exposes transactionId via interface method', function () {
-    $three = new ThreeDSChallenge(transactionId: 'txn-a');
+    $three = new ThreeDSChallenge('txn-a', 'https://acs.test/step');
     $redirect = new RedirectChallenge(transactionId: 'pay-b', url: 'https://x', formFields: []);
 
     expect($three->transactionId())->toBe('txn-a')

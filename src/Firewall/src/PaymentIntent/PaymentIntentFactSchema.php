@@ -91,6 +91,13 @@ final readonly class PaymentIntentFactSchema implements FactSchema
             'payment_intent.amount' => FieldType::Number,
             'payment_intent.currency' => FieldType::Text,
             'payment_intent.gateway_id' => FieldType::Text,
+            // Whether a cardholder is present, and the reason it is matchable at all: an
+            // unattended payment used to skip inspection entirely, which meant a denial went
+            // unasked-for on exactly the traffic nobody is watching. It is inspected now, so a
+            // chain that must not demand a step-up of it says so here — a rule asking for one is
+            // refused on a merchant-initiated payment, since there is nobody to answer it.
+            'payment_intent.initiation' => FieldType::Text,
+            'payment_intent.is_cardholder_initiated' => FieldType::Boolean,
 
             // screening — a fraud provider's verdict, now matchable
             'screening.decision' => FieldType::Text,

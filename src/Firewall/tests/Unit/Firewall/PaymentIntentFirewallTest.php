@@ -12,6 +12,7 @@ use Techork\PaymentService\Common\ValueObject\CreditCard\CardSummary;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Expiration;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Holder;
 use Techork\PaymentService\Common\ValueObject\IpAddress;
+use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
 use Techork\PaymentService\Domain\PaymentIntent\Port\FirewallVerdict;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\PaymentIntentFirewallRequest;
 use Techork\PaymentService\Firewall\Chain\ChainEvaluator;
@@ -212,4 +213,53 @@ it('stringifies value objects so a rule reaches data and never behaviour', funct
         ->and($facts['payment_intent']['amount'])->toBe(15000)
         ->and($facts['payment_intent']['currency'])->toBe('USD')
         ->and($facts['payment_method']['source']['expiry_year'])->toBe(2031);
+});
+
+
+it('tells a rule whether a cardholder is present', function (PaymentInitiation $initiation, string $expected) {
+    // Inspection now runs on merchant-initiated payments, which it used to skip — so a chain that
+    // must not demand a step-up of unattended traffic needs something to say that with, and this
+    // is it. Before the fact existed, the only way to spare recurring billing from a step-up rule
+    // was that skip, and the skip took every deny rule in the chain with it.
+    $decision = paymentIntentFirewall([
+        new FirewallRule(FirewallVerdict::Deny, ['payment_intent.initiation' => ['values' => [$initiation->value]]], id: 'by-initiation'),
+    ])->evaluate(new PaymentIntentFirewallRequest(
+        amount: Money::USD(1000),
+        card: firewallRequestFor()->card,
+        billing: firewallRequestFor()->billing,
+        initiation: $initiation,
+    ));
+
+    expect($decision->verdict->value)->toBe($expected);
+})->with([
+    'cardholder' => [PaymentInitiation::CardholderInitiated, 'deny'],
+    'recurring' => [PaymentInitiation::MerchantRecurring, 'deny'],
+]);
+
+it('lets a step-up rule exclude unattended traffic, which is the reason the fact exists', function () {
+    // The shape an operator actually writes: step up a cardholder, leave recurring billing alone.
+    // A step-up demanded of a payment with nobody present can only be refused, so a chain that
+    // cannot say "cardholder only" turns a sensible rule into failed recurring charges.
+    $chain = [new FirewallRule(
+        FirewallVerdict::Challenge,
+        ['payment_intent.is_cardholder_initiated' => ['values' => [true]]],
+        id: 'step-up-cit',
+    )];
+
+    $present = paymentIntentFirewall($chain)->evaluate(new PaymentIntentFirewallRequest(
+        amount: Money::USD(1000),
+        card: firewallRequestFor()->card,
+        billing: firewallRequestFor()->billing,
+        initiation: PaymentInitiation::CardholderInitiated,
+    ));
+
+    $unattended = paymentIntentFirewall($chain)->evaluate(new PaymentIntentFirewallRequest(
+        amount: Money::USD(1000),
+        card: firewallRequestFor()->card,
+        billing: firewallRequestFor()->billing,
+        initiation: PaymentInitiation::MerchantRecurring,
+    ));
+
+    expect($present->requiresChallenge())->toBeTrue()
+        ->and($unattended->requiresChallenge())->toBeFalse();
 });

@@ -131,14 +131,17 @@ it('permits only an allow, and a challenge is not a smaller allow', function () 
         ->and(FirewallDecision::challenge('matched rule 9')->requiresChallenge())->toBeTrue();
 });
 
-it('carries the challenge that was raised, or admits none was', function () {
-    // The distinction the aggregate acts on. A challenge object is evidence that a handoff to an
-    // ACS already happened; when no integration raised one, null says "required, not started" —
-    // which is why the aggregate no longer has to invent a ThreeDSChallenge to have something to
-    // record.
-    $raised = new ThreeDSChallenge(transactionId: 'ds-txn-1', acsUrl: 'https://acs.example/challenge', creq: 'creq');
+it('says a step-up is required without saying what it is', function () {
+    // A decision the firewall could not carry out even if it wanted to: what it holds are the
+    // facts its rules matched on, which carry a BIN and a last four and deliberately never a card
+    // number. Briefly this type had a challenge on it — first fabricated by the aggregate, then
+    // nullable and parking payments on nothing — and both were the same mistake, which was making
+    // the decision responsible for the doing.
+    $decision = FirewallDecision::challenge('matched rule 9');
 
-    expect(FirewallDecision::challenge('matched rule 9', challenge: $raised)->challenge)->toBe($raised)
-        ->and(FirewallDecision::challenge('matched rule 9')->challenge)->toBeNull()
-        ->and(FirewallDecision::challenge('matched rule 9')->withChallenge($raised)->challenge)->toBe($raised);
+    expect($decision->requiresChallenge())->toBeTrue()
+        ->and($decision->permits())->toBeFalse()
+        ->and($decision->isDenied())->toBeFalse()
+        ->and($decision->reason)->toBe('matched rule 9')
+        ->and(property_exists($decision, 'challenge'))->toBeFalse();
 });

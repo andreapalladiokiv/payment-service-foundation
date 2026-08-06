@@ -65,6 +65,12 @@ final readonly class RequestFactSupplier implements FactSupplier
                 'amount' => (int) $request->amount->getAmount(),
                 'currency' => $request->amount->getCurrency()->getCode(),
                 'gateway_id' => $request->gatewayId,
+                // Both spellings, because a rule needs either depending on what it is saying. The
+                // boolean is what a step-up rule guards itself with; the value distinguishes the
+                // kinds of unattended payment from each other, which a rule about recurring
+                // billing needs and a boolean cannot express.
+                'initiation' => $request->initiation->value,
+                'is_cardholder_initiated' => ! $request->initiation->isMerchantInitiated(),
             ],
         ];
     }

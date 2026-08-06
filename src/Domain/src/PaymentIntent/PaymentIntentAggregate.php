@@ -35,7 +35,7 @@ use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentFailed;
 use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentFeeRecorded;
 use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentImported;
 use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentRequiresAction;
-use Techork\PaymentService\Domain\PaymentIntent\Exception\FirewallPortViolation;
+use Techork\PaymentService\Domain\PaymentIntent\Exception\ChallengeCannotBeRaised;
 use Techork\PaymentService\Domain\PaymentIntent\Exception\InvalidPaymentIntent;
 use Techork\PaymentService\Domain\PaymentIntent\Exception\PaymentIntentCannotBeCancelled;
 use Techork\PaymentService\Domain\PaymentIntent\Exception\PaymentIntentCannotBeCaptured;
@@ -44,6 +44,8 @@ use Techork\PaymentService\Domain\PaymentIntent\Exception\PaymentIntentChallenge
 use Techork\PaymentService\Domain\PaymentIntent\Exception\PaymentIntentRefundExceedsAmount;
 use Techork\PaymentService\Domain\PaymentIntent\Port\CancelPort;
 use Techork\PaymentService\Domain\PaymentIntent\Port\CapturePort;
+use Techork\PaymentService\Domain\PaymentIntent\Port\ChallengeOutcome;
+use Techork\PaymentService\Domain\PaymentIntent\Port\ChallengePort;
 use Techork\PaymentService\Domain\PaymentIntent\Port\ConfirmChallengePort;
 use Techork\PaymentService\Domain\PaymentIntent\Port\CreatePort;
 use Techork\PaymentService\Domain\PaymentIntent\Port\FirewallDecision;
@@ -53,7 +55,9 @@ use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CancelRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CaptureRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\ConfirmChallengeRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CreateRequest;
+use Techork\PaymentService\Domain\PaymentIntent\Port\Request\InitiateChallengeRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\PaymentIntentFirewallRequest;
+use Techork\PaymentService\Domain\PaymentIntent\Port\Request\VerifyChallengeRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Refund\Command\CreateRefundCommand;
 use Techork\PaymentService\Domain\PaymentIntent\Refund\Command\RecordRefundFeeCommand;
 use Techork\PaymentService\Domain\PaymentIntent\Refund\Event\RefundFailed;
@@ -220,6 +224,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         CreatePaymentIntentCommand $command,
         CreatePort $port,
         PaymentIntentFirewallPort $firewall,
+        ?ChallengePort $challenges = null,
     ): self {
         $command->amount()->isPositive() || throw InvalidPaymentIntent::nonPositiveAmount();
         $command->instrument()->isValid() || throw InvalidPaymentIntent::unusablePaymentSource();
@@ -238,12 +243,14 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         // Inspect before spending a gateway call: a rejected payment never
         // reaches the acquirer, it parks for authentication instead.
         $decision = $self->firewallDecision($command, $firewall);
+        $evidence = $command->challengeResult();
 
         if ($decision !== null && ! $decision->permits()) {
             // A rule rejected this payment. Authentication cannot answer that — the firewall is
             // not asking who the cardholder is, it has decided the payment must not happen — so
-            // parking it for a step-up would leave an intent waiting on evidence that could
-            // never satisfy the rule, and would send a cardholder somewhere for nothing.
+            // holding it for a step-up would wait on evidence that could never satisfy the rule,
+            // and would send a cardholder somewhere for nothing. Evidence already in hand does
+            // not soften it either: a denial is not a question.
             if ($decision->isDenied()) {
                 $self->recordThat(new PaymentIntentFailed(
                     $command->amount(),
@@ -254,35 +261,66 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                     $command->merchantDescriptor(),
                     $command->description(),
                     self::firewallRefusalReason($decision),
-                    $command->challengeResult(),
+                    $evidence,
                     $command->initiation(),
                 ));
 
                 return $self;
             }
 
-            // A challenge is required, and the decision carries it: a port that demands one owes
-            // the artefact to present, which is the whole of what this branch does with it. The
-            // aggregate does not make one up — that is what it used to do, minting a
-            // ThreeDSChallenge out of the payment intent's own id — and it does not park the
-            // payment on an absent one either, because an intent waiting on a challenge no
-            // client can answer is stuck rather than pending.
-            $challenge = $decision->challenge
-                ?? throw FirewallPortViolation::challengeDemandedWithoutOne($decision->reason);
+            // Authentication is required. Whether one is already in hand decides which question
+            // gets asked, and both go to the same port: start one, or find out what a presented
+            // result is actually worth. The second exists because that result reaches us from
+            // the caller and the coherence check on it establishes only that its fields agree —
+            // so without asking, attaching a well-formed one would be enough to satisfy every
+            // step-up rule in the chain.
+            $authentication = self::authenticate(
+                $challenges ?? throw ChallengeCannotBeRaised::noPortInstalled($decision->reason),
+                $command,
+                $decision,
+                $evidence,
+            );
 
-            $self->recordThat(new PaymentIntentRequiresAction(
-                $command->amount(),
-                $command->instrument(),
-                $command->captureMethod(),
-                $command->billingAddress(),
-                $command->metadata(),
-                $command->merchantDescriptor(),
-                $command->description(),
-                $challenge,
-                $command->initiation(),
-            ));
+            if ($authentication->wasRefused()) {
+                $self->recordThat(new PaymentIntentFailed(
+                    $command->amount(),
+                    $command->instrument(),
+                    $command->captureMethod(),
+                    $command->billingAddress(),
+                    $command->metadata(),
+                    $command->merchantDescriptor(),
+                    $command->description(),
+                    self::challengeRefusalReason($authentication),
+                    $evidence,
+                    $command->initiation(),
+                ));
 
-            return $self;
+                return $self;
+            }
+
+            // On the artefact rather than on `wasRaised()`, which says the same thing: the two
+            // cannot disagree, and reading the field is what makes that visible here.
+            if ($authentication->challenge !== null) {
+                $self->recordThat(new PaymentIntentRequiresAction(
+                    $command->amount(),
+                    $command->instrument(),
+                    $command->captureMethod(),
+                    $command->billingAddress(),
+                    $command->metadata(),
+                    $command->merchantDescriptor(),
+                    $command->description(),
+                    $authentication->challenge,
+                    $command->initiation(),
+                ));
+
+                return $self;
+            }
+
+            // Authenticated with nothing for the cardholder to do — the frictionless case, and
+            // the common one. The payment proceeds now, carrying the provider's own result
+            // rather than the caller's copy of it, since that is the evidence the acquirer will
+            // be shown.
+            $evidence = $authentication->result;
         }
 
         try {
@@ -292,7 +330,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                 instrument: $command->instrument(),
                 captureMethod: $command->captureMethod(),
                 billingAddress: $command->billingAddress(),
-                challengeResult: $command->challengeResult(),
+                challengeResult: $evidence,
                 initiation: $command->initiation(),
             ));
         } catch (GatewayDeclinedException $e) {
@@ -305,7 +343,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                 $command->merchantDescriptor(),
                 $command->description(),
                 $e->reason,
-                $command->challengeResult(),
+                $evidence,
                 $command->initiation(),
             ));
 
@@ -337,7 +375,9 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
             $command->metadata(),
             $command->merchantDescriptor(),
             $command->description(),
-            $command->challengeResult(),
+            // The resolved evidence, not the command's copy of it. Where an authentication ran
+            // during this call, what claims the liability shift is what the provider answered.
+            $evidence,
             $command->initiation(),
             $outcome->convertedAmount,
         );
@@ -468,6 +508,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
             $outcome = $port->confirm(new ConfirmChallengeRequest(
                 paymentIntentId: $this->aggregateRootId(),
                 challengeResult: $result,
+                challenge: $this->challenge,
                 amount: $this->amount,
                 instrument: $this->instrument,
                 captureMethod: $this->captureMethod,
@@ -547,44 +588,47 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
      *
      * The decision is returned whole rather than reduced to a yes/no, because its three actions
      * mean three different things and only the caller can act on them: a rejection ends the
-     * payment, a demand for a challenge parks it, and only an allow proceeds.
+     * payment, a demand for authentication holds it up, and only an allow proceeds.
      *
      * What this deliberately no longer does is manufacture a challenge. It used to answer a
      * non-permitting decision with `new ThreeDSChallenge(transactionId: $paymentIntentId)`, a
      * fabrication on two counts: a {@see Challenge} is evidence that a handoff to an ACS has
      * ALREADY happened and carries what the client needs to render it, and the identifier it
-     * named was the payment intent's rather than any 3DS transaction's. Every rendering field was
-     * null, so no client could act on it, while `transactionId()` handed out a value that reads
-     * like an authentication reference and is not one. Raising a real challenge belongs to
-     * whoever integrates 3DS, reached through the firewall's own initiator contract.
+     * named was the payment intent's rather than any 3DS transaction's. Raising a real one is
+     * {@see ChallengePort}'s, consulted by {@see create()} once this has decided.
      *
-     * Three cases skip inspection outright, and all three are about there being
-     * nothing to gain:
-     *  - a merchant-initiated payment has no cardholder to answer a challenge, so
-     *    a step-up could only fail;
-     *  - a completed 3DS authentication already claims the liability shift, so a
-     *    second one is redundant;
-     *  - a non-card instrument has no card facts to inspect.
+     * ## Two things that used to skip inspection and no longer do
      *
-     * A missing connection is deliberately NOT one of them: the chain still runs
-     * and rules leaning on connection facts merely fail to match. Skipping because
-     * an input is absent would let a forgotten field bypass the firewall.
+     * Both were safe under a firewall whose only power was to demand a step-up, and both became
+     * bypasses the moment it could refuse a payment outright:
      *
-     * Otherwise the domain's own policy decides: only an explicit accept on a
-     * cleanly evaluated chain proceeds ({@see FirewallDecision::permits()}).
+     *  - a merchant-initiated payment. It has no cardholder, so a step-up cannot be carried out
+     *    — but a rule that decided this payment must not happen says nothing about who is
+     *    present, and skipping the chain meant a denial went unasked for. The impossible part is
+     *    handled where it arises: a `Challenge` verdict on an MIT is refused by the port. Chains
+     *    that should not demand one of unattended traffic say so with the
+     *    `payment_intent.initiation` fact.
+     *  - a payment arriving with a finished 3DS authentication. That skip reasoned that the
+     *    liability shift is already claimed, which is true and beside the point: the result comes
+     *    from the caller, the coherence check on it asks whether its fields agree and not whether
+     *    the authentication happened, so attaching a well-formed one was enough to walk past
+     *    every deny rule in the chain. Now the chain runs first, and evidence is something
+     *    {@see ChallengePort::verify()} weighs only once a chain has asked for authentication.
+     *
+     * One skip remains: a non-card instrument. It is not a policy choice but the shape of
+     * {@see PaymentIntentFirewallRequest}, which requires a card summary because the fact
+     * vocabulary is built around one — so a hosted payment or a bare token has nothing to match
+     * on, including for rules about amount or gateway that would otherwise apply. Worth removing
+     * when the request can describe an instrument it cannot summarise.
+     *
+     * A missing connection is deliberately NOT a skip: the chain still runs and rules leaning on
+     * connection facts merely fail to match. Skipping because an input is absent would let a
+     * forgotten field bypass the firewall.
      */
     private function firewallDecision(
         CreatePaymentIntentCommand $command,
         PaymentIntentFirewallPort $firewall,
     ): ?FirewallDecision {
-        if ($command->initiation()->isMerchantInitiated()) {
-            return null;
-        }
-
-        if ($this->hasSuccessfulThreeDS($command->challengeResult())) {
-            return null;
-        }
-
         $card = CardSummaryExtractor::from($command->instrument());
 
         if ($card === null) {
@@ -598,6 +642,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
             connection: $command->connection(),
             paymentIntentId: $command->paymentIntentId(),
             gatewayId: $command->gatewayId(),
+            initiation: $command->initiation(),
         ));
     }
 
@@ -617,19 +662,53 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
     }
 
     /**
-     * Whether a result handed in with the payment already claims the liability shift, in
-     * which case inspection has nothing left to gain.
+     * Why an authentication ended the payment.
      *
-     * Coherence is part of the question here rather than a separate refusal: an
-     * incoherent result simply is not a successful authentication, and answering false
-     * runs the firewall — the safe direction. Throwing instead would turn a caller's
-     * malformed evidence into a failure to create the payment at all.
+     * Prefixed like the firewall's own refusal and for the same reason: nothing left this
+     * process and no acquirer was consulted, so a bare reason read back later would look like an
+     * issuer's decline of a payment that was never presented to one.
      */
-    private function hasSuccessfulThreeDS(?ChallengeResult $result): bool
+    private static function challengeRefusalReason(ChallengeOutcome $outcome): string
     {
-        return $result instanceof ThreeDSResult
-            && $result->accept(new ChallengeFailureReasonExtractor) === null
-            && $result->accept(new MissingChallengeEvidenceExtractor) === null;
+        return $outcome->reason === null || $outcome->reason === ''
+            ? 'Authentication was refused.'
+            : "Authentication was refused: {$outcome->reason}";
+    }
+
+    /**
+     * Ask the one question the situation calls for.
+     *
+     * Two questions, one port, and which one gets asked turns on whether the caller brought a
+     * result. Presenting one does not settle anything by itself — it arrives from outside, and
+     * the coherence check it passed establishes that its fields agree with each other, not that
+     * an issuer ever saw the cardholder. So it is weighed rather than taken, and an
+     * implementation content to take it says so by answering with what it was given.
+     */
+    private static function authenticate(
+        ChallengePort $challenges,
+        CreatePaymentIntentCommand $command,
+        FirewallDecision $decision,
+        ?ChallengeResult $presented,
+    ): ChallengeOutcome {
+        if ($presented !== null) {
+            return $challenges->verify(new VerifyChallengeRequest(
+                paymentIntentId: $command->paymentIntentId(),
+                presented: $presented,
+                amount: $command->amount(),
+                instrument: $command->instrument(),
+                reason: $decision->reason,
+            ));
+        }
+
+        return $challenges->initiate(new InitiateChallengeRequest(
+            paymentIntentId: $command->paymentIntentId(),
+            amount: $command->amount(),
+            instrument: $command->instrument(),
+            billingAddress: $command->billingAddress(),
+            connection: $command->connection(),
+            initiation: $command->initiation(),
+            reason: $decision->reason,
+        ));
     }
 
     private function chargeOrAuthorize(

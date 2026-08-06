@@ -133,14 +133,16 @@ it('names itself for the audit trail', function (ChainStrategy $strategy, string
     'blacklist' => [fn () => FirstMatchWins::blacklist(), 'blacklist'],
 ]);
 
-it('leaves raising a challenge to the evaluator, so no traversal can forget it', function (ChainStrategy $strategy) {
-    // A strategy never touches the initiator. It reports that a challenge is required and the
-    // evaluator obtains one afterwards — which is why a new traversal cannot omit that step by
-    // being written without knowing about it.
+it('reports that a challenge is required and stops there', function (ChainStrategy $strategy) {
+    // A strategy decides which rule answers; nothing in this package carries the answer out. The
+    // engine was briefly handed an initiator to raise the step-up itself, and could not do the
+    // job: the facts it works from hold a BIN and a last four and never a card number, which is
+    // not enough to authenticate anybody. So the verdict travels and the aggregate that holds the
+    // instrument acts on it.
     $decision = $strategy->walk(strategyRules(FirewallVerdict::Challenge), strategyMatcher());
 
     expect($decision->requiresChallenge())->toBeTrue()
-        ->and($decision->challenge)->toBeNull();
+        ->and($decision->permits())->toBeFalse();
 })->with([
     'first match wins' => fn () => FirstMatchWins::blacklist(),
 ]);
