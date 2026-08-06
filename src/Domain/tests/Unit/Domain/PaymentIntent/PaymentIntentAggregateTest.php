@@ -33,7 +33,6 @@ use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSVersion;
 use Techork\PaymentService\Common\ValueObject\Token;
 use Techork\PaymentService\Common\ValueObject\TokenId;
 use Techork\PaymentService\Domain\PaymentIntent\CaptureMethod;
-use Techork\PaymentService\Domain\PaymentIntent\FailureCode;
 use Techork\PaymentService\Domain\PaymentIntent\Command\CancelPaymentIntentCommand;
 use Techork\PaymentService\Domain\PaymentIntent\Command\CapturePaymentIntentCommand;
 use Techork\PaymentService\Domain\PaymentIntent\Command\CreatePaymentIntentCommand;
@@ -42,6 +41,7 @@ use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentAuthorized;
 use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentCancelled;
 use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentCaptured;
 use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentCharged;
+use Techork\PaymentService\Common\ValueObject\ErrorCode;
 use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentFailed;
 use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentFeeRecorded;
 use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentImported;
@@ -550,7 +550,7 @@ it('records PaymentIntentFailed on create with GatewayDeclined', function () {
         makeMerchantDescriptor(),
         '',
         'insufficient_funds',
-        FailureCode::GatewayDeclined,
+        ErrorCode::GatewayDeclined,
     ));
 });
 
@@ -790,7 +790,7 @@ it('round-trips the descriptor and description through every event payload', fun
         makeAmount(), makeInstrument(), CaptureMethod::Manual, makeBillingAddress(), [], $descriptor, 'Order 4417',
     );
     yield 'failed' => fn () => new PaymentIntentFailed(
-        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [], $descriptor, 'Order 4417', 'declined', FailureCode::GatewayDeclined,
+        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [], $descriptor, 'Order 4417', 'declined', ErrorCode::GatewayDeclined,
     );
     yield 'requires action' => fn () => new PaymentIntentRequiresAction(
         makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [], $descriptor, 'Order 4417', makeRedirectChallenge(),
@@ -1160,7 +1160,7 @@ it('records PaymentIntentFailed when the gateway declines the authenticated paym
         makeMerchantDescriptor(),
         '',
         'insufficient funds',
-        FailureCode::GatewayDeclined,
+        ErrorCode::GatewayDeclined,
         $result,
     ));
 });
@@ -1198,7 +1198,7 @@ it('records PaymentIntentFailed on confirmChallenge with NotAuthenticated', func
         makeMerchantDescriptor(),
         '',
         '3DS authentication: N',
-        FailureCode::AuthenticationFailed,
+        ErrorCode::AuthenticationFailed,
         $result,
     ));
 });
@@ -1232,7 +1232,7 @@ it('records PaymentIntentFailed on confirmChallenge with Rejected', function () 
         makeMerchantDescriptor(),
         '',
         '3DS authentication: R',
-        FailureCode::AuthenticationFailed,
+        ErrorCode::AuthenticationFailed,
         $result,
     ));
 });
@@ -1471,7 +1471,7 @@ it('records PaymentIntentFailed on cancel + GatewayDeclined', function () {
         makeMerchantDescriptor(),
         '',
         'void_not_allowed',
-        FailureCode::GatewayDeclined,
+        ErrorCode::GatewayDeclined,
     ));
 });
 
@@ -2032,7 +2032,7 @@ it('PaymentIntentFailed survives serialization roundtrip', function () {
         makeMerchantDescriptor(),
         '',
         'card_declined',
-        FailureCode::GatewayDeclined,
+        ErrorCode::GatewayDeclined,
         makePiThreeDSResult(),
     );
     $restored = PaymentIntentFailed::fromPayload($event->toPayload());
@@ -2366,7 +2366,7 @@ it('says authentication_required in a code, not only in a sentence', function ()
         }
     }
 
-    expect($recorded?->code)->toBe(FailureCode::AuthenticationRequired)
+    expect($recorded?->code)->toBe(ErrorCode::AuthenticationRequired)
         ->and($recorded?->reason)->toContain('matched rule 9');
 });
 

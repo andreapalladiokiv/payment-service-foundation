@@ -25,10 +25,9 @@ final class ChallengeCannotBeRaised extends LogicException
 {
     public static function noPortInstalled(?string $reason): self
     {
-        return new self(sprintf(
-            'A firewall chain required a step-up (%s) but no %s is installed to authenticate anyone.',
-            $reason ?? 'no reason given',
-            ChallengePort::class,
-        ));
+        $reason ??= 'no reason given';
+        $port = ChallengePort::class;
+
+        return new self("A firewall chain required a step-up ($reason) but no $port is installed to authenticate anyone.");
     }
 }

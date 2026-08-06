@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Techork\PaymentService\Revolut\Exception;
 
 use BadMethodCallException;
+use Techork\PaymentService\Common\Concern\CarriesErrorCode;
+use Techork\PaymentService\Common\ValueObject\ErrorCode;
 use Techork\PaymentService\Gateway\Exception\UnsupportedByGateway;
 
 /**
@@ -32,9 +34,11 @@ use Techork\PaymentService\Gateway\Exception\UnsupportedByGateway;
  */
 final class UnsupportedOperationException extends BadMethodCallException implements UnsupportedByGateway
 {
+    use CarriesErrorCode;
+
     public static function operation(string $name): self
     {
-        return new self(
+        return self::coded(ErrorCode::UnsupportedByGateway, 
             "Revolut does not support the '{$name}' operation — Revolut is an issuing-only gateway. "
             .'Route acquiring/tokenization operations to an acquiring gateway (Stripe, Nuvei, ConnexPay).'
         );

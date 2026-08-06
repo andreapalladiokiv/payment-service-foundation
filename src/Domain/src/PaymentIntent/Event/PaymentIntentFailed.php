@@ -11,11 +11,11 @@ use Override;
 use Techork\PaymentService\Common\Contract\ChallengeResult;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
+use Techork\PaymentService\Common\ValueObject\ErrorCode;
 use Techork\PaymentService\Common\ValueObject\MerchantDescriptor;
 use Techork\PaymentService\Common\ValueObject\PaymentInstrumentFactory;
 use Techork\PaymentService\Domain\PaymentIntent\CaptureMethod;
 use Techork\PaymentService\Domain\PaymentIntent\ChallengeResultArraySerializer;
-use Techork\PaymentService\Domain\PaymentIntent\FailureCode;
 use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
 
 final readonly class PaymentIntentFailed implements SerializablePayload
@@ -34,7 +34,7 @@ final readonly class PaymentIntentFailed implements SerializablePayload
          * parsed — {@see $code} is what a program branches on.
          */
         public string $reason,
-        public FailureCode $code,
+        public ErrorCode $code,
         public ?ChallengeResult $challengeResult = null,
         public PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated,
     ) {}
@@ -72,7 +72,7 @@ final readonly class PaymentIntentFailed implements SerializablePayload
             $payload['reason'],
             // Rows written before the field existed say so rather than being assigned a
             // classification nobody made at the time.
-            FailureCode::tryFrom((string) ($payload['code'] ?? '')) ?? FailureCode::Unspecified,
+            ErrorCode::tryFrom((string) ($payload['code'] ?? '')) ?? ErrorCode::Unspecified,
             isset($payload['challenge_result']) ? ChallengeResultArraySerializer::fromArray($payload['challenge_result']) : null,
             PaymentInitiation::from($payload['initiation'] ?? PaymentInitiation::CardholderInitiated->value),
         );

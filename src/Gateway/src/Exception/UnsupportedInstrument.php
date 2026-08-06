@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Techork\PaymentService\Gateway\Exception;
 
 use InvalidArgumentException;
+use Techork\PaymentService\Common\Concern\CarriesErrorCode;
+use Techork\PaymentService\Common\ValueObject\ErrorCode;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
 
 /**
@@ -19,9 +21,11 @@ use Techork\PaymentService\Common\Contract\PaymentInstrument;
  */
 final class UnsupportedInstrument extends InvalidArgumentException implements UnsupportedByGateway
 {
+    use CarriesErrorCode;
+
     public static function forGateway(string $gatewayName, string $operation, PaymentInstrument $instrument): self
     {
-        return new self(sprintf(
+        return self::coded(ErrorCode::UnsupportedByGateway, sprintf(
             'Gateway "%s" does not accept a "%s" instrument on the "%s" operation.',
             $gatewayName,
             $instrument::type(),
@@ -36,7 +40,7 @@ final class UnsupportedInstrument extends InvalidArgumentException implements Un
      */
     public static function onlyAccepts(string $gatewayName, string $operation, string $acceptedType, PaymentInstrument $instrument): self
     {
-        return new self(sprintf(
+        return self::coded(ErrorCode::UnsupportedByGateway, sprintf(
             'Gateway "%s" accepts only a "%s" instrument on the "%s" operation, got "%s".',
             $gatewayName,
             $acceptedType,

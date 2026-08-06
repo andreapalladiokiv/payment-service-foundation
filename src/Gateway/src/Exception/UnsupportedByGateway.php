@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Gateway\Exception;
 
-use Throwable;
+use Techork\PaymentService\Common\Contract\CodedError;
 
 /**
  * Marker for "this gateway structurally cannot do what was asked" — a wiring
@@ -27,4 +27,4 @@ use Throwable;
  * existing gateway exception can adopt it without changing the parent its
  * callers already catch.
  */
-interface UnsupportedByGateway extends Throwable {}
+interface UnsupportedByGateway extends CodedError {}

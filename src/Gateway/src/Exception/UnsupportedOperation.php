@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Techork\PaymentService\Gateway\Exception;
 
 use BadMethodCallException;
+use Techork\PaymentService\Common\Concern\CarriesErrorCode;
+use Techork\PaymentService\Common\ValueObject\ErrorCode;
 
 /**
  * A gateway was asked for an operation its product does not have at all,
@@ -34,9 +36,11 @@ use BadMethodCallException;
  */
 final class UnsupportedOperation extends BadMethodCallException implements UnsupportedByGateway
 {
+    use CarriesErrorCode;
+
     public static function forGateway(string $gatewayName, string $operation, string $because): self
     {
-        return new self(sprintf(
+        return self::coded(ErrorCode::UnsupportedByGateway, sprintf(
             'Gateway "%s" does not support the "%s" operation: %s',
             $gatewayName,
             $operation,

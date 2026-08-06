@@ -31,6 +31,7 @@ use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentAuthorized;
 use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentCancelled;
 use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentCaptured;
 use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentCharged;
+use Techork\PaymentService\Common\ValueObject\ErrorCode;
 use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentFailed;
 use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentFeeRecorded;
 use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentImported;
@@ -260,7 +261,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                     $command->merchantDescriptor(),
                     $command->description(),
                     self::firewallRefusalReason($decision),
-                    FailureCode::Blocked,
+                    ErrorCode::Blocked,
                     $evidence,
                     $command->initiation(),
                 ));
@@ -288,7 +289,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                     $command->merchantDescriptor(),
                     $command->description(),
                     self::authenticationRequiredReason($decision),
-                    FailureCode::AuthenticationRequired,
+                    ErrorCode::AuthenticationRequired,
                     null,
                     $command->initiation(),
                 ));
@@ -321,7 +322,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                     $command->merchantDescriptor(),
                     $command->description(),
                     self::challengeRefusalReason($authentication),
-                    FailureCode::AuthenticationFailed,
+                    ErrorCode::AuthenticationFailed,
                     $evidence,
                     $command->initiation(),
                 ));
@@ -355,7 +356,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                 $command->merchantDescriptor(),
                 $command->description(),
                 $e->reason,
-                FailureCode::GatewayDeclined,
+                ErrorCode::GatewayDeclined,
                 $evidence,
                 $command->initiation(),
             ));
@@ -471,7 +472,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         try {
             $port->cancel(new CancelRequest($this->aggregateRootId()));
         } catch (GatewayDeclinedException $e) {
-            $this->recordThat($this->failedFromState($e->reason, FailureCode::GatewayDeclined));
+            $this->recordThat($this->failedFromState($e->reason, ErrorCode::GatewayDeclined));
 
             return;
         }
@@ -504,7 +505,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         $failureReason = $result->accept(new ChallengeFailureReasonExtractor);
 
         if ($failureReason !== null) {
-            $this->recordThat($this->failedFromState($failureReason, FailureCode::AuthenticationFailed, $result));
+            $this->recordThat($this->failedFromState($failureReason, ErrorCode::AuthenticationFailed, $result));
 
             return;
         }
@@ -529,7 +530,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                 initiation: $this->initiation,
             ));
         } catch (GatewayDeclinedException $e) {
-            $this->recordThat($this->failedFromState($e->reason, FailureCode::GatewayDeclined, $result));
+            $this->recordThat($this->failedFromState($e->reason, ErrorCode::GatewayDeclined, $result));
 
             return;
         }
@@ -678,7 +679,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
      * Why a payment was refused for want of an authentication nobody could start here.
      *
      * Phrased for the operator reading a failed payment back, and paired with
-     * {@see FailureCode::AuthenticationRequired}, which is the part a caller acts on. The chain's
+     * {@see ErrorCode::AuthenticationRequired}, which is the part a caller acts on. The chain's
      * own breadcrumb rides along because knowing WHICH rule asked is the difference between a
      * merchant fixing a rule and a merchant retrying forever.
      */
@@ -725,7 +726,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
     }
 
 
-    private function failedFromState(string $reason, FailureCode $code, ?ChallengeResult $challengeResult = null): PaymentIntentFailed
+    private function failedFromState(string $reason, ErrorCode $code, ?ChallengeResult $challengeResult = null): PaymentIntentFailed
     {
         return new PaymentIntentFailed(
             $this->amount,

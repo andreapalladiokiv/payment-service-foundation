@@ -5,23 +5,37 @@ declare(strict_types=1);
 namespace Techork\PaymentService\Domain\PaymentIntent\Exception;
 
 use DomainException;
+use Techork\PaymentService\Common\Concern\CarriesErrorCode;
+use Techork\PaymentService\Common\Contract\CodedError;
+use Techork\PaymentService\Common\ValueObject\ErrorCode;
 use EventSauce\EventSourcing\AggregateRootId;
 
-final class InvalidPaymentIntent extends DomainException
+final class InvalidPaymentIntent extends DomainException implements CodedError
 {
+    use CarriesErrorCode;
+
     public static function nonPositiveAmount(): self
     {
-        return new self('Payment intent amount must be positive.');
+        return self::coded(
+            ErrorCode::InvalidChargeAmount,
+            'Payment intent amount must be positive.',
+        );
     }
 
     public static function alreadyExists(AggregateRootId $id): self
     {
-        return new self(sprintf('Payment intent %s already exists and cannot be imported over.', $id->toString()));
+        return self::coded(
+            ErrorCode::ResourceAlreadyExists,
+            "Payment intent {$id->toString()} already exists and cannot be imported over.",
+        );
     }
 
     public static function unusablePaymentSource(): self
     {
-        return new self('Payment source is not usable (expired or consumed).');
+        return self::coded(
+            ErrorCode::PaymentMethodUnexpectedState,
+            'Payment source is not usable (expired or consumed).',
+        );
     }
 
     /**
@@ -33,15 +47,18 @@ final class InvalidPaymentIntent extends DomainException
      */
     public static function hostedPaymentRequiresImmediateCapture(string $captureMethod): self
     {
-        return new self(sprintf(
-            'A hosted payment cannot use the "%s" capture method — the payment happens on the gateway\'s page, so only immediate capture is possible.',
-            $captureMethod,
-        ));
+        return self::coded(
+            ErrorCode::CaptureMethodUnsupported,
+            "A hosted payment cannot use the \"$captureMethod\" capture method — the payment happens on the gateway's page, so only immediate capture is possible.",
+        );
     }
 
 
     public static function challengeResultCarriesNoEvidence(string $reason): self
     {
-        return new self("Cannot confirm a challenge on an incoherent result: {$reason}.");
+        return self::coded(
+            ErrorCode::InvalidAuthenticationResult,
+            "Cannot confirm a challenge on an incoherent result: $reason.",
+        );
     }
 }

@@ -14,6 +14,28 @@ only `ramsey/uuid`, `giggsey/libphonenumber-for-php` and `symfony/intl`.
 | `PaymentInstrument` + `PaymentInstrumentVisitor<T>` | Sealed instrument hierarchy; visitor dispatch plus `toPayload()` / `fromPayload()` round-trip | this package (below) |
 | `Challenge` / `ChallengeVisitor<T>` | Interim state: the buyer's browser must complete an external action (ACS, hosted page) | `ThreeDSChallenge`, `RedirectChallenge` |
 | `ChallengeResult` / `ChallengeResultVisitor<T>` | Terminal artefact of a completed challenge | `ThreeDSResult`, `RedirectResult` |
+| `CodedError` | A refusal that names itself in machine terms — extends `Throwable`, so one `catch` covers every guard in every aggregate | every domain and gateway refusal, via `Concern\CarriesErrorCode` |
+
+## Error codes
+
+`ValueObject\ErrorCode` is the whole vocabulary of what this service tells a caller went wrong,
+as one flat list — an SDK gets one switch rather than a taxonomy. It covers both a payment that
+was attempted and failed (`authentication_required`, `gateway_declined`, …) and a request that was
+refused with nothing created (`payment_intent_unexpected_state`, `amount_mismatch`, …);
+`wasAttempted()` tells those apart for the callers that care, which is the one thing a flat list
+cannot say on its own.
+
+Two things stay out of it, both deliberately. An acquirer's own decline reasons — those are the
+issuer's words, differ per acquirer, and ConnexPay and Nuvei publish nothing normalisable — so
+`gateway_declined` is one code and the detail rides in the accompanying reason text, the way
+Stripe splits `card_declined` from `decline_code`. And faults: a rule that will not compile, a port
+that is not installed, anything thrown as `LogicException` or `RuntimeException`. Those reach a
+caller as a server error and get no code, because a code is a promise the answer is about the
+request.
+
+Naming follows Stripe's, spellings included where the meaning matches, because an SDK author has
+already read that list. Attaching a code is not optional: `CarriesErrorCode::coded()` is the only
+way to build one of these refusals, and a test refuses to let a `new self(...)` back in.
 
 ## Payment instruments
 

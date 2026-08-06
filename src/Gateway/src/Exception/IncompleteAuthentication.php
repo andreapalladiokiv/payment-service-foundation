@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Techork\PaymentService\Gateway\Exception;
 
 use InvalidArgumentException;
+use Techork\PaymentService\Common\Concern\CarriesErrorCode;
+use Techork\PaymentService\Common\ValueObject\ErrorCode;
 
 /**
  * A gateway was handed a 3DS attestation missing fields it requires in order to
@@ -28,13 +30,15 @@ use InvalidArgumentException;
  */
 final class IncompleteAuthentication extends InvalidArgumentException implements UnsupportedByGateway
 {
+    use CarriesErrorCode;
+
     /**
      * @param  non-empty-list<string>  $missingFields  Gateway-native field names, so
      *   the message points at the wire contract rather than at our own value object.
      */
     public static function missingFields(string $gatewayName, string $operation, array $missingFields): self
     {
-        return new self(sprintf(
+        return self::coded(ErrorCode::InvalidAuthenticationResult, sprintf(
             'Gateway "%s" cannot forward a 3DS authentication on the "%s" operation: missing %s.',
             $gatewayName,
             $operation,
