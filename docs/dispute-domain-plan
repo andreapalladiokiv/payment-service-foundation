@@ -1,0 +1,470 @@
+# Implementation Plan: `Dispute` Bounded Context
+
+This document is written to be executed by an agent (Claude Code). Tasks are ordered by dependency; each is scoped to a single session. The "Provider Reference" section at the end is verified ground truth — **do not invent endpoints or fields outside of it; if in doubt, stop and ask**.
+
+Facts in the reference were verified against public documentation on 2026-08-07. Nuvei REST 2.0 is marked beta — confirm availability on the production accounts before starting T4/T10.
+
+---
+
+## 0. Context and working rules
+
+**Stack:** PHP 8.3+, Laravel, EventSauce, Eloquent (projections), Omnipay (existing rails only — not used for disputes).
+
+**Project conventions to follow:**
+
+- Aggregates use EventSauce. Gateway ID lives in message headers, not in the event payload.
+- Money is a value object in minor units, integers, currency in the type. No floats, no `float $amount`.
+- Projections are Eloquent models, read only through the read model; only a projector writes to them.
+- One project has multiple gateway accounts. Everything dispute-related keys off `gatewayAccountId`, not off the project.
+
+**Rules for the agent:**
+
+1. Do not start a task until its dependencies are done.
+2. Every task ends with green tests. If a test can't be written, that's a signal the task is badly specified — stop and report.
+3. Do not touch the PaymentIntent / PaymentMethod / Token / Subscription / Refund domains in T1–T11. Integration happens only through an ACL in T12.
+4. Provider HTTP clients are never called in tests. All adapters are tested against recorded fixtures (T0).
+5. Do not unify reason codes into a single enum. Rationale is in T1.
+6. Do not add retries or circuit breakers before T5 — there's a dedicated item for that there.
+
+---
+
+## Phase 0 — Groundwork
+
+### T0. Fixtures and contract tests
+
+**Depends on:** nothing.
+
+**What to do:**
+
+Collect real payloads from all three providers into `tests/Fixtures/Disputes/{stripe,nuvei,connexpay}/` and write contract test stubs that currently fail.
+
+Sources:
+- **Stripe** — trigger test disputes via test cards and the Dashboard; save the bodies of `charge.dispute.created`, `charge.dispute.updated`, `charge.dispute.closed`, plus a full `Dispute` object from `GET /v1/disputes/:id`.
+- **Nuvei** — DMN bodies for `Chargeback`, `Dispute API Action Callback`, `Dispute API Image Callback`, `Fraud reported Transaction`; responses from `GET /entities/{id}/disputes` and `GET /entities/{id}/disputes/{dispute-id}`.
+- **ConnexPay** — `GetByUser` response over historical data (set `startDate` a year back) and `GetByResolvedDate`.
+
+If neither production nor sandbox data is available, build fixtures from the documentation examples and **explicitly suffix the files with `.doc-sample.json`** so they can be replaced later.
+
+**Done when:** fixtures are in the repo and `phpunit --group=contracts` runs and fails with meaningful "adapter not implemented" messages.
+
+---
+
+## Phase 1 — Ingestion (read-only, no money touched)
+
+### T1. Domain core
+
+**Depends on:** T0.
+
+**Files:** `src/Dispute/Domain/`
+
+**What to do:**
+
+An EventSauce `Dispute` aggregate plus value objects. No gateway code whatsoever.
+
+```
+Dispute (aggregate root)
+  DisputeId              — our own UUID, not the provider's
+  PaymentIntentId
+  GatewayAccountId
+  GatewayDisputeRef      — string; may contain / and + (Nuvei)
+  DisputeStage           — INQUIRY | CHARGEBACK | PRE_ARBITRATION | ARBITRATION
+  DisputeStatus          — NEEDS_RESPONSE | UNDER_REVIEW | WON | LOST | ACCEPTED | EXPIRED | CLOSED
+  DisputeReason          — { CardNetwork, string rawCode, ReasonCategory }
+  Money disputedAmount
+  Money disputeFee
+  DeadlineAt  { \DateTimeImmutable at, bool isAuthoritative }
+  RespondByInternal      — derived: deadline minus buffer
+  DisputeEvent[]         — stage history
+```
+
+**Events:** `DisputeOpened`, `DisputeStageChanged`, `DisputeStatusChanged`, `DisputeDeadlineChanged`, `EvidenceAttached`, `EvidenceSubmitted`, `DisputeResolved`, `DisputeAccepted`.
+
+**Invariants that must be covered by tests:**
+
+- The `LOST → WON` transition **is allowed**. Stripe labels these as late wins; an issuer may credit outside the normal cycle. Test: aggregate in `LOST`, apply `DisputeResolved(WON)` — no exception.
+- `ACCEPTED` is terminal; no transition back out.
+- `EXPIRED` is only reachable via the timer, never from an external event.
+- `DisputeReason` stores the raw code **and** the network **and** the category. Mapping raw code to category lives in a separate table-driven `ReasonCodeMapper`. Visa `13.1`, Mastercard `4853` and Amex `C08` do not collapse into one enum: evidence requirements differ, and the hint logic hangs off the (network, raw code) pair.
+- `DeadlineAt.isAuthoritative = false` when the date was computed by us rather than supplied by the provider. This affects both the UI and escalation.
+- Idempotency: re-applying the same external event produces no new domain event. Key: `(GatewayAccountId, GatewayDisputeRef, providerEventKey)`.
+
+**Done when:** aggregate unit tests are green, including every invariant above. Not a single line of gateway code.
+
+---
+
+### T2. Ports and the action model
+
+**Depends on:** T1.
+
+**Files:** `src/Dispute/Application/Port/`
+
+**What to do:**
+
+```php
+final readonly class DisputeAction
+{
+    public function __construct(
+        public ActionType $type,               // RESPOND | ACCEPT | ACCEPT_PARTIAL
+        public Execution $execution,           // API | OPERATOR
+        public ?string $externalUrl,           // deep link into the portal, OPERATOR only
+        public ?EvidenceRequirements $requirements,
+        public \DateTimeImmutable $respondBy,
+    ) {}
+}
+
+interface DisputeGateway
+{
+    public function availableActions(DisputeId $id): DisputeActionSet;
+    public function submitEvidence(DisputeId $id, EvidencePackage $p): SubmissionResult;
+    public function accept(DisputeId $id, ?Money $partialAmount = null): void;
+}
+```
+
+**Critical requirement:** `availableActions` must **not** return an empty set merely because the provider offers no API action. An empty set means "this dispute isn't waiting on us": won, lost, accepted, expired, or challenging is disallowed by the rules.
+
+When an action is possible but a human performs it, return `Execution::OPERATOR` plus an `externalUrl`. This applies to all of ConnexPay.
+
+**Done when:** interfaces exist plus an `InMemoryDisputeGateway` for tests, and a test asserts that a fake ConnexPay-like gateway returns a non-empty set with `Execution::OPERATOR`.
+
+---
+
+### T3. Stripe: ingestion
+
+**Depends on:** T2.
+
+**Files:** `src/Dispute/Infrastructure/Stripe/`
+
+**What to do:** a `charge.dispute.*` webhook handler that emits domain events.
+
+**Mapping:**
+
+| Stripe | Domain |
+|---|---|
+| `status` prefixed with `warning_` | `stage = INQUIRY` |
+| `warning_needs_response` | `NEEDS_RESPONSE` |
+| `warning_under_review` | `UNDER_REVIEW` |
+| `warning_closed` | `CLOSED` (inquiry sat 120 days without escalating) |
+| `needs_response` / `under_review` / `won` / `lost` | `stage = CHARGEBACK`, status maps directly |
+| `evidence_details.due_by` | `DeadlineAt(isAuthoritative: true)` |
+
+**Guaranteed traps:**
+
+- `PRE_ARBITRATION` and `ARBITRATION` are **never** populated for Stripe — they don't support the arbitration phase. Don't write code that expects them.
+- Multiple disputes on one payment means **multiple separate aggregates** with distinct `DisputeId`s. Do not collapse them into stages of one. Nuvei and ConnexPay are the opposite — there, stages live inside a single case.
+- Unchallengeable disputes arrive already `lost`, and the API doesn't distinguish them from ordinary ones. The handler must create the aggregate directly in a terminal state rather than blowing up on "dispute closed but never opened".
+- Webhook signature verification runs against the raw body.
+
+**Done when:** the T0 Stripe contract tests are green, including "dispute arrives already `lost`" and "a second dispute on the same PaymentIntent creates a second aggregate".
+
+---
+
+### T4. Nuvei: ingestion
+
+**Depends on:** T2. **Blocked** until REST 2.0 access and direct-acquirer status are confirmed.
+
+**Files:** `src/Dispute/Infrastructure/Nuvei/`
+
+**What to do:** a `Chargeback/Dispute` DMN handler plus a client for `GET /entities/{entity-id}/disputes/{dispute-id}` to pull the full history.
+
+**Mapping:** `DisputeUnifiedStatusCode` → stage and status, table-driven (see reference). The latest event's `expirationDate` → `DeadlineAt(isAuthoritative: true)`.
+
+**Guaranteed traps:**
+
+- **The DMN checksum is computed over the raw body.** The scheme is: `merchantSecretKey` followed by the concatenation of every JSON parameter value in the order sent, then SHA-256, compared against the header. Parse the JSON and re-serialize it and the key ordering drifts, so the signature won't match. The middleware must grab `$request->getContent()` before any deserialization.
+- **The dispute ID contains `/` and `+`** (example: `FRI3dJoEHQ/f8gaGUi86So4F8AQiznNgxWZFLvDJVxhBU3tq0kzakLH6wWpM+Llc`). `rawurlencode` on path substitution is mandatory, with a round-trip test through routing.
+- The `Fraud reported Transaction` DMN is TC40/SAFE, **not a dispute**. Give it its own aggregate or table (`FraudReport`); never write it into `Dispute`. It's needed in T14 for VAMP.
+
+**Done when:** Nuvei contract tests are green; a dedicated checksum test using the documentation fixture passes; a URL-encoding test on the ID passes.
+
+---
+
+### T5. ConnexPay: ingestion (poller)
+
+**Depends on:** T2.
+
+**Files:** `src/Dispute/Infrastructure/ConnexPay/`
+
+**What to do:** a scheduled job with **two independent cursors**.
+
+```
+GetByUser?startDate=                     → new and updated cases
+GetByResolvedDate?startDate=&endDate=    → resolved cases
+```
+
+Both are required. A case created six weeks ago can resolve today and won't show up in the first query. Skipping the second cursor produces the classic bug where disputes stay open forever on your side while the provider has already closed them.
+
+**Deduplication without event IDs.** ConnexPay returns a state snapshot; there are no event identifiers. The adapter stores a hash of the last-seen state per `CaseNumber` and emits domain events from the diff.
+
+**Mapping:**
+
+| ConnexPay | Domain |
+|---|---|
+| `FamilyId` | aggregate key (groups first chargeback, representments, reversals) |
+| `CaseNumber` | key of an individual `DisputeEvent` within the family |
+| `OrderNumber` | link to your PaymentIntent — primary matching key |
+| `Arn` | secondary matching key, shared across all cases of a transaction |
+| `CaseType` | stage (see reference) |
+| `ResolutionTo` | `M` → waiting on us; `B` → waiting on the bank; `S` → split; `G` → moved to GL |
+| `DueDate` | `DeadlineAt(isAuthoritative: true)` |
+| `HasResponse` | confirmation that a response landed — needed in T11 |
+| `NetPosition` | source of truth for money in T12 |
+| `WinLoss` | derived, display only |
+
+**Also here:** retries with exponential backoff, a cap on cycle duration, and a "age of last successful poll" metric. If the poller dies quietly nobody notices — unlike webhooks, where delivery fails visibly on the provider's side.
+
+**Done when:** ConnexPay contract tests are green; a diff test passes (re-running with the same payload emits no events); a matching test passes for `OrderNumber` with `Arn` fallback.
+
+---
+
+### T6. Projections and read model
+
+**Depends on:** T3, T4, T5.
+
+**What to do:** Eloquent projections `dispute_cases` and `dispute_events`; search by `PaymentIntentId`, `OrderNumber`, `ARN`, `gatewayDisputeRef`; filters on status, stage, deadline, gateway account. Plus the "unanswered, deadline approaching" report.
+
+**Done when:** an end-to-end test pushes every fixture from all three providers through the bus and the projection holds the expected number of cases with correct stages and deadlines.
+
+---
+
+### T7. Deadlines and escalation
+
+**Depends on:** T6.
+
+**What to do:**
+
+- Internal deadline = provider deadline minus a buffer (default 3 days, configurable per provider). Reason: portal submission needs a human and a business day.
+- Escalation at T-7 / T-3 / T-1 → notify the project, then the operators.
+- For ConnexPay, account for this: the response window is 12 days, and Expired is applied 10 days after `DueDate` as a buffer against discrepancy with the bank. **That buffer is their insurance, not yours.** Schedule strictly off `DueDate`.
+- Dedicated metric: share of cases lost to missed deadlines, broken down by `Execution` (API vs OPERATOR).
+
+**Done when:** a test with a faked clock shows a case with an 8-day deadline passing all three escalation steps at the right moments.
+
+---
+
+## Phase 2 — Evidence and submission
+
+### T8. Evidence collection
+
+**Depends on:** T6.
+
+**What to do:** an "attach evidence to a dispute" API for projects, plus `EvidenceRequirements` — a template per (network, raw reason code) pair describing what the system supplies and what the project must supply.
+
+The system supplies on its own: AVS/CVV result, 3DS status and liability shift, buyer IP, authorization timestamp, payment history for that card, descriptor.
+
+The project must supply: proof of delivery or service, customer correspondence, ToS with acceptance record, cancellation policy, cancellation confirmation.
+
+**Done when:** three different pairs (Visa 13.1, Mastercard 4837, Visa 10.4) yield three different requirement sets.
+
+---
+
+### T9. Stripe: submission
+
+**Depends on:** T8.
+
+**What to do:**
+
+1. Upload files through the File Upload API with purpose `dispute_evidence`; keep the file ID.
+2. `POST /v1/disputes/:id` with an `evidence` object and **`submit: false`** — evidence is staged on the dispute and visible in both API and Dashboard.
+3. A separate call with `submit: true` sends it to the bank.
+
+Steps 2 and 3 are a ready-made draft → review → submit flow. Use it as dual control rather than inventing your own.
+
+`accept()` maps to `POST /v1/disputes/:id/close`. **This is irreversible**, and the status moves `needs_response → lost`. Require explicit confirmation at the application layer.
+
+Limit: 150,000 characters total across all text evidence fields — validate before sending.
+
+**Done when:** a staging test passes (evidence sent with `submit: false` leaves the aggregate out of `UNDER_REVIEW`) and an irreversibility test on close passes.
+
+---
+
+### T10. Nuvei: submission
+
+**Depends on:** T8.
+
+**What to do:** a two-phase flow.
+
+1. `POST /entities/{entity-id}/files` — **base64, PDF only, ≤2 MB, one file per request**.
+2. Wait for the `Dispute API Image Callback` DMN, which confirms the file was accepted.
+3. `POST /entities/{entity-id}/disputes/{dispute-id}/{action}` where action ∈ ACCEPT | PARTIAL | REJECT, referencing the uploaded file.
+
+**Known documentation discrepancy:** the action request example passes the file as `correlationId`, while the Image Callback returns `ImageId` / `FileId`. Clarify with Nuvei's integration team before implementing. Until then, carry both fields in the DTO and log which one was accepted.
+
+`availableActions` comes **from the response for the specific case**, not from static adapter configuration. Nuvei returns this array dynamically; a static flag would throw the information away.
+
+Between steps 1 and 3 the aggregate sits in `EVIDENCE_PENDING_UPLOAD`. A timeout is required: if the callback doesn't arrive within N minutes, the case returns to the queue with an alert.
+
+**Done when:** a full-cycle test on fixtures passes, including the callback timeout path.
+
+---
+
+### T11. ConnexPay: operator task queue
+
+**Depends on:** T8.
+
+**What to do:**
+
+- An operator task carrying a deep link into CMS.
+- PDF package generation matching their requirements: legible, large enough, black-and-white print, portrait orientation. The portal accepts PDF and JPEG.
+- **Task completion is not driven by the operator's checkbox.** The operator marks "submitted", the task moves to `AWAITING_CONFIRMATION`, the deadline keeps ticking and escalation keeps running. The task closes only when a subsequent poll returns `HasResponse: true`.
+
+Rationale: with a 12-day deadline and automatic loss on expiry, the cost of trusting a checkbox is a lost case plus the $20 already debited.
+
+**Done when:** a test shows "operator marked submitted, poll returned `HasResponse: false` → task stays open, escalation continues", plus the inverse case.
+
+---
+
+## Phase 3 — Money
+
+### T12. Ledger integration
+
+**Depends on:** T6. Requires a working Balance/Ledger domain — if it doesn't exist, T12 is blocked.
+
+**What to do:** ledger entries driven by dispute events.
+
+Four at minimum, five for Stripe:
+
+1. Debit of the disputed amount.
+2. Dispute fee.
+3. On a win — reversal of the debit.
+4. On a loss — recognition of the loss.
+5. **Stripe:** there are two fees. The dispute *received* fee is debited at initiation and is **non-refundable** (except in Mexico). The dispute *countered* fee is returned if you win. Don't collapse them into one field.
+
+**ConnexPay:** $20 is charged for reversal acceptance too — that is, **on a win**. Reversal denial is free. Source of truth is `NetPosition`.
+
+The timing of the debit differs by provider: Stripe debits immediately on dispute creation, others may debit at settlement. Don't hardcode "debit on `DisputeOpened`".
+
+**Done when:** tests cover all four scenarios per provider, and the sum of ledger entries per account matches expectations.
+
+---
+
+### T13. Settlement reconciliation
+
+**Depends on:** T12. Requires the Settlement domain.
+
+**What to do:** match `Dispute` records against settlement file lines, produce a discrepancy report, and fail loudly.
+
+**Separately:** accept refunds tagged with source `EXTERNAL_DEFLECTION`. When Verifi RDR or Ethoca are enabled on a MID, some disputes resolve as a refund you never initiated. Such refunds must not be treated as reconciliation anomalies, and they're needed again in T14.
+
+**Done when:** running a real settlement file yields either zero discrepancies or a fully explained list.
+
+---
+
+### T14. Rate monitoring
+
+**Depends on:** T6, T13.
+
+**What to do:** compute ratios **per MID**, with a different formula per network. Thresholds go in config, not constants — they changed twice in the past year.
+
+**Visa (VAMP):**
+- Numerator: TC40 (fraud reports) plus TC15 (non-fraud disputes). TC40 comes from the `Fraud reported Transaction` DMN in T4.
+- Denominator: settled TC05 transactions, **card-not-present only**.
+- **Excluded** from the numerator: cases resolved through pre-dispute tools (RDR) and fraud qualified under Compelling Evidence 3.0. Hence the requirement to tag case origin at ingestion time.
+- Merchant Excessive threshold: 1.50% since 2026-04-01 (US, Canada, EU, APAC, LATAM); CEMEA remains 2.20%.
+
+**Mastercard (ECP):**
+- ECM: ≥100 chargebacks in a month **AND** ratio ≥1.5%. HECM: ≥300 **AND** ≥3%. Both conditions required.
+- Denominator is the **prior** month's sales (Visa uses the current month). The same number cannot serve both networks.
+- Only first-presentment chargebacks count — no representments or second cycles.
+
+**Done when:** a test on synthetic data produces different Visa and Mastercard ratios for the same MID over the same period, and both are correct.
+
+---
+
+## Phase 4 — Deferred
+
+### T15. ConnexPay outbound disputes
+
+Filing a chargeback against a supplier on an issued VCC (`Submit VCC Chargeback` in the portal). This gets its own `OutboundDispute` aggregate: money flows the other way, the timelines differ, and you are the initiator. It belongs closer to the payouts domain than to payment acceptance.
+
+**Do not start until T1–T14 are stable in production.**
+
+---
+
+## Provider Reference
+
+Verified against public documentation on 2026-08-07.
+
+### Stripe
+
+**Endpoints**
+- `GET /v1/disputes/:id`, `GET /v1/disputes?payment_intent=` / `?charge=`
+- `POST /v1/disputes/:id` — update evidence; the `submit` parameter defaults to `true`; with `false`, evidence is staged on the dispute
+- `POST /v1/disputes/:id/close` — accept; irreversible; `needs_response → lost`
+- File Upload API, purpose `dispute_evidence`
+
+**Constraints and behaviour**
+- Arbitration is not supported; disputes cannot be escalated.
+- Inquiries: mainly used by Amex and Discover; Visa and Mastercard no longer use them. Statuses carry the `warning_` prefix. `warning_closed` means 120 days without escalation.
+- Late win: status can move `lost → won` and funds are returned.
+- Unchallengeable disputes close as lost immediately; the API doesn't flag them.
+- Multiple disputes on one payment are separate objects with distinct IDs.
+- Response window: typically 7–21 days depending on the network. Issuer decision: 60–75 days. Full cycle: 2–3 months.
+- Fees: dispute received (non-refundable outside Mexico) and dispute countered (returned on a win).
+- Text evidence limit: 150,000 characters in total.
+
+### Nuvei (REST 2.0, beta)
+
+**Endpoints**
+- `GET /entities/{entity-id}/disputes` — `from_date`, `to_date`, `response_date_sort` (`UpdateDate` | `CreateDate`) are mandatory; `retrieve_files`, `offset`, `size` optional. Page size up to 100, or up to 10 when `retrieve_files=true`.
+- `GET /entities/{entity-id}/disputes/{dispute-id}` — full `disputeEvents` history
+- `POST /entities/{entity-id}/files` — base64, PDF, ≤2 MB, one file per request
+- `POST /entities/{entity-id}/disputes/{dispute-id}/{action}` — ACCEPT | PARTIAL | REJECT
+
+**Constraint:** Visa and Mastercard only, and only where Nuvei is the direct acquirer.
+
+**Key fields:** `availableActions[]`, `lastDisputeEvent.expirationDate`, `status.code`, `disputeReason.code`, `transaction.arn`, `initiatedBy`.
+
+**Status codes (subset for mapping)**
+
+| Code | Stage / meaning |
+|---|---|
+| `FC` | first chargeback, initiated by issuer |
+| `FC-M-RJCT` / `FC-M-ACPT` / `FC-M-PART` | merchant response |
+| `FC-A-EPRD` | no response, chargeback expired |
+| `FC-SPCSE` | dispute response **not allowed** → `availableActions` is empty |
+| `FC-CLSD-MF` / `FC-CLSD-CHF` | closed in merchant / cardholder favour |
+| `IPA` | pre-arbitration, initiated by issuer |
+| `IPA-M-*` / `MPA-I-*` | pre-arbitration responses |
+| `PA-CLSD-MF` / `PA-CLSD-CHF` | pre-arbitration closed |
+| `INQ*` | inquiry |
+| `MCC*` | Mastercard Collaboration |
+| `RDR` | resolved via Rapid Dispute Resolution |
+
+**DMN**
+- Types: `Chargeback`, `Dispute API Action Callback`, `Dispute API Image Callback`, `Fraud reported Transaction`, `Pre-Chargeback Alert` (Ethoca), `Ethoca External Alert`, `RDR External Alert`.
+- Chargeback DMN fields: `DisputeDueDate`, `DisputeId`, `DisputeEventId`, `DisputeUnifiedStatusCode`, `ChargebackReason`, `ChargebackReasonCategory`, `TransactionDetails.Arn`.
+- Authentication: `merchantSecretKey` followed by the concatenation of all JSON values in the order sent → SHA-256 → compare against the `checksum` header.
+
+### ConnexPay (CMS API)
+
+**Endpoints** (base `https://cmsapi.connexpay.com/`)
+- `GET /api/Chargeback/GetByUser?startDate=&endDate=`
+- `GET /api/Chargeback/GetByResolvedDate?startDate=&endDate=`
+
+Read-only. Basic auth, with **credentials separate from the regular CRM user**.
+
+**Key fields:** `FamilyId`, `CaseNumber`, `CaseType`, `ReasonCode`, `CardBrand`, `ResolutionTo`, `DueDate`, `OrderNumber`, `Arn`, `NetPosition`, `WinLoss`, `HasResponse`, `HasImage`, `IsSurrendered`, `ImageFileUrl`.
+
+**`ResolutionTo`:** `M` — merchant must respond; `B` — bank must respond; `S` — resolved as split (partial credit); `G` — moved to the general ledger, likely offset by a related chargeback.
+
+**`CardBrand`:** 1 — Visa, 2 — Mastercard, 3 — Discover, 4 — Amex, 5 — PayPal.
+
+**`CaseType` (subset):** 1 First Chargeback, 2 Second Chargeback, 3 First Reversal, 4 Second Reversal, 9 Visa Pre-Arb, 17 Amex Retrieval, 18 Amex Chargeback, 24 Collaboration Pre-Arb.
+
+**Operational rules**
+- Response window per case: 12 days, otherwise automatic loss is possible.
+- Expired status: applied 10 days after `DueDate` (buffer against discrepancy with the bank).
+- Fees: $20 incoming chargeback, $20 retrieval request, $20 incoming pre-arb, $20 reversal acceptance (i.e. on a win), $0 reversal denial.
+- The portal accepts PDF and JPEG.
+- Portal actions: Respond, Accept Chargeback (only ConnexPay can undo it), Add a Note (internal), Submit VCC Chargeback (→ T15).
+
+### Network thresholds
+
+| Programme | Condition | Effective |
+|---|---|---|
+| Visa VAMP, Excessive (merchant) | 1.50%; CEMEA 2.20% | since 2026-04-01 |
+| Visa VAMP (acquirer) | 0.50% above standard, 0.70% excessive | since 2025 |
+| Mastercard ECM | ≥100 chargebacks AND ≥1.5% | — |
+| Mastercard HECM | ≥300 chargebacks AND ≥3% | — |
+
+VAMP replaced VDMP and VFMP on 2025-04-01 — do not use the old names in code or config.
