@@ -3,8 +3,11 @@
 declare(strict_types=1);
 
 use Money\Money;
+use Techork\PaymentService\Common\Contract\Challenge;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
+use Techork\PaymentService\Common\ValueObject\Challenge\ThreeDSChallenge;
 use Techork\PaymentService\Common\ValueObject\ErrorCode;
+use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ECICode;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSResult;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSStatus;
@@ -13,9 +16,11 @@ use Techork\PaymentService\Domain\PaymentIntent\CaptureMethod;
 use Techork\PaymentService\Domain\PaymentIntent\Event\PaymentIntentFailed;
 use Techork\PaymentService\Domain\PaymentIntent\PaymentIntentAggregate;
 use Techork\PaymentService\Domain\PaymentIntent\PaymentIntentStatus;
+use Techork\PaymentService\Domain\PaymentIntent\Exception\ChallengeCannotBeRaised;
 use Techork\PaymentService\Domain\PaymentIntent\Port\ChallengeOutcome;
 use Techork\PaymentService\Domain\PaymentIntent\Port\ChallengePort;
 use Techork\PaymentService\Domain\PaymentIntent\Port\FirewallDecision;
+use Techork\PaymentService\Domain\PaymentIntent\Port\Request\InitiateChallengeRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\VerifyChallengeRequest;
 use Techork\PaymentService\Domain\PaymentIntent\ValueObject\PaymentIntentId;
 use Techork\PaymentService\Tests\Support\StubPaymentIntentFirewall;
@@ -25,8 +30,9 @@ use Techork\PaymentService\Tests\Support\StubPaymentIntentFirewall;
  *
  * Everything else about this design is pinned one branch at a time. What this file asks is
  * different and worth asking separately: put the pieces in a line and does a real merchant
- * integration actually work — refused for want of authentication, authenticate out of band, send
- * it again, paid — and do the attacks the design depends on refusing actually get refused.
+ * integration actually work — a chain demands a step-up, one is started, the cardholder answers
+ * it, the payment is taken — and do the attacks the design depends on refusing actually get
+ * refused.
  *
  * The port below is the reason this is a test of the scheme rather than of the aggregate. A stub
  * that answers `passed()` proves the aggregate calls it; it proves nothing about whether
@@ -35,6 +41,11 @@ use Techork\PaymentService\Tests\Support\StubPaymentIntentFirewall;
  * the directory server's transaction id, each recording the amount and the instrument it was
  * obtained for and whether it has been spent. If the request were missing something, this class
  * could not be written, and that is the finding the test exists to produce.
+ *
+ * {@see initiate()} is the same argument for the other method. It answers a challenge for traffic
+ * that has a cardholder and throws for traffic that does not, which is a decision no aggregate can
+ * make from a command — and it is why {@see InitiateChallengeRequest} carries the initiation and
+ * the instrument rather than the firewall's facts.
  */
 final class IssuedAuthentications implements ChallengePort
 {
@@ -43,6 +54,34 @@ final class IssuedAuthentications implements ChallengePort
 
     /** How many times anything asked this port to weigh evidence. */
     public int $verifications = 0;
+
+    /** How many times anything asked this port to start an authentication. */
+    public int $initiations = 0;
+
+    /**
+     * What an MPI does when a chain has decided this payment needs authenticating: hand back
+     * somewhere to send the cardholder.
+     *
+     * A merchant-initiated charge has nobody to send, and there is no result to invent for it
+     * either, so it throws rather than answering — the rule that matched it is the thing that is
+     * wrong, and an operator has to see that.
+     */
+    public function initiate(InitiateChallengeRequest $request): Challenge
+    {
+        $this->initiations++;
+
+        if ($request->initiation !== PaymentInitiation::CardholderInitiated) {
+            throw ChallengeCannotBeRaised::notPossibleForThisPayment(
+                "{$request->initiation->value} payment has no cardholder to challenge",
+            );
+        }
+
+        return new ThreeDSChallenge(
+            authenticationId: '33333333-3333-3333-3333-333333333333',
+            url: 'https://acs.issuer.example/challenge',
+            payload: 'creq=eyJ0aHJlZURTU2VydmVyVHJhbnNJRCI6IjMzMzMzMzMzIn0',
+        );
+    }
 
     /**
      * What the merchant's own authentication endpoint does after polling the MPI: record what was
@@ -120,6 +159,7 @@ function threeDSCreate(
     ?ThreeDSResult $presented = null,
     ?Money $amount = null,
     ?PaymentInstrument $instrument = null,
+    PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated,
 ): array {
     $aggregate = PaymentIntentAggregate::create(
         makeCreatePiCommand(
@@ -128,6 +168,7 @@ function threeDSCreate(
             amount: $amount,
             instrument: $instrument,
             challengeResult: $presented,
+            initiation: $initiation,
         ),
         makePaySuccessPort(),
         StubPaymentIntentFirewall::returning(FirewallDecision::challenge('matched rule 9')),
@@ -146,25 +187,40 @@ function threeDSCreate(
 }
 
 it('walks a merchant through the whole loop and takes the money', function () {
-    // Attempt one: the chain wants a step-up, nothing was presented, and there is no cardholder
-    // session here to conduct one in. Refused, terminally, with the code that says what to do.
+    // One payment, start to finish, and the "one" is the part that was missing. This test used to
+    // assert a loop it never ran: attempt two was commented "same payment" and was a freshly
+    // generated PaymentIntentId, because a step-up ended the first intent and there was nothing
+    // left to send anything to.
+    //
+    // The chain wants a step-up. One is started, the payment parks on it, and it is that same
+    // intent — same id, same stream — that gets paid when the cardholder comes back.
     $challenges = new IssuedAuthentications;
 
-    [$first, $failure] = threeDSCreate($challenges);
+    [$aggregate] = threeDSCreate($challenges);
 
-    expect($first->status())->toBe(PaymentIntentStatus::Failed)
-        ->and($failure?->code)->toBe(ErrorCode::AuthenticationRequired)
-        ->and($failure?->code->wasAttempted())->toBeTrue();
+    expect($challenges->initiations)->toBe(1)
+        ->and($aggregate->status())->toBe(PaymentIntentStatus::RequiresAction)
+        ->and($aggregate->challenge()?->transactionId())->toBe('33333333-3333-3333-3333-333333333333');
 
-    // The merchant does the authentication out of band, against endpoints this service exposes,
-    // and the service records what it issued.
-    $result = $challenges->issue(threeDSAuthentication(), makeAmount(), makeInstrument());
+    // The cardholder answers the ACS, and the result comes back against the payment it was raised
+    // for rather than to a second one built to receive it.
+    $result = threeDSAuthentication();
 
-    // Attempt two: same payment, now with evidence.
-    [$second] = threeDSCreate($challenges, $result);
+    $aggregate->confirmChallenge($result, makeExternallyCompletedConfirmPort());
 
-    expect($second->status())->toBe(PaymentIntentStatus::Charged)
-        ->and($second->challengeResult())->toBe($result);
+    expect($aggregate->status())->toBe(PaymentIntentStatus::Charged)
+        ->and($aggregate->challengeResult())->toBe($result);
+});
+
+it('will not start an authentication for a payment with nobody to answer it', function () {
+    // The one case the old design got right and generalised to everything. A merchant-initiated
+    // charge has no cardholder, so the port has nothing to raise and nothing to invent — and the
+    // rule that matched unattended traffic is what has to change, which is why an operator is
+    // shown this rather than a merchant being shown a decline.
+    $challenges = new IssuedAuthentications;
+
+    expect(fn () => threeDSCreate($challenges, initiation: PaymentInitiation::MerchantRecurring))
+        ->toThrow(ChallengeCannotBeRaised::class, 'no cardholder to challenge');
 });
 
 it('refuses an authentication it never issued', function () {
@@ -214,18 +270,20 @@ it('refuses an authentication obtained for a different instrument', function () 
         ->and($failure?->code)->toBe(ErrorCode::AuthenticationFailed);
 });
 
-it('tells the two refusals apart in a way a merchant can act on', function () {
-    // The distinction the code exists for. Both attempts fail, and one means "do 3DS and send it
-    // again" while the other means "that did not hold up, and repeating it will not help". A
-    // merchant matching our prose would have to tell them apart by sentence.
+it('tells the two answers to a step-up apart in a way a merchant can act on', function () {
+    // Both payments meet the same rule and they end nothing alike. One is an authentication in
+    // flight: the payment is alive, the cardholder has somewhere to go, and there is a way out of
+    // the state. The other is evidence that did not hold up, which is over — and the code says so,
+    // because a merchant matching our prose would have to tell them apart by sentence.
     $challenges = new IssuedAuthentications;
 
-    [, $missing] = threeDSCreate($challenges);
-    [, $rejected] = threeDSCreate($challenges, threeDSAuthentication());
+    [$parked] = threeDSCreate($challenges);
+    [$ended, $rejected] = threeDSCreate($challenges, threeDSAuthentication());
 
-    expect($missing?->code)->toBe(ErrorCode::AuthenticationRequired)
+    expect($parked->status())->toBe(PaymentIntentStatus::RequiresAction)
+        ->and($ended->status())->toBe(PaymentIntentStatus::Failed)
         ->and($rejected?->code)->toBe(ErrorCode::AuthenticationFailed)
-        ->and($missing?->reason)->toContain('matched rule 9');
+        ->and($rejected?->code->wasAttempted())->toBeTrue();
 });
 
 // ─────────────────────────────────────────────────────────
@@ -240,11 +298,11 @@ it('tells the two refusals apart in a way a merchant can act on', function () {
  * and both use the same `makeThreeDSChallenge()`, which means a challenge mangled in between
  * would have been invisible to either.
  *
- * This is the path that still parks, and the only one that should: the gateway opened the payment
- * and handed back somewhere to send the cardholder, so there is something to present and a
- * pending interaction to wait on. No `ChallengePort` is involved — that port is for evidence a
- * merchant brings to a payment-intent call, and the two arrangements must not reach into each
- * other.
+ * Both paths park, and they should: a payment that needs a cardholder to do something waits for
+ * the cardholder to do it, and which side noticed is not a difference the payment should be able
+ * to feel. What separates them is who raised the challenge. Here the gateway did, having already
+ * opened the payment, so no `ChallengePort` is involved at all — that port is for a step-up OUR
+ * firewall demanded, and the two arrangements must not reach into each other.
  */
 function gatewayRaisedChallenge(): Techork\PaymentService\Common\ValueObject\Challenge\ThreeDSChallenge
 {
@@ -309,7 +367,11 @@ it('keeps the two challenge paths out of each other', function () {
     );
 
     expect($aggregate->status())->toBe(PaymentIntentStatus::RequiresAction)
-        ->and($challenges->verifications)->toBe(0);
+        ->and($challenges->verifications)->toBe(0)
+        // And it must not have started one either, which is the newer half of the same mistake:
+        // the gateway has already raised a challenge, so a second one would send the cardholder
+        // to two places for one payment.
+        ->and($challenges->initiations)->toBe(0);
 });
 
 it('refuses to confirm a challenge on a payment that is not waiting for one', function () {

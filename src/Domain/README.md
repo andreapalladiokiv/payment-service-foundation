@@ -93,31 +93,38 @@ and the coherence check on it says its fields agree, not that an issuer saw the
 cardholder. One skip remains: a non-card instrument, which the firewall request
 cannot describe.
 
-**Challenges the firewall asked for.** A `Challenge` verdict on this aggregate is answered by
-refusing the payment, not by holding it open. There is no cardholder session in a
-server-to-server call to conduct an authentication in — no browser to fingerprint, nothing to
-render an ACS page into, and on a stored instrument no pan the caller could authenticate with
-anyway — so the payment fails with `FailureCode::AuthenticationRequired`, and the caller runs the
-authentication through the endpoints provided for it and sends the payment again with the result.
-`RequiresAction` is left for the two cases that really do have something to present: a checkout,
-and a challenge the gateway raised itself.
+**Challenges the firewall asked for.** A `Challenge` verdict is carried out, not converted into a
+refusal. With nothing presented, `ChallengePort::initiate()` starts an authentication and the
+payment parks on what it raises — `PaymentIntentRequiresAction`, out through `confirmChallenge()`,
+the same state and the same exit as a challenge the gateway raised itself. Which side noticed that
+a step-up was needed is not a difference the payment should be able to feel.
 
-A presented result is then weighed rather than taken, through `ChallengePort::verify()`. That step
+It briefly failed the payment here instead, on the reasoning that a server-to-server call has no
+cardholder session to conduct an authentication in. That is a fact about a caller, not about this
+aggregate, and deciding it here left `Challenge` and `Deny` differing only in the code on the
+failure — a firewall with no middle answer. A deployment that genuinely cannot authenticate anyone
+says so through the port: `initiate()` throws `ChallengeCannotBeRaised`, the same `LogicException`
+as having no port at all, because both are a rule matching traffic it was never able to protect
+and both are fixed by scoping the rule. `payment_intent.initiation` is the fact to scope it on.
+
+A presented result is weighed rather than taken, through `ChallengePort::verify()`. That step
 is what keeps the arrangement from being a bypass: presenting a result is what carries a payment
 past a step-up rule, and a well-formed result is indistinguishable from an invented one by looking
 at it. An implementation checks it against the authentications the service issued — for which
 card, for how much, whether it has been spent — which is why `VerifyChallengeRequest` carries the
 instrument and the amount and not only the result. It answers a `ChallengeOutcome`: `passed` sends
 the payment on carrying the *provider's* result rather than the caller's copy, `refused` fails it
-with `FailureCode::AuthenticationFailed`. Presenting a result with no port installed raises
-`ChallengeCannotBeRaised`, a `LogicException` so an application mapping business outcomes onto
-refusals cannot swallow it.
+with `FailureCode::AuthenticationFailed`. A step-up demanded with no port installed to carry it
+out raises `ChallengeCannotBeRaised`, a `LogicException` so an application mapping business
+outcomes onto refusals cannot swallow it.
 
 **Failure codes.** `PaymentIntentFailed` and `RefundFailed` carry a free-text `reason` for an operator and a
-`FailureCode` for a program: `AuthenticationRequired`, `AuthenticationFailed`, `Blocked`,
-`GatewayDeclined`. The code exists because otherwise the only way to tell "do 3DS and try again"
-from "the issuer said no, stop" is matching our prose — which is written for humans, gets edited,
-and is sometimes the acquirer's words rather than ours. `Unspecified` is read back from rows
+`FailureCode` for a program: `AuthenticationFailed`, `Blocked`, `GatewayDeclined`. The code exists
+because otherwise the only way to tell "that authentication did not hold up, stop" from "the
+issuer said no, stop" is matching our prose — which is written for humans, gets edited, and is
+sometimes the acquirer's words rather than ours. `AuthenticationRequired` is in the list an SDK
+switches on and is no longer written here: a payment that needs authenticating gets one started
+rather than being sent back for the merchant to arrange. `Unspecified` is read back from rows
 written before the field existed and is never written. A refund only ever fails one way — the
 acquirer declined it — since every other guard throws before an event is recorded, so its code is
 always `GatewayDeclined` and the acquirer's words ride in `reason`.

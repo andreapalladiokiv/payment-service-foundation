@@ -2350,14 +2350,20 @@ it('fails the payment without touching the gateway when a rule rejects it', func
         ->and($aggregate->challenge())->toBeNull();
 });
 
-it('refuses a payment that needs authentication and brought none', function () {
-    // The whole shape of the server-to-server path. A chain demands a step-up; there is no
-    // cardholder session here to conduct one in — no browser to fingerprint, nothing to render an
-    // ACS page into, and on a stored instrument no pan the caller could authenticate with anyway.
-    // So the payment ends now rather than being held open on an authentication that cannot start.
+it('parks a payment on the step-up its firewall demanded', function () {
+    // The middle verdict, carried out. A chain that wants an authentication gets one started, and
+    // the payment waits on it — the same event and the same state a gateway-raised challenge
+    // produces, with the same way out through confirmChallenge().
     //
-    // No ChallengePort is needed for this: nothing is being verified. That matters, because it
-    // means an installation without one still refuses correctly rather than throwing.
+    // It used to fail the payment here, on the reasoning that a server-to-server call has no
+    // cardholder session to conduct an authentication in. That is a fact about a caller and it
+    // made `Challenge` a second spelling of `Deny` for every deployment: the only difference left
+    // between the two verdicts was the code on the failure. A caller that genuinely cannot
+    // authenticate anyone says so through the port, which is the only thing that knows.
+    //
+    // The acquirer is not touched. Nothing has been decided about this payment yet.
+    $raised = makeThreeDSChallenge();
+
     $gateway = Mockery::mock(CreatePort::class);
     $gateway->shouldNotReceive('create');
 
@@ -2365,36 +2371,48 @@ it('refuses a payment that needs authentication and brought none', function () {
         makeCreatePiCommand($this->aggregateRootId()),
         $gateway,
         StubPaymentIntentFirewall::returning(FirewallDecision::challenge('matched rule 9')),
+        StubChallengePort::raising($raised),
     );
 
-    expect($aggregate->status())->toBe(PaymentIntentStatus::Failed)
-        ->and($aggregate->challenge())->toBeNull();
+    expect($aggregate->status())->toBe(PaymentIntentStatus::RequiresAction)
+        ->and($aggregate->challenge())->toBe($raised);
 });
 
-it('says authentication_required in a code, not only in a sentence', function () {
-    // The difference between a caller that can act and one that matches our prose with a string.
-    // "Do 3DS and send this again" and "the issuer refused, stop" are different instructions, and
-    // the reason text is written for an operator, gets edited, and is sometimes the acquirer's
-    // words rather than ours.
-    //
-    // The reason still carries the rule that asked, because a merchant retrying forever and a
-    // merchant fixing a rule need to be able to tell which is happening.
-    $recorded = null;
+it('hands the authenticator the payment rather than the firewall facts', function () {
+    // Why raising a step-up could not stay behind the firewall, asserted rather than argued:
+    // rules match on a BIN and a last four, while starting an authentication needs the instrument
+    // itself, the amount it is for and who initiated it. The chain's breadcrumb rides along for
+    // the operator who has to find the rule that asked.
+    $challenges = StubChallengePort::raising(makeThreeDSChallenge());
+    $command = makeCreatePiCommand($this->aggregateRootId());
 
-    $aggregate = PaymentIntentAggregate::create(
+    PaymentIntentAggregate::create(
+        $command,
+        Mockery::mock(CreatePort::class),
+        StubPaymentIntentFirewall::returning(FirewallDecision::challenge('matched rule 9')),
+        $challenges,
+    );
+
+    expect($challenges->initiated?->instrument)->toBe($command->instrument())
+        ->and($challenges->initiated?->amount)->toEqual($command->amount())
+        ->and($challenges->initiated?->paymentIntentId->toString())->toBe($command->paymentIntentId()->toString())
+        ->and($challenges->initiated?->initiation)->toBe($command->initiation())
+        ->and($challenges->initiated?->reason)->toBe('matched rule 9')
+        // Nothing was presented, so there was nothing to weigh. The two questions are asked on
+        // different payments and must not both be asked on one.
+        ->and($challenges->verified)->toBeNull();
+});
+
+it('throws when a chain demands a step-up and nothing is installed to raise one', function () {
+    // Rules written in terms the installation cannot honour. Waving the payment through would let
+    // a chain's step-up rules quietly stop protecting anything the moment nobody wired an
+    // authenticator, and failing it would blame a cardholder for a wiring mistake — so it is
+    // thrown, and the reason names the rule that asked.
+    expect(fn () => PaymentIntentAggregate::create(
         makeCreatePiCommand($this->aggregateRootId()),
         Mockery::mock(CreatePort::class),
         StubPaymentIntentFirewall::returning(FirewallDecision::challenge('matched rule 9')),
-    );
-
-    foreach ($aggregate->releaseEvents() as $event) {
-        if ($event instanceof PaymentIntentFailed) {
-            $recorded = $event;
-        }
-    }
-
-    expect($recorded?->code)->toBe(ErrorCode::AuthenticationRequired)
-        ->and($recorded?->reason)->toContain('matched rule 9');
+    ))->toThrow(ChallengeCannotBeRaised::class, 'matched rule 9');
 });
 
 it('weighs a presented authentication instead of taking it', function () {
@@ -2505,18 +2523,21 @@ it('refuses a step-up demanded of a payment with no cardholder to answer it', fu
     // The part of the old skip that was right, kept where it belongs. Inspection happens; what
     // cannot happen is the authentication, and the port says so rather than the chain going
     // unconsulted. A chain that should not ask this of unattended traffic scopes its rules on the
-    // `payment_intent.initiation` fact, which is why that fact now reaches it.
+    // `payment_intent.initiation` fact, which is why that fact reaches both the chain and the
+    // authenticator.
+    //
+    // Thrown rather than recorded, and it is the same class as a missing port because it is the
+    // same mistake: a rule matching traffic it was never able to protect. Nothing the cardholder
+    // or the merchant can do to this payment fixes it — the rule does.
     $gateway = Mockery::mock(CreatePort::class);
     $gateway->shouldNotReceive('create');
 
-    $aggregate = PaymentIntentAggregate::create(
+    expect(fn () => PaymentIntentAggregate::create(
         makeCreatePiCommand($this->aggregateRootId(), CaptureMethod::Immediate, initiation: PaymentInitiation::MerchantRecurring),
         $gateway,
         StubPaymentIntentFirewall::returning(FirewallDecision::challenge('step up')),
-        StubChallengePort::refusing('no cardholder present'),
-    );
-
-    expect($aggregate->status())->toBe(PaymentIntentStatus::Failed);
+        StubChallengePort::unableToRaise('no cardholder present'),
+    ))->toThrow(ChallengeCannotBeRaised::class, 'no cardholder present');
 });
 
 it('consults the firewall even when a finished authentication came with the payment', function (ThreeDSStatus $status) {

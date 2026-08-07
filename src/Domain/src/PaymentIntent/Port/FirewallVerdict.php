@@ -41,9 +41,14 @@ enum FirewallVerdict: string
      * Let the subject through only once it has passed a challenge.
      *
      * The middle answer, and the reason a firewall need not choose between waving a suspicious
-     * payment through and refusing a legitimate one. What the challenge IS belongs to whoever
-     * can raise it — 3DS is the usual one — reached through
-     * {@see \Techork\PaymentService\Firewall\Challenge\ChallengeInitiator}.
+     * payment through and refusing a legitimate one. It is only that if it is carried out: a
+     * consuming domain that answers this by refusing has two spellings of {@see Deny} and no
+     * middle at all.
+     *
+     * What the challenge IS belongs to whoever can raise it — 3DS is the usual one — reached
+     * through that domain's own port, which holds the instrument a firewall deliberately never
+     * sees. For payments that is
+     * {@see \Techork\PaymentService\Domain\PaymentIntent\Port\ChallengePort}.
      */
     case Challenge = 'challenge';
 }

@@ -56,6 +56,7 @@ use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CancelRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CaptureRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\ConfirmChallengeRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CreateRequest;
+use Techork\PaymentService\Domain\PaymentIntent\Port\Request\InitiateChallengeRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\PaymentIntentFirewallRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\VerifyChallengeRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Refund\Command\CreateRefundCommand;
@@ -269,18 +270,26 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                 return $self;
             }
 
-            // Authentication is required, and this is where a server-to-server payment differs
-            // from a checkout. There is no cardholder session here to conduct one in — no browser
-            // to fingerprint, nothing to render an ACS page into, and on a stored instrument no
-            // pan the caller could authenticate with even if there were. Starting an
-            // authentication we cannot finish would hold the payment open on something no client
-            // can act on, which is the state this package spent a while removing.
+            // Authentication is required, and both endings below need something that can
+            // authenticate a cardholder. A deployment with step-up rules and nothing wired to
+            // carry them out is a misconfiguration, not a payment that went wrong, so it is
+            // established once and before either branch spends anything.
+            $authenticator = $challenges ?? throw ChallengeCannotBeRaised::noPortInstalled($decision->reason);
+
+            // Nothing was presented, so this is where the authentication begins. The payment
+            // parks on what the port raised and waits for confirmChallenge() — the same state a
+            // gateway-raised challenge produces, reached the same way, because the only
+            // difference between the two is who noticed that a step-up was needed and that is
+            // not a difference a payment should be able to feel.
             //
-            // So: no evidence, no payment, said now and said in a form a program can branch on.
-            // The caller runs the authentication through the endpoints that exist for it and
-            // sends the payment again with the result.
+            // It used to fail here instead, on the reasoning that a server-to-server call has no
+            // cardholder session to conduct an authentication in. That is true of some callers
+            // and it is theirs to know, not this aggregate's to assume: deciding it here made
+            // `Challenge` a second spelling of `Deny` for every deployment, including the ones
+            // with a cardholder in front of them. A caller that genuinely cannot authenticate
+            // anyone says so through the port, which is the only thing that knows.
             if ($evidence === null) {
-                $self->recordThat(new PaymentIntentFailed(
+                $self->recordThat(new PaymentIntentRequiresAction(
                     $command->amount(),
                     $command->instrument(),
                     $command->captureMethod(),
@@ -288,9 +297,14 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                     $command->metadata(),
                     $command->merchantDescriptor(),
                     $command->description(),
-                    self::authenticationRequiredReason($decision),
-                    ErrorCode::AuthenticationRequired,
-                    null,
+                    $authenticator->initiate(new InitiateChallengeRequest(
+                        paymentIntentId: $command->paymentIntentId(),
+                        amount: $command->amount(),
+                        instrument: $command->instrument(),
+                        billingAddress: $command->billingAddress(),
+                        initiation: $command->initiation(),
+                        reason: $decision->reason,
+                    )),
                     $command->initiation(),
                 ));
 
@@ -303,14 +317,13 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
             // invented one by looking at it. The port checks it against the authentications this
             // service issued — for which card, for how much, and whether it has been spent — not
             // against what the request says about itself.
-            $authentication = ($challenges ?? throw ChallengeCannotBeRaised::noPortInstalled($decision->reason))
-                ->verify(new VerifyChallengeRequest(
-                    paymentIntentId: $command->paymentIntentId(),
-                    presented: $evidence,
-                    amount: $command->amount(),
-                    instrument: $command->instrument(),
-                    reason: $decision->reason,
-                ));
+            $authentication = $authenticator->verify(new VerifyChallengeRequest(
+                paymentIntentId: $command->paymentIntentId(),
+                presented: $evidence,
+                amount: $command->amount(),
+                instrument: $command->instrument(),
+                reason: $decision->reason,
+            ));
 
             if (! $authentication->wasPassed()) {
                 $self->recordThat(new PaymentIntentFailed(
@@ -619,7 +632,8 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
      *  - a merchant-initiated payment. It has no cardholder, so a step-up cannot be carried out
      *    — but a rule that decided this payment must not happen says nothing about who is
      *    present, and skipping the chain meant a denial went unasked for. The impossible part is
-     *    handled where it arises: a `Challenge` verdict on an MIT is refused by the port. Chains
+     *    handled where it arises: {@see ChallengePort::initiate()} is handed the initiation and
+     *    throws rather than inventing something to show a cardholder who is not there. Chains
      *    that should not demand one of unattended traffic say so with the
      *    `payment_intent.initiation` fact.
      *  - a payment arriving with a finished 3DS authentication. That skip reasoned that the
@@ -673,21 +687,6 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         return $decision->reason === null || $decision->reason === ''
             ? 'Refused by the payment firewall.'
             : "Refused by the payment firewall: {$decision->reason}";
-    }
-
-    /**
-     * Why a payment was refused for want of an authentication nobody could start here.
-     *
-     * Phrased for the operator reading a failed payment back, and paired with
-     * {@see ErrorCode::AuthenticationRequired}, which is the part a caller acts on. The chain's
-     * own breadcrumb rides along because knowing WHICH rule asked is the difference between a
-     * merchant fixing a rule and a merchant retrying forever.
-     */
-    private static function authenticationRequiredReason(FirewallDecision $decision): string
-    {
-        return $decision->reason === null || $decision->reason === ''
-            ? 'Authentication is required before this payment can be placed.'
-            : "Authentication is required before this payment can be placed: {$decision->reason}";
     }
 
     /**

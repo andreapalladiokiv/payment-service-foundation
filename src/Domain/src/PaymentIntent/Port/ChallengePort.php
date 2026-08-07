@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Domain\PaymentIntent\Port;
 
+use Techork\PaymentService\Common\Contract\Challenge;
+use Techork\PaymentService\Domain\PaymentIntent\Exception\ChallengeCannotBeRaised;
+use Techork\PaymentService\Domain\PaymentIntent\Port\Request\InitiateChallengeRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\VerifyChallengeRequest;
 
 /**
@@ -30,18 +33,36 @@ use Techork\PaymentService\Domain\PaymentIntent\Port\Request\VerifyChallengeRequ
  *
  * ## What implementations owe
  *
- * Both methods answer with a {@see ChallengeOutcome} and MUST NOT throw for any of the three:
- * a step-up to present, an authentication that passed without one, and a refusal are all
- * answers. Throw for infrastructure that cannot be reached, the same rule every other port here
- * follows — a provider that is down is not a payment that failed authentication.
+ * {@see verify()} answers with a {@see ChallengeOutcome} and MUST NOT throw for either ending:
+ * an authentication that holds up and one that does not are both answers. Throw for
+ * infrastructure that cannot be reached, the same rule every other port here follows — a
+ * provider that is down is not a payment that failed authentication.
  *
- * A merchant-initiated payment reaches {@see initiate()} like any other, and there is no
- * cardholder to answer anything: {@see ChallengeOutcome::refused()} is the honest reply.
- * Better still is a chain whose step-up rules do not match one, which is what the
+ * {@see initiate()} has no such vocabulary and does not need one, because it is asked only after
+ * a chain has decided a step-up must happen: the answer is the artefact to present, or nothing
+ * this payment can proceed on. A step-up that cannot be carried out for this payment — a
+ * merchant-initiated charge with no cardholder to answer, a channel that cannot render an ACS
+ * page — is a rule that matched traffic it should not have, so it throws
+ * {@see ChallengeCannotBeRaised} and an operator reads it. Better still is a chain whose step-up
+ * rules do not match such traffic in the first place, which is what the
  * `payment_intent.initiation` fact is for.
  */
 interface ChallengePort
 {
+    /**
+     * Start an authentication for a payment a chain will not let through without one, and answer
+     * what the cardholder is to be sent to.
+     *
+     * The artefact is the whole return, and it is required: the payment parks on it and a client
+     * renders it, so an implementation that decided a step-up is needed but obtained nothing to
+     * show has not raised one. There is no frictionless ending here either — an authentication
+     * that completes with nothing for the cardholder to do is one this port never had to start,
+     * and its result reaches the payment through {@see verify()} on the next call.
+     *
+     * @throws ChallengeCannotBeRaised
+     */
+    public function initiate(InitiateChallengeRequest $request): Challenge;
+
     /**
      * Establish what an already-presented result is actually worth.
      *

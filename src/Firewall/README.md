@@ -105,13 +105,17 @@ hold a BIN and a last four and deliberately never a card number, while authentic
 needs the pan, the expiry and the holder. Widening the fact vocabulary to supply them would have
 turned the language an operator writes rules in into an argument list for one protocol.
 
-So the decision travels and the aggregate acts on it. What that means depends on the caller: a
-payment-intent call refuses with `FailureCode::AuthenticationRequired`, because a
-server-to-server request has no cardholder session to authenticate in, and the merchant runs the
-authentication separately and sends the payment again with the result — which
-`Domain\PaymentIntent\Port\ChallengePort` then verifies against the authentications the service
-issued. A `FirewallDecision` has nowhere to put an artefact, which is what keeps the two jobs
-apart.
+So the decision travels and the aggregate acts on it, through a port of its own that holds the
+instrument: `Domain\PaymentIntent\Port\ChallengePort` starts the authentication, the payment parks
+on what it raises, and it resumes on the same intent when the cardholder has answered. A
+`FirewallDecision` has nowhere to put an artefact, which is what keeps the two jobs apart.
+
+`Challenge` is only the middle answer if it is carried out. A consuming domain that answers it by
+refusing the subject has two spellings of `Deny` and no middle, which is what a payment-intent
+call did for a while — it failed with `FailureCode::AuthenticationRequired` on the reasoning that
+a server-to-server request has no cardholder session to authenticate in. True of some callers,
+and theirs to say: the port throws `ChallengeCannotBeRaised` for a payment nobody can
+authenticate, and an operator narrows the rule.
 
 ## Inspecting everything
 
@@ -121,7 +125,7 @@ power was to demand a step-up:
 - a **merchant-initiated** payment, on the reasoning that nobody is present to answer one. True,
   and beside the point once a rule can refuse a payment outright — skipping meant every deny rule
   went unasked on exactly the traffic nobody is watching. It is inspected now, and a `Challenge`
-  verdict on it is refused by the port rather than attempted.
+  verdict on it is thrown back by the port rather than attempted.
 - a payment arriving with a **finished 3DS result**, on the reasoning that the liability shift is
   already claimed. Also true, and also beside the point: that result comes from the caller, and
   the coherence check on it establishes that its fields agree with each other, not that an issuer

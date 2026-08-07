@@ -32,11 +32,13 @@ final readonly class PaymentIntentRequiresAction implements SerializablePayload
          * What the client is to present, and the reason this state is exitable.
          *
          * Never null, on either of the two paths that record this event: a gateway that
-         * answered with a step-up returns the artefact with it, and a firewall that demands one
-         * owes it by contract. It was briefly nullable, for a firewall with no challenge
-         * integration behind it — which described the deployment accurately and left the payment
-         * parked on nothing, unable to proceed and indistinguishable from an authentication in
-         * flight. Both sources now refuse instead.
+         * answered with a step-up returns the artefact with it, and a step-up our own firewall
+         * demanded is raised through {@see \Techork\PaymentService\Domain\PaymentIntent\Port\ChallengePort::initiate()},
+         * whose return type is the artefact. It was briefly nullable, for a firewall with no
+         * challenge integration behind it — which described the deployment accurately and left
+         * the payment parked on nothing, unable to proceed and indistinguishable from an
+         * authentication in flight. An installation with nothing to raise a step-up with now
+         * throws instead of parking a payment on nothing.
          */
         public Challenge $challenge,
         public PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated,
