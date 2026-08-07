@@ -113,12 +113,14 @@ with `FailureCode::AuthenticationFailed`. Presenting a result with no port insta
 `ChallengeCannotBeRaised`, a `LogicException` so an application mapping business outcomes onto
 refusals cannot swallow it.
 
-**Failure codes.** `PaymentIntentFailed` carries a free-text `reason` for an operator and a
+**Failure codes.** `PaymentIntentFailed` and `RefundFailed` carry a free-text `reason` for an operator and a
 `FailureCode` for a program: `AuthenticationRequired`, `AuthenticationFailed`, `Blocked`,
 `GatewayDeclined`. The code exists because otherwise the only way to tell "do 3DS and try again"
 from "the issuer said no, stop" is matching our prose — which is written for humans, gets edited,
 and is sometimes the acquirer's words rather than ours. `Unspecified` is read back from rows
-written before the field existed and is never written.
+written before the field existed and is never written. A refund only ever fails one way — the
+acquirer declined it — since every other guard throws before an event is recorded, so its code is
+always `GatewayDeclined` and the acquirer's words ride in `reason`.
 
 The default firewall is `NullPaymentIntentFirewall`, which allows — nothing is
 installed, so nothing is inspected.

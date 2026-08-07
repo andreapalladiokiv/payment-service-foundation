@@ -1559,7 +1559,7 @@ it('records RefundFailed with retryInstrument when alternative card declines', f
     );
     $this->persistAggregateRoot($aggregate);
 
-    then(new RefundFailed($refundId, makeAmount(), 'do_not_honor', $retry));
+    then(new RefundFailed($refundId, makeAmount(), 'do_not_honor', ErrorCode::GatewayDeclined, $retry));
 });
 
 it('records RefundProcessed (full) on refund from Charged + GatewaySuccess', function () {
@@ -1647,7 +1647,7 @@ it('records RefundFailed when gateway declines the refund', function () {
     );
     $this->persistAggregateRoot($aggregate);
 
-    then(new RefundFailed($refundId, makeAmount(), 'refund_window_expired'));
+    then(new RefundFailed($refundId, makeAmount(), 'refund_window_expired', ErrorCode::GatewayDeclined));
 });
 
 it('failed refund does not consume refundable amount', function () {
@@ -1658,7 +1658,7 @@ it('failed refund does not consume refundable amount', function () {
 
     given(
         new PaymentIntentCharged(makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [], makeMerchantDescriptor(), ''),
-        new RefundFailed($first, makeAmount(), 'declined'),
+        new RefundFailed($first, makeAmount(), 'declined', ErrorCode::GatewayDeclined),
     );
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -2150,15 +2150,42 @@ it('RefundProcessed survives serialization roundtrip', function () {
 
 it('RefundFailed survives serialization roundtrip', function () {
     $refundId = RefundId::generate();
-    $event = new RefundFailed($refundId, new Money(300, new Currency('EUR')), 'declined');
+    $event = new RefundFailed($refundId, new Money(300, new Currency('EUR')), 'declined', ErrorCode::GatewayDeclined);
     $restored = RefundFailed::fromPayload($event->toPayload());
 
     expect($restored->refundId->toString())->toBe($refundId->toString())
         ->and($restored->amount->getAmount())->toBe('300')
-        ->and($restored->reason)->toBe('declined');
+        ->and($restored->reason)->toBe('declined')
+        ->and($restored->code)->toBe(ErrorCode::GatewayDeclined);
 
     then();
 });
+
+it('reads a failure recorded before error codes existed as unclassified', function (callable $fromPayload, array $payload) {
+    // The reason `Unspecified` is in the enum, and the only thing it is for. Streams predate the
+    // field, and replay has to produce something — but it must not be a classification, because a
+    // code invented on the way out would be read by a merchant's retry logic as though someone
+    // had decided it.
+    expect($fromPayload($payload)->code)->toBe(ErrorCode::Unspecified);
+})->with([
+    'payment' => [
+        fn (array $payload) => PaymentIntentFailed::fromPayload($payload),
+        fn () => array_diff_key(
+            new PaymentIntentFailed(
+                makeAmount(), makeInstrument(), CaptureMethod::Automatic, makeBillingAddress(), [],
+                makeMerchantDescriptor(), '', 'card_declined', ErrorCode::GatewayDeclined,
+            )->toPayload(),
+            ['code' => null],
+        ),
+    ],
+    'refund' => [
+        fn (array $payload) => RefundFailed::fromPayload($payload),
+        fn () => array_diff_key(
+            new RefundFailed(RefundId::generate(), makeAmount(), 'declined', ErrorCode::GatewayDeclined)->toPayload(),
+            ['code' => null],
+        ),
+    ],
+]);
 
 it('RefundFeeRecorded survives serialization roundtrip', function () {
     $refundId = RefundId::generate();

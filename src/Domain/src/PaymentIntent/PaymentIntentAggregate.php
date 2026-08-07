@@ -567,7 +567,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                 retryInstrument: $command->retryInstrument(),
             ));
         } catch (GatewayDeclinedException $e) {
-            $this->recordThat(new RefundFailed($command->refundId(), $command->amount(), $e->reason, $command->retryInstrument()));
+            $this->recordThat(new RefundFailed($command->refundId(), $command->amount(), $e->reason, ErrorCode::GatewayDeclined, $command->retryInstrument()));
 
             return;
         }
