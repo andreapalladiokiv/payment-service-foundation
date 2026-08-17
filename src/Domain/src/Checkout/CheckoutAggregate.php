@@ -118,9 +118,16 @@ final class CheckoutAggregate implements AggregateRootWithSnapshotting
         $subscription === null || $subscription->cancellationReason() === null
             || throw CheckoutNotPayable::subscriptionCancelled();
 
-        $subscription === null
-            || $subscription->lastPaymentIntentId()?->equals($paymentIntent->aggregateRootId())
-            || throw CheckoutNotPayable::paymentIntentSubscriptionMismatch();
+        // No check that the subscription already names this payment. It cannot: the
+        // signup hands itself over still `Trialing`, deliberately — activating would
+        // capture, and this checkout would then be handed a `Charged` intent with its
+        // own "Authorized, not Charged" check left nothing to check. The binding is
+        // made below, by the capture port, out of the very intent checked here.
+        //
+        // Nor is one needed. A subscription is activatable exactly once in its life —
+        // `activate()` demands `Trialing` and nothing ever returns a subscription to
+        // it — so a signup that has been paid for cannot be paid for again, and the
+        // aggregate that owns that rule is the one that states it.
 
         // Authorized, not Charged: the checkout is what decides whether the
         // money may be taken, so it must still be takeable when we get here. An

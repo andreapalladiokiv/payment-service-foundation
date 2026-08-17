@@ -60,11 +60,4 @@ final class CheckoutNotPayable extends DomainException implements CodedError
         );
     }
 
-    public static function paymentIntentSubscriptionMismatch(): self
-    {
-        return self::coded(
-            ErrorCode::PaymentIntentSubscriptionMismatch,
-            'Payment intent is not the one bound to the subscription.',
-        );
-    }
 }

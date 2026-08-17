@@ -39,6 +39,11 @@ use Techork\PaymentService\Domain\PaymentIntent\Port\CaptureOutcome;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CaptureRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CreateRequest;
 use Techork\PaymentService\Domain\PaymentIntent\ValueObject\PaymentIntentId;
+use DateTimeImmutable;
+use Techork\PaymentService\Domain\Subscription\Command\ActivateSubscriptionCommand;
+use Techork\PaymentService\Domain\Subscription\Port\Request\SubscriptionCaptureRequest;
+use Techork\PaymentService\Domain\Subscription\Port\SubscriptionCapturePort;
+use Techork\PaymentService\Domain\Subscription\Exception\SubscriptionNotActivatable;
 use Techork\PaymentService\Domain\Subscription\SubscriptionAggregate;
 use Money\Currency;
 use Money\Money;
@@ -126,11 +131,11 @@ function makeCheckoutPlan(?Money $amount = null): SubscriptionPlan
     );
 }
 
-function makeChargedSubscription(SubscriptionPlan $plan): SubscriptionAggregate
+function makeCheckoutSubscriptionCommand(SubscriptionPlan $plan): CreateSubscriptionCommand
 {
     $id = SubscriptionId::fromString('00000000-0000-0000-0000-000000000002');
 
-    $cmd = new readonly class($id, $plan) implements CreateSubscriptionCommand
+    return new readonly class($id, $plan) implements CreateSubscriptionCommand
     {
         public function __construct(private SubscriptionId $id, private SubscriptionPlan $plan) {}
 
@@ -159,12 +164,22 @@ function makeChargedSubscription(SubscriptionPlan $plan): SubscriptionAggregate
             return [];
         }
     };
+}
 
-    $sub = SubscriptionAggregate::create($cmd);
+/**
+ * A signup that has already been paid for.
+ *
+ * The event is applied by hand because going through `activate()` would take the
+ * money, and what is wanted here is only the state that leaves behind. Named for
+ * what it produces — an *activated* subscription. It was called "charged", which
+ * read as a fact about the payment and was the reason a reader could take this
+ * fixture for the shape the real chain hands to `pay()`. It is the opposite: the
+ * real chain hands over a `Trialing` one, see {@see makeTrialingSubscription}.
+ */
+function makeActivatedSubscription(SubscriptionPlan $plan): SubscriptionAggregate
+{
+    $sub = SubscriptionAggregate::create(makeCheckoutSubscriptionCommand($plan));
 
-    // Bind the subscription to the checkout's payment intent + activate.
-    // We can't go through activate() here because it requires loading
-    // the actual PI aggregate; apply the event directly instead.
     $start = new DateTimeImmutable('+1 day');
     (fn () => $this->apply(new SubscriptionActivated(
         makeCheckoutPaymentIntentId(),
@@ -232,6 +247,50 @@ function makeCheckoutCapturePort(): CheckoutCapturePort
     {
         public function capture(CheckoutCaptureRequest $request): void {}
     };
+}
+
+/**
+ * A checkout that sold a plan: its capture port starts the signup, and the signup's
+ * own port takes the money.
+ *
+ * The order is the point. The signup deliberately does not activate itself, because
+ * activating captures — and the checkout would then be handed a `Charged` intent,
+ * leaving its "Authorized, not Charged" check nothing to check. So the subscription
+ * arrives here still `Trialing`, and this is the step that binds it to the payment.
+ */
+function makeActivatingCheckoutCapturePort(
+    SubscriptionAggregate $subscription,
+    PaymentIntentAggregate $paymentIntent,
+): CheckoutCapturePort {
+    return new readonly class($subscription, $paymentIntent) implements CheckoutCapturePort
+    {
+        public function __construct(
+            private SubscriptionAggregate $subscription,
+            private PaymentIntentAggregate $paymentIntent,
+        ) {}
+
+        public function capture(CheckoutCaptureRequest $request): void
+        {
+            $command = new readonly class($this->subscription->aggregateRootId(), $this->paymentIntent) implements ActivateSubscriptionCommand
+            {
+                public function __construct(private SubscriptionId $id, private PaymentIntentAggregate $pi) {}
+                public function subscriptionId(): SubscriptionId { return $this->id; }
+                public function periodStart(): DateTimeImmutable { return new DateTimeImmutable('2026-01-01T00:00:00.000000Z'); }
+                public function paymentIntent(): PaymentIntentAggregate { return $this->pi; }
+            };
+
+            $this->subscription->activate($command, new readonly class implements SubscriptionCapturePort
+            {
+                public function capture(SubscriptionCaptureRequest $request): void {}
+            });
+        }
+    };
+}
+
+/** The signup as the deferred chain hands it over: created, never activated. */
+function makeTrialingSubscription(SubscriptionPlan $plan): SubscriptionAggregate
+{
+    return SubscriptionAggregate::create(makeCheckoutSubscriptionCommand($plan));
 }
 
 /**
@@ -666,7 +725,7 @@ it('throws CheckoutNotPayable when plan is set but subscription is missing', fun
 it('throws CheckoutNotPayable when subscription is provided but plan is missing', function () {
     /** @var CheckoutId $id */
     $id = $this->aggregateRootId();
-    $subscription = makeChargedSubscription(makeCheckoutPlan());
+    $subscription = makeTrialingSubscription(makeCheckoutPlan());
 
     given(makeCheckoutCreated());
 
@@ -678,7 +737,7 @@ it('records CheckoutPaymentSubmitted with subscription id when both plan and sub
     /** @var CheckoutId $id */
     $id = $this->aggregateRootId();
     $plan = makeCheckoutPlan();
-    $subscription = makeChargedSubscription($plan);
+    $subscription = makeTrialingSubscription($plan);
 
     given(new CheckoutCreated(makeCheckoutAmount(), null, null, null, [], $plan));
 
@@ -692,11 +751,48 @@ it('records CheckoutPaymentSubmitted with subscription id when both plan and sub
     ));
 });
 
+/**
+ * The order the deferred chain actually runs in: the signup hands over a `Trialing`
+ * subscription with the money still on hold, the checkout runs its own checks, and
+ * only then does its capture port activate the signup and take the payment.
+ *
+ * `pay()` used to demand that the subscription already name this payment — a fact
+ * only activation produces, sixteen lines after the check. So the one arrangement
+ * the system is built to run was the one arrangement refused, and the refusal came
+ * out as `payment_intent_subscription_mismatch`, which reads as bad data rather
+ * than as an ordering it cannot satisfy.
+ */
+it('pays a plan checkout whose signup is activated by the capture port', function () {
+    /** @var CheckoutId $id */
+    $id = $this->aggregateRootId();
+    $plan = makeCheckoutPlan();
+    $subscription = makeTrialingSubscription($plan);
+    $paymentIntent = makeAuthorizedPiAggregate();
+
+    given(new CheckoutCreated(makeCheckoutAmount(), null, null, null, [], $plan));
+
+    $aggregate = $this->retrieveAggregateRoot($id);
+    $aggregate->pay(
+        makePayCheckoutCommand($id, $paymentIntent, $subscription),
+        makeActivatingCheckoutCapturePort($subscription, $paymentIntent),
+    );
+    $this->persistAggregateRoot($aggregate);
+
+    // The binding exists once the checkout has decided — produced by the activation
+    // it ordered, not required in advance of it.
+    expect($subscription->lastPaymentIntentId()?->equals($paymentIntent->aggregateRootId()))->toBeTrue();
+
+    then(new CheckoutPaymentSubmitted(
+        paymentIntentId: makeCheckoutPaymentIntentId(),
+        subscriptionId: $subscription->aggregateRootId(),
+    ));
+});
+
 it('throws CheckoutNotPayable when subscription is cancelled', function () {
     /** @var CheckoutId $id */
     $id = $this->aggregateRootId();
     $plan = makeCheckoutPlan();
-    $subscription = makeChargedSubscription($plan);
+    $subscription = makeTrialingSubscription($plan);
     (fn () => $this->apply(
         new SubscriptionCancelled('user_request'),
     ))->call($subscription);
@@ -827,32 +923,30 @@ it('does not reach the acquirer when a local check already refuses', function ()
     $aggregate->pay(makePayCheckoutCommand($id), makeUntouchedCapturePort());
 })->throws(CheckoutNotPayable::class, 'cannot be paid in status [cancelled]');
 
-it('throws CheckoutNotPayable when payment intent is not the one bound to the subscription', function () {
+/**
+ * A signup can be paid for once, and the rule lives on the aggregate that owns it.
+ *
+ * `pay()` used to state it a second time, as "the subscription must already name this
+ * payment" — a check that could never permit anything, because a subscription that
+ * satisfied it was `Active`, and the activation the capture port then ordered would
+ * refuse. What is left is one statement of the rule, in `activate()`, which is also
+ * where the money would move if it passed.
+ */
+it('refuses a plan checkout whose signup has already been paid for', function () {
     /** @var CheckoutId $id */
     $id = $this->aggregateRootId();
     $plan = makeCheckoutPlan();
-
-    // Subscription is bound to a different payment intent than the checkout's PI.
-    $subscription = SubscriptionAggregate::create(new readonly class implements CreateSubscriptionCommand
-    {
-        public function subscriptionId(): SubscriptionId { return SubscriptionId::fromString('00000000-0000-0000-0000-000000000002'); }
-        public function plan(): SubscriptionPlan { return makeCheckoutPlan(); }
-        public function paymentMethodId(): PaymentMethodId { return PaymentMethodId::fromString('00000000-0000-0000-0000-000000000003'); }
-        public function callbackUrl(): ?string { return null; }
-        public function metadata(): array { return []; }
-    });
-    $start = new DateTimeImmutable('+1 day');
-    (fn () => $this->apply(new SubscriptionActivated(
-        PaymentIntentId::fromString('00000000-0000-0000-0000-000000000999'),
-        $start,
-        $start->modify('+1 month'),
-    )))->call($subscription);
+    $subscription = makeActivatedSubscription($plan);
+    $paymentIntent = makeAuthorizedPiAggregate();
 
     given(new CheckoutCreated(makeCheckoutAmount(), null, null, null, [], $plan));
 
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->pay(makePayCheckoutCommand($id, subscription: $subscription), makeCheckoutCapturePort());
-})->throws(CheckoutNotPayable::class, 'not the one bound to the subscription');
+    $aggregate->pay(
+        makePayCheckoutCommand($id, $paymentIntent, $subscription),
+        makeActivatingCheckoutCapturePort($subscription, $paymentIntent),
+    );
+})->throws(SubscriptionNotActivatable::class);
 
 it('CheckoutCreated reconstitutes plan from payload', function () {
     $plan = makeCheckoutPlan();
