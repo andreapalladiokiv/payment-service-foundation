@@ -123,7 +123,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
     }
 
     #[Override]
-    public function authorize(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated): AuthorizationResult
+    public function authorize(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated, ?string $returnUrl = null): AuthorizationResult
     {
         $credential = $this->credentialRepository->findOrFail($gatewayId);
         $omnipay = $this->gatewayFactory->createForCredential($credential);
@@ -153,6 +153,11 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             'statementDescription' => $statementDescription,
             'description' => $description,
             'initiation' => $initiation,
+            // Where the cardholder comes back to after an authentication the gateway hosts.
+            // Only the caller knows it — a hosted checkout returns to its own page — and a
+            // gateway with no such step ignores it like any other parameter it was not
+            // built to read.
+            'returnUrl' => $returnUrl,
         ])->send());
 
         $this->logger->log('Gateway authorize response', [
@@ -235,7 +240,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
     }
 
     #[Override]
-    public function charge(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated): AuthorizationResult
+    public function charge(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated, ?string $returnUrl = null): AuthorizationResult
     {
         $credential = $this->credentialRepository->findOrFail($gatewayId);
         $omnipay = $this->gatewayFactory->createForCredential($credential);
@@ -265,6 +270,11 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             'statementDescription' => $statementDescription,
             'description' => $description,
             'initiation' => $initiation,
+            // Where the cardholder comes back to after an authentication the gateway hosts.
+            // Only the caller knows it — a hosted checkout returns to its own page — and a
+            // gateway with no such step ignores it like any other parameter it was not
+            // built to read.
+            'returnUrl' => $returnUrl,
         ])->send());
 
         $this->logger->log('Gateway charge response', [
