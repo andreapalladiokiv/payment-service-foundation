@@ -228,11 +228,23 @@ a `PaymentMethodId`. `activate(ActivateSubscriptionCommand, Port\SubscriptionCap
 requires Trialing plus an **Authorized** payment intent matching the plan amount,
 then captures it through the subscription's own port; `renew()` starts the next
 `BillingPeriod`.
-Cancellation is deferred: `cancel()` records the reason but `status()` keeps
-returning `Active` until `currentPeriodEnd()` passes — except on Trialing with
-no billing period, where it terminates immediately. `revertCancellation()`
-clears a still-pending cancellation. Renewal is refused while a cancellation is
-pending.
+`cancel()` decides *when* the cancellation bites and writes that instant onto
+`SubscriptionCancelled`. The end of the current period when there is one to live
+out, the moment of cancellation when there is not — or when the command says
+`CancellationTiming::Immediately`, which is how a caller reports the one thing the
+aggregate cannot see: that the period was never paid for, as when a signup was
+activated on a payment the checkout then failed to capture. `revertCancellation()`
+clears a still-pending cancellation. Renewal is refused while one is pending.
+
+**A deferred cancellation produces no second event when its moment arrives**, and
+readers have to be built for that. Nothing happens at the end of the period — no
+money moves, nobody is told — so there is nothing to record; `status()` simply
+starts answering `Cancelled`. A projection that copies a status at write time and
+never looks again will say `active` for ever. Store `effective_at` from the event
+(or `cancellationEffectiveAt()` from the aggregate) and compare it against the
+clock, which is exactly what `status()` does, from the same number. Do not
+re-derive the rule from the period columns: that is a second copy of it, and it is
+what drifted before the instant was written down.
 
 Activation follows the checkout shape exactly — authorized intent → the checks
 this aggregate owns → capture through its own port — and gets the same property

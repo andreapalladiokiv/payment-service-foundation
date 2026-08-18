@@ -21,6 +21,7 @@ use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CreateRequest;
 use Techork\PaymentService\Domain\PaymentIntent\ValueObject\PaymentIntentId;
 use Techork\PaymentService\Domain\Subscription\Command\ActivateSubscriptionCommand;
 use Techork\PaymentService\Domain\Subscription\Command\CancelSubscriptionCommand;
+use Techork\PaymentService\Domain\Subscription\ValueObject\CancellationTiming;
 use Techork\PaymentService\Domain\Subscription\Command\CreateSubscriptionCommand;
 use Techork\PaymentService\Domain\Subscription\Command\RecordSubscriptionRenewalCommand;
 use Techork\PaymentService\Domain\Subscription\Command\RevertSubscriptionCancellationCommand;
@@ -299,14 +300,22 @@ function makeRevertCancellationCommand(SubscriptionId $id): RevertSubscriptionCa
     };
 }
 
-function makeCancelCommand(SubscriptionId $id, string $reason = 'user_request'): CancelSubscriptionCommand
-{
-    return new readonly class($id, $reason) implements CancelSubscriptionCommand
+function makeCancelCommand(
+    SubscriptionId $id,
+    string $reason = 'user_request',
+    CancellationTiming $timing = CancellationTiming::AtPeriodEnd,
+): CancelSubscriptionCommand {
+    return new readonly class($id, $reason, $timing) implements CancelSubscriptionCommand
     {
-        public function __construct(private SubscriptionId $subscriptionId, private string $reason) {}
+        public function __construct(
+            private SubscriptionId $subscriptionId,
+            private string $reason,
+            private CancellationTiming $timing,
+        ) {}
 
         public function subscriptionId(): SubscriptionId { return $this->subscriptionId; }
         public function reason(): string { return $this->reason; }
+        public function timing(): CancellationTiming { return $this->timing; }
     };
 }
 
@@ -548,7 +557,8 @@ it('throws SubscriptionNotRenewable when cancelled', function () {
 
     given(
         makeSubscriptionCreated(),
-        new SubscriptionCancelled('user_request'),
+        // Trialing: no period to live out, so the cancellation was recorded as biting at once.
+        new SubscriptionCancelled('user_request', new DateTimeImmutable('2020-01-01T00:00:00.000+00:00')),
     );
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -562,7 +572,7 @@ it('throws SubscriptionNotRenewable while a cancellation is pending', function (
     given(
         makeSubscriptionCreated(),
         makeSubscriptionActivated(),
-        new SubscriptionCancelled('user_request'),
+        new SubscriptionCancelled('user_request', makeActivationPeriodStart()->modify('+1 month')),
     );
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -582,7 +592,7 @@ it('records SubscriptionCancelled with payment-failure reason (auto-termination)
     $aggregate->cancel(makeCancelCommand($id, 'payment_failed'));
     $this->persistAggregateRoot($aggregate);
 
-    then(new SubscriptionCancelled('payment_failed'));
+    then(new SubscriptionCancelled('payment_failed', makeActivationPeriodStart()->modify('+1 month')));
 });
 
 // ──────────────────────────────────────────────
@@ -602,7 +612,7 @@ it('records SubscriptionCancelled on cancel from active', function () {
     $aggregate->cancel(makeCancelCommand($id));
     $this->persistAggregateRoot($aggregate);
 
-    then(new SubscriptionCancelled('user_request'));
+    then(new SubscriptionCancelled('user_request', makeActivationPeriodStart()->modify('+1 month')));
 });
 
 it('records SubscriptionCancelled on cancel from trialing', function () {
@@ -613,9 +623,14 @@ it('records SubscriptionCancelled on cancel from trialing', function () {
 
     $aggregate = $this->retrieveAggregateRoot($id);
     $aggregate->cancel(makeCancelCommand($id));
-    $this->persistAggregateRoot($aggregate);
 
-    then(new SubscriptionCancelled('user_request'));
+    // No period to live out, so it bites now. The instant is minted inside the aggregate;
+    // what this test is for is the effect of it.
+    expect($aggregate->status())->toBe(SubscriptionStatus::Cancelled)
+        ->and($aggregate->cancellationEffectiveAt())->not->toBeNull();
+
+    $this->persistAggregateRoot($aggregate);
+    then(new SubscriptionCancelled('user_request', $aggregate->cancellationEffectiveAt()));
 });
 
 it('keeps subscription Active after cancel until the period ends', function () {
@@ -625,7 +640,7 @@ it('keeps subscription Active after cancel until the period ends', function () {
     given(
         makeSubscriptionCreated(),
         makeSubscriptionActivated(),
-        new SubscriptionCancelled('user_request'),
+        new SubscriptionCancelled('user_request', makeActivationPeriodStart()->modify('+1 month')),
     );
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -641,7 +656,8 @@ it('throws SubscriptionNotCancellable when already cancelled', function () {
 
     given(
         makeSubscriptionCreated(),
-        new SubscriptionCancelled('user_request'),
+        // Trialing: no period to live out, so the cancellation was recorded as biting at once.
+        new SubscriptionCancelled('user_request', new DateTimeImmutable('2020-01-01T00:00:00.000+00:00')),
     );
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -654,7 +670,8 @@ it('cancel on trialing terminates immediately (no period to wait out)', function
 
     given(
         makeSubscriptionCreated(),
-        new SubscriptionCancelled('user_request'),
+        // Trialing: no period to live out, so the cancellation was recorded as biting at once.
+        new SubscriptionCancelled('user_request', new DateTimeImmutable('2020-01-01T00:00:00.000+00:00')),
     );
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -670,7 +687,8 @@ it('refuses activate after cancel on trialing', function () {
 
     given(
         makeSubscriptionCreated(),
-        new SubscriptionCancelled('user_request'),
+        // Trialing: no period to live out, so the cancellation was recorded as biting at once.
+        new SubscriptionCancelled('user_request', new DateTimeImmutable('2020-01-01T00:00:00.000+00:00')),
     );
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -688,7 +706,7 @@ it('records SubscriptionCancellationReverted while period still active', functio
     given(
         makeSubscriptionCreated(),
         makeSubscriptionActivated(),
-        new SubscriptionCancelled('user_request'),
+        new SubscriptionCancelled('user_request', makeActivationPeriodStart()->modify('+1 month')),
     );
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -773,7 +791,7 @@ it('SubscriptionRenewed survives serialization roundtrip', function () {
 });
 
 it('SubscriptionCancelled survives serialization roundtrip', function () {
-    $event = new SubscriptionCancelled('user_request');
+    $event = new SubscriptionCancelled('user_request', new DateTimeImmutable('2020-01-01T00:00:00.000+00:00'));
     $restored = SubscriptionCancelled::fromPayload($event->toPayload());
 
     expect($restored->reason)->toBe('user_request');
@@ -842,16 +860,19 @@ it('snapshot state roundtrip restores cancelled subscription', function () {
 
     given(
         makeSubscriptionCreated(),
-        new SubscriptionCancelled('user_request'),
+        // Trialing: no period to live out, so the cancellation was recorded as biting at once.
+        new SubscriptionCancelled('user_request', new DateTimeImmutable('2020-01-01T00:00:00.000+00:00')),
     );
 
     $aggregate = $this->retrieveAggregateRoot($id);
     $snapshotState = (fn () => $this->createSnapshotState())->call($aggregate);
 
-    // Cancelled before activation: storedStatus jumps to Cancelled because
-    // there is no period to wait out.
-    expect($snapshotState['status'])->toBe('cancelled')
-        ->and($snapshotState['cancellation_reason'])->toBe('user_request');
+    // The snapshot carries when the cancellation bites, not a status rewritten to match it.
+    // `status()` reads the two together, so a snapshot restores the same answer without
+    // freezing a verdict that depends on the clock.
+    expect($snapshotState['cancellation_reason'])->toBe('user_request')
+        ->and($snapshotState['cancellation_effective_at'])->not->toBeNull()
+        ->and($aggregate->status())->toBe(SubscriptionStatus::Cancelled);
 });
 
 it('snapshot state roundtrip preserves pending cancellation', function () {
@@ -861,7 +882,7 @@ it('snapshot state roundtrip preserves pending cancellation', function () {
     given(
         makeSubscriptionCreated(),
         makeSubscriptionActivated(),
-        new SubscriptionCancelled('user_request'),
+        new SubscriptionCancelled('user_request', makeActivationPeriodStart()->modify('+1 month')),
     );
 
     $aggregate = $this->retrieveAggregateRoot($id);
@@ -872,3 +893,71 @@ it('snapshot state roundtrip preserves pending cancellation', function () {
         ->and($snapshotState['cancellation_reason'])->toBe('user_request');
 });
 
+
+// ──────────────────────────────────────────────
+//  when a cancellation bites
+// ──────────────────────────────────────────────
+
+/**
+ * A signup activated on a payment that was then refused at capture owes nobody a period.
+ * The aggregate cannot know that — activation looks the same either way — so the caller
+ * says so, and the cancellation takes effect at once rather than at the end of a month
+ * nobody paid for.
+ */
+it('cancels on the spot when the caller says the period was never paid for', function () {
+    /** @var SubscriptionId $id */
+    $id = $this->aggregateRootId();
+
+    given(makeSubscriptionCreated(), new SubscriptionActivated(
+        PaymentIntentId::generate(),
+        new DateTimeImmutable('-2 days'),
+        new DateTimeImmutable('+28 days'),
+    ));
+
+    $aggregate = $this->retrieveAggregateRoot($id);
+    $aggregate->cancel(makeCancelCommand($id, 'capture_failed', CancellationTiming::Immediately));
+
+    // Not the end of the period it was activated for — that month was never paid for.
+    expect($aggregate->status())->toBe(SubscriptionStatus::Cancelled)
+        ->and($aggregate->cancellationEffectiveAt())->toBeLessThan(new DateTimeImmutable('+1 second'));
+
+    $this->persistAggregateRoot($aggregate);
+    then(new SubscriptionCancelled('capture_failed', $aggregate->cancellationEffectiveAt()));
+});
+
+/**
+ * And the event has to say so, because everything downstream reads the stream rather than
+ * the aggregate. Without the instant on the event a projection has to re-derive the rule
+ * from the period columns — a second copy that has already drifted from this one.
+ */
+it('carries the moment it takes effect through serialization', function () {
+    $at = new DateTimeImmutable('2026-09-01T12:00:00.000000+00:00');
+
+    $restored = SubscriptionCancelled::fromPayload(new SubscriptionCancelled('user_request', $at)->toPayload());
+
+    expect($restored->reason)->toBe('user_request')
+        ->and($restored->effectiveAt->format(DateTimeInterface::RFC3339_EXTENDED))
+        ->toBe($at->format(DateTimeInterface::RFC3339_EXTENDED));
+});
+
+/**
+ * A cancellation asked for at the end of the period lands on the end of the period, so a
+ * subscriber keeps what they paid for.
+ */
+it('lets a paid-for period run out when that is what was asked', function () {
+    /** @var SubscriptionId $id */
+    $id = $this->aggregateRootId();
+    $periodStart = new DateTimeImmutable('-2 days');
+
+    given(makeSubscriptionCreated(), new SubscriptionActivated(
+        PaymentIntentId::generate(),
+        $periodStart,
+        $periodStart->modify('+1 month'),
+    ));
+
+    $aggregate = $this->retrieveAggregateRoot($id);
+    $aggregate->cancel(makeCancelCommand($id, 'user_request'));
+
+    expect($aggregate->status())->toBe(SubscriptionStatus::Active)
+        ->and($aggregate->isCancellationPending())->toBeTrue();
+});

@@ -34,6 +34,7 @@ use Techork\PaymentService\Domain\Subscription\Exception\SubscriptionNotRenewabl
 use Techork\PaymentService\Domain\Subscription\Port\Request\SubscriptionCaptureRequest;
 use Techork\PaymentService\Domain\Subscription\Port\SubscriptionCapturePort;
 use Techork\PaymentService\Domain\Subscription\ValueObject\BillingInterval;
+use Techork\PaymentService\Domain\Subscription\ValueObject\CancellationTiming;
 use Techork\PaymentService\Domain\Subscription\ValueObject\BillingPeriod;
 use Techork\PaymentService\Domain\Subscription\ValueObject\SubscriptionId;
 
@@ -77,6 +78,8 @@ final class SubscriptionAggregate implements AggregateRootWithSnapshotting
     /** Non-null after a SubscriptionCancelled event; cleared on revert. */
     private ?string $cancellationReason = null;
 
+    private ?DateTimeImmutable $cancellationEffectiveAt = null;
+
     /**
      * The most recently submitted payment intent — initial payment today,
      * future renewal payments will overwrite this. Stored as a single scalar
@@ -99,11 +102,11 @@ final class SubscriptionAggregate implements AggregateRootWithSnapshotting
      */
     public function status(): SubscriptionStatus
     {
-        if ($this->cancellationReason !== null) {
-            $end = $this->currentPeriodEnd();
-            if ($end !== null && $end <= new DateTimeImmutable()) {
-                return SubscriptionStatus::Cancelled;
-            }
+        // Against the instant the cancellation recorded, not against a rule rebuilt here
+        // from the period. The event decided it once, and this is the same comparison every
+        // reader downstream has to make — see {@see SubscriptionCancelled::$effectiveAt}.
+        if ($this->cancellationEffectiveAt !== null && $this->cancellationEffectiveAt <= new DateTimeImmutable()) {
+            return SubscriptionStatus::Cancelled;
         }
 
         return $this->storedStatus;
@@ -126,6 +129,20 @@ final class SubscriptionAggregate implements AggregateRootWithSnapshotting
     public function cancellationReason(): ?string
     {
         return $this->cancellationReason;
+    }
+
+    /**
+     * When the cancellation bites, or null when none was asked for.
+     *
+     * Exposed because `status()` is not a fact a reader can store: it is a comparison
+     * against the clock, and a projection that copies its answer at write time says
+     * `active` for ever. Store this instant and compare it — the same thing this aggregate
+     * does, from the same number, rather than a second copy of the rule derived from the
+     * period columns.
+     */
+    public function cancellationEffectiveAt(): ?DateTimeImmutable
+    {
+        return $this->cancellationEffectiveAt;
     }
 
     public function isCancellationPending(): bool
@@ -221,7 +238,40 @@ final class SubscriptionAggregate implements AggregateRootWithSnapshotting
         $this->cancellationReason === null
             || throw SubscriptionNotCancellable::alreadyPending();
 
-        $this->recordThat(new SubscriptionCancelled($command->reason()));
+        $this->recordThat(new SubscriptionCancelled($command->reason(), $this->cancellationTakesEffectAt($command->timing())));
+    }
+
+    /**
+     * The end of the period when there is one to live out, and now when there is not.
+     *
+     * `Immediately` overrides a period that exists, which is the case the aggregate cannot
+     * reach on its own: a signup activated on a payment that was never captured is owed
+     * nothing, and running it to the end of a month nobody paid for is the failure the
+     * timing exists to prevent.
+     */
+    private function cancellationTakesEffectAt(CancellationTiming $timing): DateTimeImmutable
+    {
+        $periodEnd = $this->currentPeriodEnd();
+
+        return $timing === CancellationTiming::Immediately || $periodEnd === null
+            ? self::nowAtStreamPrecision()
+            : $periodEnd;
+    }
+
+    /**
+     * The clock, rounded to what the event stream can carry.
+     *
+     * Payloads serialise instants as RFC3339_EXTENDED, which keeps milliseconds. Minting a
+     * raw `new DateTimeImmutable()` puts microseconds on the aggregate that no reader can
+     * ever see, so the value in memory stops equalling the value everyone else gets — and
+     * a serialisation round-trip of the event stops being an identity.
+     */
+    private static function nowAtStreamPrecision(): DateTimeImmutable
+    {
+        $now = new DateTimeImmutable();
+
+        return DateTimeImmutable::createFromFormat(DateTimeInterface::RFC3339_EXTENDED, $now->format(DateTimeInterface::RFC3339_EXTENDED))
+            ?: $now;
     }
 
     public function revertCancellation(): void
@@ -246,6 +296,7 @@ final class SubscriptionAggregate implements AggregateRootWithSnapshotting
             'callback_url' => $this->callbackUrl,
             'metadata' => $this->metadata,
             'cancellation_reason' => $this->cancellationReason,
+            'cancellation_effective_at' => $this->cancellationEffectiveAt?->format(DateTimeInterface::RFC3339_EXTENDED),
             'last_payment_intent_id' => $this->lastPaymentIntentId?->toString(),
         ];
     }
@@ -273,6 +324,13 @@ final class SubscriptionAggregate implements AggregateRootWithSnapshotting
         $self->callbackUrl = $state['callback_url'];
         $self->metadata = $state['metadata'] ?? [];
         $self->cancellationReason = $state['cancellation_reason'] ?? null;
+        // Refused rather than nulled, for the same reason as the period start above: a
+        // subscription whose cancellation moment cannot be read would come back looking
+        // like one nobody cancelled.
+        $self->cancellationEffectiveAt = isset($state['cancellation_effective_at'])
+            ? (DateTimeImmutable::createFromFormat(DateTimeInterface::RFC3339_EXTENDED, $state['cancellation_effective_at'])
+                ?: throw new RuntimeException("Subscription snapshot '{$id->toString()}' carries an unreadable cancellation_effective_at: '{$state['cancellation_effective_at']}'."))
+            : null;
         $self->lastPaymentIntentId = isset($state['last_payment_intent_id']) ? PaymentIntentId::fromString($state['last_payment_intent_id']) : null;
 
         return $self;
@@ -302,21 +360,21 @@ final class SubscriptionAggregate implements AggregateRootWithSnapshotting
         $this->currentPeriodStart = $event->periodStart;
     }
 
+    /**
+     * Reads the event and nothing else. It used to reconstruct part of the decision here —
+     * immediate when there was no period — and leave the rest to `status()`. Applying a
+     * rule that consults the clock is also what made a replay's outcome depend on when the
+     * replay ran; the instant is now fixed at the moment of cancellation and never moves.
+     */
     protected function applySubscriptionCancelled(SubscriptionCancelled $event): void
     {
         $this->cancellationReason = $event->reason;
-
-        // No active billing period to wait out — cancellation is effective
-        // immediately. Without this, computed status() would never resolve
-        // to Cancelled (currentPeriodEnd is null), leaving the aggregate
-        // permanently in Trialing.
-        if ($this->currentPeriodStart === null) {
-            $this->storedStatus = SubscriptionStatus::Cancelled;
-        }
+        $this->cancellationEffectiveAt = $event->effectiveAt;
     }
 
     protected function applySubscriptionCancellationReverted(): void
     {
         $this->cancellationReason = null;
+        $this->cancellationEffectiveAt = null;
     }
 }

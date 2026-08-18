@@ -794,7 +794,7 @@ it('throws CheckoutNotPayable when subscription is cancelled', function () {
     $plan = makeCheckoutPlan();
     $subscription = makeTrialingSubscription($plan);
     (fn () => $this->apply(
-        new SubscriptionCancelled('user_request'),
+        new SubscriptionCancelled('user_request', new DateTimeImmutable('2020-01-01T00:00:00.000+00:00')),
     ))->call($subscription);
 
     given(new CheckoutCreated(makeCheckoutAmount(), null, null, null, [], $plan));
