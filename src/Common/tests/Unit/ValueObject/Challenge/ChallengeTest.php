@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Techork\PaymentService\Common\Contract\ChallengeVisitor;
 use Techork\PaymentService\Common\ValueObject\Challenge\RedirectChallenge;
+use Techork\PaymentService\Common\ValueObject\Challenge\SdkChallenge;
 use Techork\PaymentService\Common\ValueObject\Challenge\ThreeDSChallenge;
 
 /**
@@ -13,6 +14,11 @@ function challengeTagVisitor(): ChallengeVisitor
 {
     return new class implements ChallengeVisitor
     {
+        public function visitSdk(SdkChallenge $challenge): string
+        {
+            return 'sdk:'.$challenge->authenticationId;
+        }
+
         public function visitThreeDS(ThreeDSChallenge $challenge): string
         {
             return 'three_ds:'.$challenge->authenticationId;
@@ -61,4 +67,26 @@ it('exposes transactionId via interface method', function () {
 
     expect($three->transactionId())->toBe('txn-a')
         ->and($redirect->transactionId())->toBe('pay-b');
+});
+
+/**
+ * The shape with no address: a provider's SDK conducts the authentication in the payer's
+ * browser and needs only a handle. It carries no client secret — the challenge is recorded
+ * on `PaymentIntentRequiresAction` and projected, and a secret that can confirm the payment
+ * would be a credential written into an append-only log. A field the serializer drops
+ * instead is the trap {@see \Techork\PaymentService\Common\ValueObject\CreditCard\Cvc} is
+ * already in: it comes back null and the caller finds out late.
+ */
+it('carries a handle rather than an address, and no secret', function () {
+    $challenge = new SdkChallenge('cb533804-6094-4944-8ac4-235c1bbf2c79', 'pi_3U5jL2FhXDZuLIpU1J5wTVs0');
+
+    expect($challenge->transactionId())->toBe('cb533804-6094-4944-8ac4-235c1bbf2c79')
+        ->and($challenge->paymentReference)->toBe('pi_3U5jL2FhXDZuLIpU1J5wTVs0');
+
+    $properties = array_map(
+        static fn (ReflectionProperty $p): string => $p->getName(),
+        new ReflectionClass(SdkChallenge::class)->getProperties(),
+    );
+
+    expect($properties)->toBe(['authenticationId', 'paymentReference']);
 });

@@ -45,8 +45,8 @@ final readonly class Token implements PaymentInstrument
         $instrumentPayload = $this->instrument->toPayload();
 
         return [
-            'type' => self::TYPE,
             'id' => $this->id->toString(),
+            'type' => self::TYPE,
             $instrumentPayload['type'] => $instrumentPayload,
             'expires_at' => $this->expiresAt->toPayload(),
         ];

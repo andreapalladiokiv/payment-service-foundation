@@ -8,6 +8,7 @@ use Override;
 use Techork\PaymentService\Common\Contract\Challenge;
 use Techork\PaymentService\Common\Contract\ChallengeVisitor;
 use Techork\PaymentService\Common\ValueObject\Challenge\RedirectChallenge;
+use Techork\PaymentService\Common\ValueObject\Challenge\SdkChallenge;
 use Techork\PaymentService\Common\ValueObject\Challenge\ThreeDSChallenge;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSVersion;
 
@@ -46,6 +47,10 @@ final class ChallengeArraySerializer implements ChallengeVisitor
                 ThreeDSVersion::tryFrom((string) ($payload['three_ds']['protocol_version'] ?? ''))
                     ?? ThreeDSVersion::V220,
             ),
+            'sdk' => new SdkChallenge(
+                $payload['sdk']['authentication_id'],
+                $payload['sdk']['payment_reference'],
+            ),
             'redirect' => new RedirectChallenge(
                 $payload['redirect']['transaction_id'],
                 $payload['redirect']['url'],
@@ -64,6 +69,18 @@ final class ChallengeArraySerializer implements ChallengeVisitor
                 'url' => $challenge->url,
                 'payload' => $challenge->payload,
                 'protocol_version' => $challenge->protocolVersion->value,
+            ],
+        ];
+    }
+
+    #[Override]
+    public function visitSdk(SdkChallenge $challenge): array
+    {
+        return [
+            'type' => 'sdk',
+            'sdk' => [
+                'authentication_id' => $challenge->authenticationId,
+                'payment_reference' => $challenge->paymentReference,
             ],
         ];
     }

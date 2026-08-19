@@ -45,8 +45,8 @@ final readonly class PaymentMethod implements PaymentInstrument
         $instrumentPayload = $this->instrument->toPayload();
 
         return [
-            'type' => self::TYPE,
             'id' => $this->id->toString(),
+            'type' => self::TYPE,
             $instrumentPayload['type'] => $instrumentPayload,
             'billing_address' => $this->billingAddress->toArray(),
         ];

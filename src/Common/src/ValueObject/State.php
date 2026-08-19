@@ -333,13 +333,16 @@ final readonly class State implements JsonSerializable
         $this->name = self::STATES[(string) $country][$this->state];
     }
 
+    /**
+     * @return self[]
+     */
     public static function all(?Country $country = null): array
     {
         if ($country === null) {
             $result = [];
 
             foreach (array_keys(self::STATES) as $country) {
-                array_push($result, ...array_map(fn (string $state) => new State($state, new Country($country)), array_keys(self::STATES[$country])));
+                array_push($result, ...array_map(static fn (string $state) => new State($state, new Country($country)), array_keys(self::STATES[$country])));
             }
 
             return $result;
@@ -350,7 +353,7 @@ final readonly class State implements JsonSerializable
         }
 
         return array_map(
-            fn (string $code) => new State($code, $country),
+            static fn (string $code) => new State($code, $country),
             array_keys(self::STATES[(string) $country]),
         );
     }
