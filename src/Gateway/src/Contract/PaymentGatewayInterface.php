@@ -18,11 +18,20 @@ use Techork\PaymentService\Common\ValueObject\CardBrand;
  * the caller's idempotency key. Concrete implementations forward it as the
  * gateway-native idempotency mechanism (Stripe `Idempotency-Key` HTTP
  * header / SDK opt; Nuvei `clientUniqueId` body field; ConnexPay
- * `OrderNumber` body field).
+ * `SequenceNumber` body field — NOT `OrderNumber`, which is a reporting and
+ * chargeback key and dedupes nothing; see
+ * {@see \Techork\PaymentService\ConnexPay\Concern\ConnexPayRequestParameters::withSequenceNumber}).
  *
- * Required for replay safety: jobs and sagas can be retried after a
- * partial failure (network blip, lost ACK) and the gateway must recognize
- * the retry as the same logical operation, not a new one. The convention
+ * **This is not replay safety, and must not be relied on as such.** Every one
+ * of these mechanisms expires: Stripe's key after a day, ConnexPay's after
+ * thirty minutes. A job retried beyond the window, or a command replayed from
+ * a stream, places the operation again. What stops that is a local record of
+ * having placed it — see
+ * {@see \Techork\PaymentService\Laravel\Port\OmnipayCreatePort}, which refuses
+ * before the call rather than trusting a clock at the far end.
+ *
+ * What it does buy is the narrow window a local record cannot cover: the call
+ * left, the response never came back, and nothing was written down. The convention
  * is to pass our internal aggregate id (or aggregate id + ":suffix" when
  * one aggregate triggers multiple distinct ops at the gateway, e.g.
  * "{piId}:capture", "{piId}:cancel").

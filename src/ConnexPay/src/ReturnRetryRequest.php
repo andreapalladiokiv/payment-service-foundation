@@ -50,7 +50,7 @@ final class ReturnRetryRequest extends AbstractRequest implements PaymentInstrum
         /** @var PaymentInstrument $instrument */
         $instrument = $this->getParameter('instrument');
 
-        return $this->withOrderNumber([
+        return $this->withIdentifiers([
             'DeviceGuid' => $this->getDeviceGuid(),
             'SaleGuid' => $this->getParameter('transactionReference'),
             'Amount' => (float) $this->formatMoney($money),

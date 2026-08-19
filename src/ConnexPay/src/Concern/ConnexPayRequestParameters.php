@@ -191,6 +191,62 @@ trait ConnexPayRequestParameters
         return $data;
     }
 
+    /**
+     * ConnexPay's duplicate detection, which `OrderNumber` never was.
+     *
+     * The docs make the split plain: `OrderNumber` is "commonly used for reporting on and
+     * reconciling your PayIns and PayOuts", searchable in Bridge and carried into the
+     * Chargeback Management System; `SequenceNumber` is the one to "provide a unique
+     * SequenceNumber for each new request", where a repeat within thirty minutes "will be
+     * considered a duplicate request". Sandbox agrees: two auth-onlys with one OrderNumber,
+     * one amount and no SequenceNumber come back as two different guids — two holds on one
+     * cardholder's card.
+     *
+     * So this keeps the `:capture` / `:cancel` suffix that {@see withOrderNumber} strips.
+     * The two fields want opposite things from it: the order number ties one payment's
+     * operations together for reporting, and the sequence number tells them apart so a
+     * capture is not taken for the authorization it settles.
+     *
+     * Punctuation goes. The field is documented as 100 alpha-numeric characters and, unlike
+     * `OrderNumber`, names no permitted specials — so a UUID's hyphens and the suffix's
+     * colon are dropped rather than gambled on.
+     *
+     * What this does NOT buy is replay safety. The window is thirty minutes; a job retried
+     * later authorizes again. That has to be stopped before the call ever leaves — see
+     * {@see \Techork\PaymentService\Laravel\Port\OmnipayCreatePort}.
+     *
+     * @param array<string, mixed> $data
+     * @return array<string, mixed>
+     */
+    protected function withSequenceNumber(array $data): array
+    {
+        $clientUniqueId = $this->getClientUniqueId();
+
+        if ($clientUniqueId === null || $clientUniqueId === '') {
+            return $data;
+        }
+
+        $sequence = substr((string) preg_replace('/[^A-Za-z0-9]/', '', $clientUniqueId), 0, 100);
+
+        if ($sequence !== '') {
+            $data['SequenceNumber'] = $sequence;
+        }
+
+        return $data;
+    }
+
+    /**
+     * Both of ConnexPay's identifiers, which every documented endpoint takes together and
+     * which mean different things: one names the payment, the other names this request.
+     *
+     * @param array<string, mixed> $data
+     * @return array<string, mixed>
+     */
+    protected function withIdentifiers(array $data): array
+    {
+        return $this->withSequenceNumber($this->withOrderNumber($data));
+    }
+
     protected function formatExpirationDate(string $month, string $year): string
     {
         return substr($year, -2).str_pad($month, 2, '0', STR_PAD_LEFT);

@@ -89,7 +89,7 @@ class PurchaseRequest extends AbstractRequest implements PaymentInstrumentVisito
             $data['RiskData'] = $this->formatRiskData($billingAddress);
         }
 
-        return $this->withOrderNumber($data);
+        return $this->withIdentifiers($data);
     }
 
     #[Override]

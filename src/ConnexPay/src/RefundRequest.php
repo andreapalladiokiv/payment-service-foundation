@@ -35,7 +35,7 @@ final class RefundRequest extends AbstractRequest
         /** @var Money $money */
         $money = $this->getParameter('money');
 
-        return $this->withOrderNumber([
+        return $this->withIdentifiers([
             'DeviceGuid' => $this->getDeviceGuid(),
             'SaleGuid' => $this->getParameter('transactionReference'),
             'Amount' => (float) $this->formatMoney($money),

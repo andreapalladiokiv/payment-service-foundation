@@ -68,7 +68,7 @@ final class AuthorizeRequest extends AbstractRequest implements PaymentInstrumen
             $data['RiskData'] = $this->formatRiskData($billingAddress);
         }
 
-        return $this->withOrderNumber($data);
+        return $this->withIdentifiers($data);
     }
 
     #[Override]

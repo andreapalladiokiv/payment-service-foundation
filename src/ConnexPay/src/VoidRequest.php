@@ -22,7 +22,7 @@ final class VoidRequest extends AbstractRequest
     {
         $this->validate('transactionReference');
 
-        return $this->withOrderNumber([
+        return $this->withIdentifiers([
             'DeviceGuid' => $this->getDeviceGuid(),
             'AuthOnlyGuid' => $this->getParameter('transactionReference'),
         ]);
