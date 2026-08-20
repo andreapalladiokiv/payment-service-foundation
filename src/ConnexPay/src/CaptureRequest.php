@@ -22,13 +22,13 @@ final class CaptureRequest extends AbstractRequest
     {
         $this->validate('transactionReference');
 
-        return $this->withIdentifiers([
+        return $this->withCustomerId($this->withIdentifiers([
             'DeviceGuid' => $this->getDeviceGuid(),
             'AuthOnlyGuid' => $this->getParameter('transactionReference'),
             'ConnexPayTransaction' => [
                 'ExpectedPayments' => 1
             ]
-        ]);
+        ]));
     }
 
     #[Override]

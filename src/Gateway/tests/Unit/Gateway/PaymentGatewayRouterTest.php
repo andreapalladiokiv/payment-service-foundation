@@ -204,6 +204,35 @@ it('passes billing address through to charge', function () {
     expect($result->success)->toBeTrue();
 });
 
+/**
+ * The acquirer that records who paid does it on the capture as well as on the authorization —
+ * ConnexPay's `CustomerID`, whose `OrderNumber` sibling is documented as overwriting the auth's
+ * value on capture. This asserts the id *reaches the request*, which is the half a request-level
+ * test cannot see: `ConnexPay\CaptureRequest` had a passing test for emitting `CustomerID` while
+ * nothing on the way in ever set the parameter, so the field was absent in production and green
+ * in the suite.
+ */
+it('hands the customer id to the capture request, not only to the authorization', function () {
+    $captured = null;
+    $request = Mockery::mock(RequestInterface::class);
+    $request->shouldReceive('send')->andReturn(makeSuccessResponse('cap_customer'));
+    $omnipay = Mockery::mock(GatewayContract::class);
+    $omnipay->shouldReceive('capture')->andReturnUsing(function (array $options) use (&$captured, $request) {
+        $captured = $options;
+
+        return $request;
+    });
+
+    makeRouter(omnipay: $omnipay)->capture(
+        GatewayId::generate(),
+        'txn_1',
+        new Money(100, new Currency('USD')),
+        customerId: 'cus-of-ours',
+    );
+
+    expect($captured['customerId'])->toBe('cus-of-ours');
+});
+
 // ──────────────────────────────────────────────
 //  TransactionMetadataProvider extraction
 // ──────────────────────────────────────────────

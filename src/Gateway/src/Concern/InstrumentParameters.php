@@ -9,7 +9,6 @@ use Techork\PaymentService\Common\Contract\DecryptInterface;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSResult;
-use Techork\PaymentService\Gateway\Contract\CustomerRepository;
 use Techork\PaymentService\Gateway\Contract\GatewayCredential;
 use Techork\PaymentService\Gateway\Contract\GatewayInstrumentRepository;
 
@@ -56,15 +55,7 @@ trait InstrumentParameters
         return $this->getParameter('referenceResolver');
     }
 
-    public function setCustomerRepository(?CustomerRepository $value): self
-    {
-        return $this->setParameter('customerRepository', $value);
-    }
 
-    public function getCustomerRepository(): ?CustomerRepository
-    {
-        return $this->getParameter('customerRepository');
-    }
 
     public function setThreeDS(?ThreeDSResult $value): self
     {

@@ -11,7 +11,6 @@ use Override;
 use RuntimeException;
 use Techork\PaymentService\Common\ValueObject\Cash;
 use Techork\PaymentService\Common\ValueObject\PaymentMethod;
-use Techork\PaymentService\Gateway\Contract\CustomerRepository;
 use Techork\PaymentService\Gateway\Contract\Gateway;
 
 final class ConnexPayGateway extends AbstractGateway implements Gateway
@@ -20,7 +19,6 @@ final class ConnexPayGateway extends AbstractGateway implements Gateway
 
     private ConnexPayPurchasesClient $purchasesClient;
 
-    private ?CustomerRepository $customerRepository = null;
 
     #[Override]
     public function getName(): string
@@ -28,11 +26,6 @@ final class ConnexPayGateway extends AbstractGateway implements Gateway
         return 'connexpay';
     }
 
-    #[Override]
-    public function setCustomerRepository(CustomerRepository $repository): void
-    {
-        $this->customerRepository = $repository;
-    }
 
     #[Override]
     public function getDefaultParameters(): array
@@ -330,7 +323,6 @@ final class ConnexPayGateway extends AbstractGateway implements Gateway
             ...$options,
             'connexPayClient' => $this->client,
             'deviceGuid' => $this->getDeviceGuid(),
-            'customerRepository' => $this->customerRepository,
         ]);
     }
 }

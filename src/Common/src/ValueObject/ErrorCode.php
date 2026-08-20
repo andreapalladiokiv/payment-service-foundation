@@ -88,6 +88,12 @@ enum ErrorCode: string
     case SubscriptionUnexpectedState = 'subscription_unexpected_state';
 
     /**
+     * The customer cannot be asked this: an instrument it does not hold, one it already holds,
+     * or one it has let go and cannot take back.
+     */
+    case CustomerUnexpectedState = 'customer_unexpected_state';
+
+    /**
      * The instrument cannot be used: expired, already consumed, or otherwise spent.
      */
     case PaymentMethodUnexpectedState = 'payment_method_unexpected_state';

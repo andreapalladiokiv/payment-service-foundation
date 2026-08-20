@@ -80,16 +80,31 @@ From `composer.json` per package, verified:
 - `Domain` depends on `Common` only. It has no reference to the `Gateway` namespace.
 - Every provider package depends on `Common` + `Gateway`.
 
-So: **`CustomerId` goes in `Common`**, for the reason `ErrorCode` and `CardBrand` are there
-— both `Gateway` and `Domain` can see it, and an SDK consumer needs it. The aggregate goes
-in `Domain`. **`CustomerIdentity` goes in `Common` too**, because both sides need it: the
-aggregate holds one, and a provider package has to read one.
+So: **`CustomerId` goes in `Domain\Customer\ValueObject`**, next to its aggregate, exactly
+where `PaymentIntentId`, `CheckoutId`, `SubscriptionId` and `RefundId` are. It has to: an
+EventSauce aggregate root id implements `AggregateRootId`, and `Common` does not depend on
+eventsauce (`src/Common/composer.json`), so a `CustomerId` placed there could not be one.
 
-A provider package may name `CustomerId` and `CustomerIdentity` and **must never name the
-aggregate** — it depends on `Common` + `Gateway` and cannot load it. It reaches the customer
-the way it already reaches everything else it does not own: through a contract declared in
+**The `Gateway` package therefore takes the id as a plain `string`**, which is not a
+concession but the existing rule. `GatewayTransactionRepository::findForPaymentIntent(string
+$paymentIntentId)` is that rule, and `TransactionIdResolver`'s docblock states it: "Returning
+a string keeps this package free of domain VOs; the caller wraps into a typed aggregate id at
+the domain boundary."
+
+**`CustomerIdentity` goes in `Common`.** It is data rather than an id, and provider packages
+consume it directly the way they already consume `BillingAddress` — `formatRiskData()` in
+both ConnexPay and Nuvei takes one.
+
+A provider package may name `CustomerIdentity` and **must never name the aggregate or its
+id** — it depends on `Common` + `Gateway` and can load neither. It reaches the customer the
+way it already reaches everything else it does not own: through a contract declared in
 `Gateway` and implemented by the host, as `TransactionIdResolver` and `CustomerRepository`
 already are. F2 declares it.
+
+*(This section said the opposite in the first draft — `CustomerId` in `Common` — and F0 could
+not have been built from it. The correction is recorded rather than quietly applied because
+the reasoning that produced it was wrong in a way worth not repeating: it asked which packages
+need the type instead of asking how the tree already crosses that boundary.)*
 
 `bin/split.sh` publishes each package separately, so a type in the wrong package is not a
 style question — the split produces something that does not autoload.
@@ -98,7 +113,7 @@ style question — the split produces something that does not autoload.
 
 Stated up front because a `Customer` attracts everything.
 
-It exists for two jobs: **carry identity to gateways**, and **own instruments**. Not in
+It exists for two jobs: **carry identity to gateways**, and **own payment methods**. Not in
 scope, now or later, without a new plan:
 
 - segments, tags, lifetime value, order history, preferences, marketing consent;
@@ -151,12 +166,11 @@ has to be invented. What does have to be decided is in F7.
 ## F0. `CustomerId` and the aggregate
 
 **Depends on:** nothing.
-**Files:** `src/Common/src/ValueObject/CustomerId.php`,
-`src/Common/src/ValueObject/CustomerIdentity.php`, `src/Domain/src/Customer/`.
+**Files:** `src/Common/src/ValueObject/CustomerIdentity.php`, `src/Domain/src/Customer/`.
 
-`CustomerId extends UuidValueObject` and `CustomerIdentity` both in `Common` (§0.2) — the
-identity is a value the aggregate holds and a provider package reads, so it cannot live in
-`Domain`. The aggregate mirrors the layout of
+`CustomerId extends UuidValueObject implements AggregateRootId` in
+`Domain\Customer\ValueObject`, and `CustomerIdentity` in `Common` (§0.2). The aggregate
+mirrors the layout of
 `src/Domain/src/PaymentIntent/`: `Command/`, `Event/`, `Exception/`, `ValueObject/`, plus
 `CustomerAggregate.php` and `CustomerAggregateRepositoryInterface.php` (`retrieve` / `persist`).
 
@@ -169,7 +183,7 @@ CustomerAggregate
   ?BillingAddress   — the customer's own, distinct from a payment's
 ```
 
-The instruments it holds are F1's, added there rather than here so that this task can be
+The payment methods it holds are F1's, added there rather than here so that this task can be
 finished and left green on its own.
 
 Events: `CustomerRegistered`, `CustomerIdentityChanged`, `CustomerAddressChanged`,
@@ -205,14 +219,23 @@ gateway code, no provider names.
 **Depends on:** F0.
 **Files:** `src/Domain/src/Customer/`.
 
-The aggregate holds the instruments registered to it. §0.3 already names this as one of its
+The aggregate holds the payment methods registered to it — the value objects themselves. §0.3 already names this as one of its
 two jobs, and a collection is what that job means.
 
 ```
 CustomerAggregate
   …
-  array<string, StoredInstrument>  — keyed by PaymentMethodId
+  array<string, PaymentMethod>  — keyed by PaymentMethodId
 ```
+
+**A payment method and not an "instrument".** `PaymentInstrument` covers cards, tokens, cash
+and hosted pages, and all but one of those are transient — a `Token` expires, a `Cash` tender
+and a `HostedPayment` are a single payment's shape. Only a payment method is permanent, so only
+one can be attached to somebody. The wider word promised room for kinds that can never be held.
+
+**The value objects, not ids or flags.** That is what owning them means, and it is what lets
+F8's address deduplication happen at all: a card's billing address can be the customer's only if
+the customer is holding the card.
 
 **Payment methods only — not tokens.** A `Token` carries an `ExpiresAt`
 (`Common/src/ValueObject/Token.php:21`): it is a transient handle to a card, good for one use
@@ -255,42 +278,26 @@ Worth stating because the first draft reached for the nearest precedent instead 
 the precedent is for. Child aggregates exist to route events; a value-object collection exists
 to hold state the parent maintains itself. This is the second kind.
 
-**Naming.** `StoredInstrument`, not `PaymentMethod` — `Common\ValueObject\PaymentMethod`
-already exists and is a different thing (the instrument itself, as a payment carries it).
-Two things with one name in one plan is the mistake `dispute-domain-plan` made with
-`DisputeEvent`. "Instrument" rather than "payment method" in the name is deliberate
-even though tokens are excluded: what is owned is the registration, and the word leaves room
-for a future stored kind without reopening the naming question.
+**No timestamps.** Every message already carries
+`EventSauce\EventSourcing\Header::TIME_OF_RECORDING`, so when a card was added is in the stream
+already and a `registeredAt` in the payload would be a second copy free to disagree with it.
+(That differs from `SubscriptionCancelled::$effectiveAt`, which is on its event because the
+moment a cancellation *takes effect* is not the moment it was recorded.)
 
-So:
+**Detaching removes the entry**, and nothing is remembered about it. A provider will not take a
+released reference back, but that is a fact about the *reference* and belongs to
+`GatewayCustomerRepository`; keeping it here would be infrastructure in the aggregate again. A
+genuinely new registration of the same card arrives with a new id anyway.
 
-```php
-final readonly class StoredInstrument
-{
-    public function __construct(
-        public PaymentMethodId $paymentMethodId,
-        public DateTimeImmutable $registeredAt,
-        public ?DateTimeImmutable $detachedAt = null,
-    ) {}
-}
-```
-
-Held means present with a null `detachedAt`. A detached entry stays rather than being removed,
-because the third invariant below needs the memory — and a nullable timestamp is cheaper than
-a status enum that would only ever have two cases. It accumulates at the rate a person changes
-cards, which is the rate `Refund` accumulates at too.
-
-Events: `InstrumentRegistered`, `InstrumentDetached`.
+Events: `PaymentMethodRegistered` (carrying the payment method), `PaymentMethodDetached`
+(carrying its id).
 
 **Invariants covered by tests:**
 
-- Registering the same instrument twice is refused, not silently deduplicated. Today the same
+- Registering the same payment method twice is refused, not silently deduplicated. Today the same
   card registered twice is two `gateway_references` rows and nothing says they are one card.
-- Detaching an instrument this customer does not hold is refused. New refusal + `ErrorCode`
-  case.
-- A detached instrument cannot be re-registered. It is a decision rather than a discovery, and
-  the reason is that a gateway reference detached at the provider does not come back — Stripe
-  says so in as many words, and `CreatePaymentMethodRequest`'s docblock already records it.
+- Detaching a payment method this customer does not hold is refused. New refusal +
+  `ErrorCode` case.
 - `CustomerForgotten` does not detach anything. See F7.
 
 **Done when:** the collection survives a snapshot round-trip — an array of arrays in
@@ -302,7 +309,7 @@ suite is green. `Common\ValueObject\PaymentMethod` is not modified by this task.
 **Depends on:** F1.
 **Files:** `src/Gateway/src/Contract/GatewayCustomerRepository.php` (new),
 `src/Gateway/src/Contract/CustomerIdentitySource.php` (new),
-`src/Gateway/src/Contract/CustomerRepository.php` (deprecated),
+`src/Gateway/src/Contract/CustomerRepository.php` (deleted — see F2d),
 `src/Laravel/src/Repository/`, two migrations.
 
 `CustomerRepository` is the reason the map was mistaken for a customer model in the first
@@ -332,8 +339,8 @@ This is the customer's actual repository. Nothing about gateways touches it.
 `Gateway\Contract\GatewayCustomerRepository`:
 
 ```php
-public function find(GatewayId $gatewayId, CustomerId $customerId): ?string;
-public function saveReference(GatewayId $gatewayId, CustomerId $customerId, string $reference): void;
+public function find(GatewayId $gatewayId, string $customerId): ?string;
+public function saveReference(GatewayId $gatewayId, string $customerId, string $reference): void;
 ```
 
 Named and shaped like `VirtualCardReferenceRepository`, because it is the same kind of thing.
@@ -358,7 +365,7 @@ customer (F4, F5) and cannot load the aggregate (§0.2). So `Gateway` declares:
 ```php
 interface CustomerIdentitySource
 {
-    public function find(CustomerId $customerId): ?CustomerIdentity;
+    public function find(string $customerId): ?CustomerIdentity;
 }
 ```
 
@@ -368,15 +375,28 @@ same reason: `Gateway` states what it needs and stays free of domain types beyon
 
 ### F2d. Retiring `CustomerRepository`
 
-It is **deprecated whole, not extended.** `findByInstrument()` is the only way to answer
-"whose card is this" for rows written before F1, and F4, F5 and A2 all need that answer during
-the transition — but the new contract must not be born carrying it. Its docblock names both
-successors: `GatewayCustomerRepository` for the reference, and A2b's projection for the
-instrument question.
+**Run this after F4 and F5, not before.** Stripe and Nuvei still read the old contract until
+those tasks switch them, so removing the interface method first would need a second capability
+interface carrying the old repository, existing only to be deleted two tasks later. The
+retirement is naturally last.
 
-It is deleted, with the pivot table, once A2 has run. That deletion is the task that closes
-§0's argument: the map stops being a customer model because it is finally named for what it
-stores.
+It is **deleted, not deprecated.** The plan said otherwise and was corrected during the work:
+keep it and `findByInstrument()` stays reachable as a silent fallback whenever a caller does not
+name a customer — and that lookup is precisely what registered provider-side customers under
+whatever address rode along with a payment. A fallback to it makes the whole change optional,
+taken by default by every call site that forgot. So the answer for a customer nobody named is
+now *no provider customer*, which surfaces as a refused registration rather than an invented one.
+
+Deleted with it: `EloquentCustomerRepository`, `setCustomerRepository()` on
+`Gateway\Contract\Gateway`, the repository parameter on both gateway factories, its container
+binding, `InstrumentParameters`' accessors, and both pivot relations on the models
+(`GatewayCustomer::references()`, `GatewayReference::customers()`).
+
+**The pivot table outlives its reader.** `gateway_reference_customer` is left standing, empty of
+readers. It is the only surviving record of which cards a provider knew under one customer, which
+makes it the evidence A1 would start from if it ever decides two of our customers are one person.
+Kept as history, not as a dependency — nothing in this package reads it, and nothing should start
+to. Dropping it is A2's call, once the host has taken what it needs.
 
 **One consequence that reaches every provider package.** `setCustomerRepository()` is on
 `Gateway\Contract\Gateway` itself (`src/Gateway/src/Contract/Gateway.php:16`), so all five
@@ -387,8 +407,8 @@ gateway that has no customer concept should not be made to declare that it has.
 
 **Done when:** the aggregate persists and replays through F2a, the new map answers by
 `CustomerId`, both migrations are listed in `hasMigrations` (a stub in the directory alone
-does nothing — `Laravel/src/GatewayServiceProvider.php:96`), the deprecated contract still
-answers for old rows, and the suite is green.
+does nothing — `Laravel/src/GatewayServiceProvider.php:96`), no code path resolves a provider
+customer from an instrument, and the suite is green.
 
 ## F3. The customer reaches the gateway call
 
@@ -396,7 +416,8 @@ answers for old rows, and the suite is green.
 **Files:** `src/Gateway/src/Contract/PaymentGatewayInterface.php`,
 `src/Gateway/src/PaymentGatewayRouter.php`, `src/Domain/src/PaymentIntent/Port/Request/CreateRequest.php`.
 
-`authorize()`, `charge()` and the rebilling variants take `?CustomerId $customerId = null`.
+`authorize()`, `charge()` and the rebilling variants take `?string $customerId = null` — a
+string, for the reason §0.2 gives, and alongside `clientUniqueId` which is one too.
 
 **On the signature, not on the credential.** A customer is a fact about this payment, which
 is what distinguishes it from `authenticationUrl` and `returnUrl` — those are one address per
@@ -469,15 +490,29 @@ Also in this task: the dead `customerRepository` wiring at `ConnexPayGateway.php
 starts being used or is removed. Leaving an injected dependency that nothing reads is how it
 came to be mistaken for a working customer path in the first place.
 
-**Open question this task must answer, by probe, before writing code.** ConnexPay documents
-that a Capture's `OrderNumber` overwrites the Auth's. Whether `CustomerID` behaves the same
-is undocumented. If it does, a capture without it blanks what the auth sent, and the id must
-be threaded through `CapturePort`. Sandbox credentials are in `.env`
-(`CONNEXPAY_SANDBOX_*`); auth with the field, capture without, then read back via
-`Search/Sales`. Record the finding in the reference below either way.
+**Closed by making the id optional, not by answering the probe.** Auth Only accepts `CustomerID`
+and echoes it back — verified in sandbox 2026-08-20. Whether a Capture's value overwrites the
+Auth's, as its `OrderNumber` demonstrably does, stays unknown: it needs an approved
+authorization, and sandbox auths stay at `Transaction - CreatedLocal`, so the capture is refused
+with 422 before the question arises.
 
-**Done when:** the field is sent on the three endpoints and absent from the other two, and
-the probe's answer is written down.
+It does not need answering. The field is optional: omitted when no customer was named, sent on all
+three accepting endpoints when one was. A caller that names a customer sends the same value at
+every step, so an overwrite writes what was already there; a caller that names none never had a
+value to lose. Neither branch turns on the unknown, so the unknown stops being a dependency —
+which is a closure rather than a park, and the reason F6 does not wait on production traffic.
+
+**That safe order was described before it was wired.** `ConnexPay\CaptureRequest` emitted
+`CustomerID` and had a passing test saying so, while `PaymentGatewayInterface::capture()` had no
+`customerId` parameter at all — so nothing ever set it and the field was absent in production and
+green in the suite. A request-level test cannot see that; the assertion has to be made where the
+value enters. `capture()` now takes it on the interface, the router, and
+{@see \Techork\PaymentService\Laravel\Port\OmnipayCapturePort}, with tests at the router and
+the port rather than only at the request.
+
+**Done when:** the field is sent on the three endpoints and absent from the other two, it is
+optional at every layer that carries it — router, port, request — and a test asserts that where
+the value *enters*, not only that the request emits it.
 
 ## F7. Erasure
 
@@ -501,14 +536,40 @@ decides is the policy edge that the mechanism does not:
 **Done when:** a forgotten customer replays, its identity reads as stubs, its links resolve,
 and re-registration is refused with a coded error.
 
+**Erasure reaches snapshots by rewriting them, not by shredding them — and that is what the
+stubs are for.** On the stream it is automatic: `SymfonyPayloadSerializer` normalizes the event
+*object* rather than calling `toPayload()`, so `#[Pii]` applies by reflection and `stored_events`
+holds a sha256 per field, whose row the store drops.
+
+Snapshots hold plaintext, and deliberately so. `createSnapshotState()` flattens value objects to
+strings before any serializer sees them, and shredding reads attributes off a class, so the
+markings cannot reach a snapshot. The answer is not to make them reachable. `ShreddingStubs` are
+**type-stable values that satisfy every invariant** — `[REDACTED]` sits outside the name regex,
+the email is under RFC 2606's `.invalid`, the phone is in NANPA's fictional `555-01xx` range, the
+country is ISO 3166's user-assigned `ZZ` — which is why `BillingAddress::unknown()` and
+`CustomerIdentity::forgotten()` are whole objects rather than half-empty ones. A snapshot whose
+PII fields have been overwritten with stubs is still a snapshot that rebuilds and replays.
+
+So erasure **updates the snapshots** as well as dropping the plaintext row, and that is the
+application's (A4): a command walks the indexed references in `customers` and `payment_intents`
+and rewrites the affected aggregates' snapshots with stubs. Cheap, because those lookups are
+indexed, and correct without a format change.
+
+**Do not try to make snapshots shreddable.** One attempt did — typed state classes for all four
+aggregates, a `SnapshotState` marker, the state's class recorded in the row, `PhpDocExtractor`
+added so a collection of value objects would denormalize — and it was rejected and rolled back.
+`createSnapshotState(): array` stays. What remains is a note, not a defect: plaintext lives in
+`aggregate_snapshots` between writes and erasure, so backups taken in that window contain it, and
+that is a backup-retention question rather than something the serializer can answer.
+
 ## F8. Remove the address copy (deferred inside Part I)
 
 **Depends on:** F1, A2.
 
 `Common\ValueObject\PaymentMethod` stops carrying its own `BillingAddress`; the address comes
 from the customer that holds the instrument, with a per-payment override still possible on
-the payment itself. **Do not start before A2's backfill has run in production** — an
-instrument no customer holds has no address to fall back to.
+the payment itself. **Do not start before A2's backfill has run in production** — a payment
+method no customer holds has no address to fall back to.
 
 This is the one task that does rewrite an event payload, and it is deferred for that reason:
 the field has to be read with a fallback for as long as unmigrated rows exist.
@@ -520,22 +581,48 @@ the field has to be read with a fallback for as long as unmigrated rows exist.
 Not implemented in this repository. Listed because Part I's events have to be sufficient for
 it; if a task here cannot be built from what Part I emits, that is a Part I bug.
 
-- **A0. Wiring.** The `CustomerAggregateRepositoryInterface` implementation,
-  `CustomerIdentitySource` (against the aggregate or a projection — the host's call), and
-  passing a `CustomerId` at every gateway call site.
+- **A0. Wiring.** `CustomerIdentitySource` (against the aggregate or a projection — the host's
+  call) and passing a `CustomerId` at every gateway call site. The
+  `CustomerAggregateRepositoryInterface` implementation ships with the package.
 - **A1. Identity resolution.** Which person a request belongs to — lookup, dedupe, merge.
-  Explicitly the application's (§0.3). Foundation takes the id it is given.
-- **A2. Backfill.** Register existing payment methods onto their customers, i.e. emit F1's
-  `InstrumentRegistered` for each. Tokens are out of scope for the same reason they are out
-  of F1 — the expired ones are most of them. The available evidence is `gateway_reference_customer`
-  plus each row's own `BillingAddress`. Some rows are unanswerable: three references for one
-  person cannot be distinguished from three people without outside knowledge, so the backfill
-  must be allowed to leave an instrument held by nobody, and everything downstream must
-  tolerate that indefinitely — including F8, which is why it waits.
-- **A2b. Instrument → customer projection.** F1 deliberately has no back-pointer, so "whose
-  card is this" is a read model rather than a field. F2's deprecated instrument-keyed lookup
-  is what needs it, and it is the honest replacement for that method rather than a reason to
-  keep it.
+  Explicitly the application's (§0.3); foundation takes the id it is given. **Nothing downstream
+  works without it**, and it has nothing to resolve *from* yet: the application has no person
+  entity, so after A2 there is one customer per card and no rule that says a returning payer is
+  one of them. Whatever that rule turns out to be — email, an account the application grows, a
+  merchant-supplied id — it is the thing that makes every other customer task worth having, and
+  it is not something a migration can decide on the way past.
+- **A2. Backfill.** Give every existing payment method a customer that holds it, i.e. emit F1's
+  `PaymentMethodRegistered` for each. The application's, because that is where the payment
+  methods are — `payment_methods`, `billing_addresses`, the `source` morph. Tokens stay out of
+  scope for the same reason they are out of F1: the expired ones are most of them.
+
+  This was built in the foundation once and taken back out, and the findings are worth more than
+  the code was:
+
+  - **One customer per payment method, and no grouping.** `gateway_reference_customer` links a
+    payment method to a provider-side customer, so it is tempting to treat a card linked at two
+    gateways as proof those two provider-side customers are one person, transitively. That is a
+    defensible reading of the table and still the wrong thing for a migration to do: it decides
+    who someone is from data never collected to answer that, permanently, and a wrong merge
+    cannot be undone — while two customers that are one person can be merged later.
+  - **Leave `gateway_customers.customer_id` null.** With one customer per card, a row covering
+    three cards has three candidates and no answer. A null there costs nothing that is not
+    already lost: an unnamed customer resolves to no provider customer today too. The column
+    fills as customers are named on new activity.
+  - **Make the customer reachable, or the backfill is write-only.** Ids anchored on row ids are
+    ids nothing will ever look up — at payment time a caller holds a payment method, not a
+    `gateway_customers.id`. Either derive the customer id from the payment method's (UUIDv5 over
+    a fixed namespace, so a re-run lands on the same customer and the aggregate's refusal of a
+    duplicate registration reads as "already moved"), or record the mapping as A2b. Whichever:
+    the derivation stops being the answer the moment A1 merges two customers.
+  - **A row that cannot be reconstructed must be named, not skipped.** A shredded card has
+    nothing truthful to register, and registering a placeholder would put a card in a customer's
+    stream that never existed — but a silent omission reads as "there were none".
+  - `CustomerIdentity::fromBillingAddress()` is the reading it needs, and it ships with `Common`.
+- **A2b. Payment method → customer projection.** F1 deliberately has no back-pointer, so "whose
+  card is this" is a read model rather than a field. Nothing in the foundation asks it any more —
+  F2d deleted the lookup that did — so this is for the application's own reads, and it is what
+  has to hold the answer once A1 merges customers and A2's derivation stops being one.
 - **A3. Nuvei re-keying.** Every existing Nuvei customer is keyed by email (F5). Either
   re-register each customer under its UUID and re-tokenize the cards, or keep the email token
   for pre-existing customers and use UUIDs only for new ones. The second is less work and

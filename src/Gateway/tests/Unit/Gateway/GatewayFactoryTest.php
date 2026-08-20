@@ -3,7 +3,6 @@
 declare(strict_types=1);
 
 use Omnipay\Common\AbstractGateway;
-use Techork\PaymentService\Gateway\Contract\CustomerRepository;
 use Techork\PaymentService\Gateway\Contract\Gateway;
 use Techork\PaymentService\Gateway\Contract\GatewayCredential;
 use Techork\PaymentService\Gateway\GatewayFactory;
@@ -24,7 +23,7 @@ function makeCredential(string $name = 'Stripe', array $credentials = [], ?Gatew
 
 function makeGatewayFactory(): GatewayFactory
 {
-    return new GatewayFactory(Mockery::mock(CustomerRepository::class));
+    return new GatewayFactory;
 }
 
 it('registers and lists gateway mappings', function () {

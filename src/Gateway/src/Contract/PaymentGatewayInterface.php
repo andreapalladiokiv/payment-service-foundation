@@ -14,6 +14,17 @@ use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 use Techork\PaymentService\Common\ValueObject\CardBrand;
 
 /**
+ * `$customerId` names whose payment this is — our own customer id, as a string for the reason
+ * {@see Webhook\Contract\TransactionIdResolver} gives. Adapters that have a customer concept
+ * forward it as that provider's own field: Stripe looks up or creates a `cus_...` for it, Nuvei
+ * sends it as `userTokenId`, ConnexPay as `CustomerID`. Ones that do not, ignore it.
+ *
+ * It is per-payment rather than configuration, which is what separates it from a return address
+ * — see {@see \Techork\PaymentService\Stripe\StripeGateway::setAuthenticationUrl}, which is one
+ * value per deployment and belongs with the credential. Null means the caller is not telling us,
+ * and every adapter must still work: today two of them would build a provider-side customer out
+ * of whatever address rode along with the payment, and this is how they learn to stop.
+ *
  * Every mutating gateway operation accepts an optional `$clientUniqueId` —
  * the caller's idempotency key. Concrete implementations forward it as the
  * gateway-native idempotency mechanism (Stripe `Idempotency-Key` HTTP
@@ -61,9 +72,9 @@ interface PaymentGatewayInterface
 
     public function createPaymentMethod(GatewayId $gatewayId, PaymentInstrument $instrument, ?BillingAddress $billingAddress = null, ?string $clientUniqueId = null): RegistrationResult;
 
-    public function authorize(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated): AuthorizationResult;
+    public function authorize(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated, ?string $customerId = null): AuthorizationResult;
 
-    public function charge(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated): AuthorizationResult;
+    public function charge(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated, ?string $customerId = null): AuthorizationResult;
 
     /**
      * Authorizes a payment that belongs to a rebilling series — a
@@ -113,7 +124,7 @@ interface PaymentGatewayInterface
      *  a partial request and fall back to void + a fresh sale with
      *  `$instrument`. Gateways with native partial capture ignore both.
      */
-    public function capture(GatewayId $gatewayId, string $transactionReference, Money $amount, ?string $clientUniqueId = null, ?Money $authorizedAmount = null, ?PaymentInstrument $instrument = null): GatewayResult;
+    public function capture(GatewayId $gatewayId, string $transactionReference, Money $amount, ?string $clientUniqueId = null, ?Money $authorizedAmount = null, ?PaymentInstrument $instrument = null, ?string $customerId = null): GatewayResult;
 
     public function cancel(GatewayId $gatewayId, string $transactionReference, ?string $clientUniqueId = null): GatewayResult;
 

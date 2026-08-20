@@ -235,6 +235,51 @@ trait ConnexPayRequestParameters
         return $data;
     }
 
+    public function setCustomerId(?string $value): self
+    {
+        return $this->setParameter('customerId', $value);
+    }
+
+    /**
+     * Our own customer id, as ConnexPay's `CustomerID`.
+     *
+     * Its documented job is to be "a secondary identifier in conjunction with OrderNumber",
+     * searchable in the portal: one names the payment, the other names who made it. Up to 100
+     * characters, alphanumeric plus `[._/-]` — a UUID's hyphens are fine here, unlike in
+     * `SequenceNumber`, which lists no permitted punctuation at all.
+     *
+     * **Applied by hand on the three endpoints that accept it** — Auth Only, Create Sale and
+     * Capture — and deliberately not folded into {@see withIdentifiers}, because Void and Return
+     * do not list the field. Sending one anyway is the kind of guess that had `getChallenge()`
+     * reading fields ConnexPay never returns.
+     *
+     * Sandbox-verified 2026-08-20: Auth Only accepts it and echoes it back in the response.
+     *
+     * **Optional, and that is the whole answer to the one question left open here.** ConnexPay
+     * documents that a Capture's `OrderNumber` overwrites the Auth's and says nothing about
+     * `CustomerID`; whether a capture without one blanks what the auth recorded cannot be
+     * established in sandbox, where auths stay at `Transaction - CreatedLocal` and the capture is
+     * refused with 422 first. It does not need establishing. The field is omitted when no
+     * customer was named and sent on all three endpoints when one was, so a caller that names a
+     * customer sends the same value at every step — an overwrite writes what was already there —
+     * and a caller that names none never had the value to lose. Neither branch depends on the
+     * unanswered question, which is what closes it rather than parks it.
+     *
+     * @param array<string, mixed> $data
+     * @return array<string, mixed>
+     */
+    protected function withCustomerId(array $data): array
+    {
+        $customerId = $this->getParameter('customerId');
+
+        if (is_string($customerId) && $customerId !== '') {
+            $data['CustomerID'] = substr((string) preg_replace('/[^A-Za-z0-9._\/-]/', '', $customerId), 0, 100);
+        }
+
+        return $data;
+    }
+
+
     /**
      * Both of ConnexPay's identifiers, which every documented endpoint takes together and
      * which mean different things: one names the payment, the other names this request.

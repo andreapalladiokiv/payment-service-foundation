@@ -13,8 +13,6 @@ use Omnipay\Common\Message\RequestInterface;
  */
 interface Gateway extends GatewayInterface
 {
-    public function setCustomerRepository(CustomerRepository $repository): void;
-
     /**
      * Omnipay keeps this on `AbstractGateway` rather than on `GatewayInterface`, which this
      * contract extends — so callers that legitimately need it had no declared way to reach

@@ -123,7 +123,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
     }
 
     #[Override]
-    public function authorize(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated): AuthorizationResult
+    public function authorize(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated, ?string $customerId = null): AuthorizationResult
     {
         $credential = $this->credentialRepository->findOrFail($gatewayId);
         $omnipay = $this->gatewayFactory->createForCredential($credential);
@@ -153,6 +153,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             'statementDescription' => $statementDescription,
             'description' => $description,
             'initiation' => $initiation,
+            'customerId' => $customerId,
         ])->send());
 
         $this->logger->log('Gateway authorize response', [
@@ -235,7 +236,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
     }
 
     #[Override]
-    public function charge(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated): AuthorizationResult
+    public function charge(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated, ?string $customerId = null): AuthorizationResult
     {
         $credential = $this->credentialRepository->findOrFail($gatewayId);
         $omnipay = $this->gatewayFactory->createForCredential($credential);
@@ -265,6 +266,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             'statementDescription' => $statementDescription,
             'description' => $description,
             'initiation' => $initiation,
+            'customerId' => $customerId,
         ])->send());
 
         $this->logger->log('Gateway charge response', [
@@ -311,7 +313,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
     }
 
     #[Override]
-    public function capture(GatewayId $gatewayId, string $transactionReference, Money $amount, ?string $clientUniqueId = null, ?Money $authorizedAmount = null, ?PaymentInstrument $instrument = null): GatewayResult
+    public function capture(GatewayId $gatewayId, string $transactionReference, Money $amount, ?string $clientUniqueId = null, ?Money $authorizedAmount = null, ?PaymentInstrument $instrument = null, ?string $customerId = null): GatewayResult
     {
         $credential = $this->credentialRepository->findOrFail($gatewayId);
         $omnipay = $this->gatewayFactory->createForCredential($credential);
@@ -323,6 +325,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             'clientUniqueId' => $clientUniqueId,
             'authorizedAmount' => $authorizedAmount,
             'instrument' => $instrument?->toPayload(),
+            'customerId' => $customerId,
         ]);
 
         $result = $this->buildOutcome(fn () => $omnipay->capture([
@@ -334,6 +337,12 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             // original instrument); others have no setters and ignore them.
             'authorizedAmount' => $authorizedAmount,
             'instrument' => $instrument,
+            // On capture too, not only at the start. ConnexPay documents that a Capture's
+            // `OrderNumber` overwrites the Auth's and says nothing about `CustomerID`; if it
+            // behaves the same, a capture sent without one blanks what the auth recorded.
+            // Gateways with no `setCustomerId()` drop it — Omnipay's `Helper::initialize()`
+            // applies a key only where a matching setter exists.
+            'customerId' => $customerId,
             'gateway' => $credential,
             'decrypter' => $this->decrypter,
             'referenceResolver' => $this->referenceRepository,
