@@ -151,7 +151,8 @@ has to be invented. What does have to be decided is in F7.
 ## F0. `CustomerId` and the aggregate
 
 **Depends on:** nothing.
-**Files:** `src/Common/src/ValueObject/CustomerId.php`, `src/Domain/src/Customer/`.
+**Files:** `src/Common/src/ValueObject/CustomerId.php`,
+`src/Common/src/ValueObject/CustomerIdentity.php`, `src/Domain/src/Customer/`.
 
 `CustomerId extends UuidValueObject` and `CustomerIdentity` both in `Common` (§0.2) — the
 identity is a value the aggregate holds and a provider package reads, so it cannot live in
@@ -167,6 +168,9 @@ CustomerAggregate
   CustomerIdentity  — name, email, phone; all #[Pii]
   ?BillingAddress   — the customer's own, distinct from a payment's
 ```
+
+The instruments it holds are F1's, added there rather than here so that this task can be
+finished and left green on its own.
 
 Events: `CustomerRegistered`, `CustomerIdentityChanged`, `CustomerAddressChanged`,
 `CustomerForgotten`.
@@ -196,27 +200,63 @@ provider concern from.
 **Done when:** unit tests green under `--testsuite=Domain` and `--testsuite=Common`. No
 gateway code, no provider names.
 
-## F1. Instruments gain an owner
+## F1. The customer owns its instruments
 
 **Depends on:** F0.
-**Files:** `src/Common/src/ValueObject/PaymentMethod.php`, `Token.php`.
+**Files:** `src/Domain/src/Customer/`.
 
-A stored instrument belongs to a customer. Add `CustomerId` to `PaymentMethod` and `Token`.
+The aggregate holds the instruments registered to it. §0.3 already names this as one of its
+two jobs, and a collection is what that job means.
 
-Two things make this delicate and both must be handled in this task:
+```
+CustomerAggregate
+  …
+  array<string, StoredInstrument>  — keyed by PaymentMethodId / TokenId
+```
 
-- **The payload is in the event stream.** `PaymentMethod::toPayload()` is read back by
-  `fromPayload()` on replay, so the new key is written but read with a fallback, exactly as
-  `ChallengeArraySerializer` reads the pre-rename 3DS keys
-  (`Domain/src/PaymentIntent/ChallengeArraySerializer.php:38-52`). Rows without an owner must
-  keep loading.
-- **The address duplication is not resolved here.** `PaymentMethod` keeps its own
-  `BillingAddress` for now; removing it is F8 and needs the backfill in A2 first. Say so in
-  the docblock so the next reader does not take the duplication for a decision.
+**Not a `CustomerId` on `PaymentMethod`.** That was the first draft and it is the weaker
+direction, for three reasons:
 
-**Done when:** an instrument round-trips with and without an owner, and the suite is green.
+- **A pointer is not ownership.** With the id on the value object, no aggregate can refuse
+  anything. With the collection, the refusals below become expressible at all.
+- **`PaymentMethod` is a `Common` value object embedded in payment events.** Adding a field
+  rewrites the payload of every `PaymentIntentAuthorized` and needs a read-fallback for ever.
+  A collection on a new aggregate touches no existing event.
+- **Nothing needs the back-pointer.** The gateway call gets the customer explicitly (F3);
+  reporting joins in a projection; erasure iterates from the customer, which is the direction
+  that has the list.
 
-## F2. `CustomerRepository` re-keyed
+**The pattern is already in the tree.** `PaymentIntentAggregate` holds
+`array<string, Refund> $refunds`, boots each child on first sight
+(`Domain/src/PaymentIntent/PaymentIntentAggregate.php:748-754`) and registers it with
+`registerAggregate()`; `Refund` filters the shared stream by its own id
+(`Domain/src/PaymentIntent/Refund/Refund.php:69-76`). Follow it.
+
+**Naming.** `StoredInstrument`, not `PaymentMethod` — `Common\ValueObject\PaymentMethod`
+already exists and is a different thing (the instrument itself, as a payment carries it).
+Two things with one name in one plan is the mistake `dispute-domain-plan` made with
+`DisputeEvent`.
+
+**Default: a collection of small child aggregates**, as `Refund` is, each holding its
+`PaymentMethodId` and its status. Plain value objects would do if instruments turn out to
+have no behaviour of their own, but registration and detachment already give them a
+lifecycle, and the `Refund` precedent costs nothing to follow.
+
+Events: `InstrumentRegistered`, `InstrumentDetached`.
+
+**Invariants covered by tests:**
+
+- Registering the same instrument twice is refused, not silently deduplicated. Today the same
+  card registered twice is two `gateway_references` rows and nothing says they are one card.
+- Detaching an instrument this customer does not hold is refused. New refusal + `ErrorCode`
+  case.
+- A detached instrument cannot be re-registered. It is a decision rather than a discovery, and
+  the reason is that a gateway reference detached at the provider does not come back — Stripe
+  says so in as many words, and `CreatePaymentMethodRequest`'s docblock already records it.
+- `CustomerForgotten` does not detach anything. See F7.
+
+**Done when:** the collection survives a snapshot round-trip, every refusal above has a test,
+and the suite is green. `Common\ValueObject\PaymentMethod` is not modified by this task.## F2. `CustomerRepository` re-keyed
 
 **Depends on:** F1.
 **Files:** `src/Gateway/src/Contract/CustomerRepository.php`,
@@ -251,9 +291,10 @@ Implemented by the host, against the aggregate or against its projection — the
 and neither is this package's business. The same shape as `TransactionIdResolver`, for the
 same reason: `Gateway` states what it needs and stays free of domain types beyond `Common`.
 
-**The instrument-keyed method stays**, deprecated, until A2 has backfilled owners — it is the
-only way to answer "whose card is this" for existing rows, and F4/F5 need an answer during
-the transition. Its docblock must say what replaces it and when it goes.
+**The instrument-keyed method stays**, deprecated, until A2 has backfilled — it is the only
+way to answer "whose card is this" for existing rows, and F4/F5 need an answer during the
+transition. Its docblock must name its replacement: the projection in A2b, since F1 gives
+instruments no back-pointer on purpose.
 
 **Done when:** both lookups work, the migration is in `hasMigrations` (a stub in the
 directory alone does nothing — `Laravel/src/GatewayServiceProvider.php:96`), and the
@@ -374,10 +415,13 @@ and re-registration is refused with a coded error.
 
 **Depends on:** F1, A2.
 
-`PaymentMethod` stops carrying its own `BillingAddress` and reads the customer's, with a
-per-payment override still possible on the payment itself. **Do not start before A2's
-backfill has run in production** — an instrument whose owner is unknown has no address to
-fall back to.
+`Common\ValueObject\PaymentMethod` stops carrying its own `BillingAddress`; the address comes
+from the customer that holds the instrument, with a per-payment override still possible on
+the payment itself. **Do not start before A2's backfill has run in production** — an
+instrument no customer holds has no address to fall back to.
+
+This is the one task that does rewrite an event payload, and it is deferred for that reason:
+the field has to be read with a fallback for as long as unmigrated rows exist.
 
 ---
 
@@ -391,11 +435,16 @@ it; if a task here cannot be built from what Part I emits, that is a Part I bug.
   passing a `CustomerId` at every gateway call site.
 - **A1. Identity resolution.** Which person a request belongs to — lookup, dedupe, merge.
   Explicitly the application's (§0.3). Foundation takes the id it is given.
-- **A2. Backfill.** Assign owners to existing `PaymentMethod` and `Token` rows. The available
-  evidence is `gateway_reference_customer` plus each row's own `BillingAddress`. Some rows
-  will be unanswerable: three references for one person cannot be distinguished from three
-  people without outside knowledge, so the migration must be allowed to leave an owner null
-  and F1's fallback must hold for those rows indefinitely.
+- **A2. Backfill.** Register existing instruments onto their customers, i.e. emit F1's
+  `InstrumentRegistered` for each. The available evidence is `gateway_reference_customer`
+  plus each row's own `BillingAddress`. Some rows are unanswerable: three references for one
+  person cannot be distinguished from three people without outside knowledge, so the backfill
+  must be allowed to leave an instrument held by nobody, and everything downstream must
+  tolerate that indefinitely — including F8, which is why it waits.
+- **A2b. Instrument → customer projection.** F1 deliberately has no back-pointer, so "whose
+  card is this" is a read model rather than a field. F2's deprecated instrument-keyed lookup
+  is what needs it, and it is the honest replacement for that method rather than a reason to
+  keep it.
 - **A3. Nuvei re-keying.** Every existing Nuvei customer is keyed by email (F5). Either
   re-register each customer under its UUID and re-tokenize the cards, or keep the email token
   for pre-existing customers and use UUIDs only for new ones. The second is less work and
