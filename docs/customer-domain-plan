@@ -238,23 +238,47 @@ direction, for three reasons:
   reporting joins in a projection; erasure iterates from the customer, which is the direction
   that has the list.
 
-**The pattern is already in the tree.** `PaymentIntentAggregate` holds
-`array<string, Refund> $refunds`, boots each child on first sight
-(`Domain/src/PaymentIntent/PaymentIntentAggregate.php:748-754`) and registers it with
-`registerAggregate()`; `Refund` filters the shared stream by its own id
-(`Domain/src/PaymentIntent/Refund/Refund.php:69-76`). Follow it.
+**Plain value objects, and explicitly not the `Refund` pattern.** `Refund` is a child
+aggregate because events arrive *about a particular refund* — `RefundProcessed`,
+`RefundFailed`, `RefundFeeRecorded`, `RefundImported` — and the parent has to route them, so
+it boots a child per id (`Domain/src/PaymentIntent/PaymentIntentAggregate.php:748-754`),
+registers it with `registerAggregate()`, and the child filters the shared stream by its own id
+(`Domain/src/PaymentIntent/Refund/Refund.php:69-76`).
+
+A stored payment method has no such stream. The customer is the one acting on it — it is
+registered and detached by the customer's own two events, and nothing else ever changes it. So
+the child-aggregate machinery routes nothing: no `AggregateAppliesKnownEvents`, no
+`registerAggregate`, no per-child snapshot protocol. The parent's apply methods add and mark
+entries in an array, which is all the state there is.
+
+Worth stating because the first draft reached for the nearest precedent instead of asking what
+the precedent is for. Child aggregates exist to route events; a value-object collection exists
+to hold state the parent maintains itself. This is the second kind.
 
 **Naming.** `StoredInstrument`, not `PaymentMethod` — `Common\ValueObject\PaymentMethod`
 already exists and is a different thing (the instrument itself, as a payment carries it).
 Two things with one name in one plan is the mistake `dispute-domain-plan` made with
-`DisputeEvent`. "Instrument" rather than "payment method" in the child's name is deliberate
+`DisputeEvent`. "Instrument" rather than "payment method" in the name is deliberate
 even though tokens are excluded: what is owned is the registration, and the word leaves room
 for a future stored kind without reopening the naming question.
 
-**Default: a collection of small child aggregates**, as `Refund` is, each holding its
-`PaymentMethodId` and its status. Plain value objects would do if instruments turn out to
-have no behaviour of their own, but registration and detachment already give them a
-lifecycle, and the `Refund` precedent costs nothing to follow.
+So:
+
+```php
+final readonly class StoredInstrument
+{
+    public function __construct(
+        public PaymentMethodId $paymentMethodId,
+        public DateTimeImmutable $registeredAt,
+        public ?DateTimeImmutable $detachedAt = null,
+    ) {}
+}
+```
+
+Held means present with a null `detachedAt`. A detached entry stays rather than being removed,
+because the third invariant below needs the memory — and a nullable timestamp is cheaper than
+a status enum that would only ever have two cases. It accumulates at the rate a person changes
+cards, which is the rate `Refund` accumulates at too.
 
 Events: `InstrumentRegistered`, `InstrumentDetached`.
 
@@ -269,8 +293,9 @@ Events: `InstrumentRegistered`, `InstrumentDetached`.
   says so in as many words, and `CreatePaymentMethodRequest`'s docblock already records it.
 - `CustomerForgotten` does not detach anything. See F7.
 
-**Done when:** the collection survives a snapshot round-trip, every refusal above has a test,
-and the suite is green. `Common\ValueObject\PaymentMethod` is not modified by this task.## F2. `CustomerRepository` re-keyed
+**Done when:** the collection survives a snapshot round-trip — an array of arrays in
+`createSnapshotState()`, with no child protocol — every refusal above has a test, and the
+suite is green. `Common\ValueObject\PaymentMethod` is not modified by this task.## F2. `CustomerRepository` re-keyed
 
 **Depends on:** F1.
 **Files:** `src/Gateway/src/Contract/CustomerRepository.php`,
