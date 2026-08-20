@@ -82,7 +82,14 @@ From `composer.json` per package, verified:
 
 So: **`CustomerId` goes in `Common`**, for the reason `ErrorCode` and `CardBrand` are there
 — both `Gateway` and `Domain` can see it, and an SDK consumer needs it. The aggregate goes
-in `Domain`. A provider package may name `CustomerId` and must never name the aggregate.
+in `Domain`. **`CustomerIdentity` goes in `Common` too**, because both sides need it: the
+aggregate holds one, and a provider package has to read one.
+
+A provider package may name `CustomerId` and `CustomerIdentity` and **must never name the
+aggregate** — it depends on `Common` + `Gateway` and cannot load it. It reaches the customer
+the way it already reaches everything else it does not own: through a contract declared in
+`Gateway` and implemented by the host, as `TransactionIdResolver` and `CustomerRepository`
+already are. F2 declares it.
 
 `bin/split.sh` publishes each package separately, so a type in the wrong package is not a
 style question — the split produces something that does not autoload.
@@ -146,7 +153,9 @@ has to be invented. What does have to be decided is in F7.
 **Depends on:** nothing.
 **Files:** `src/Common/src/ValueObject/CustomerId.php`, `src/Domain/src/Customer/`.
 
-`CustomerId extends UuidValueObject` in `Common` (§0.2). The aggregate mirrors the layout of
+`CustomerId extends UuidValueObject` and `CustomerIdentity` both in `Common` (§0.2) — the
+identity is a value the aggregate holds and a provider package reads, so it cannot live in
+`Domain`. The aggregate mirrors the layout of
 `src/Domain/src/PaymentIntent/`: `Command/`, `Event/`, `Exception/`, `ValueObject/`, plus
 `CustomerAggregate.php` and `CustomerAggregateRepositoryInterface.php` (`retrieve` / `persist`).
 
@@ -157,24 +166,32 @@ CustomerAggregate
   CustomerId
   CustomerIdentity  — name, email, phone; all #[Pii]
   ?BillingAddress   — the customer's own, distinct from a payment's
-  array<string, string>  — gateway id → that gateway's reference for this customer
 ```
 
 Events: `CustomerRegistered`, `CustomerIdentityChanged`, `CustomerAddressChanged`,
-`CustomerLinkedToGateway`, `CustomerForgotten`.
+`CustomerForgotten`.
+
+**No gateway references on the aggregate**, and the reason is not only layering. `GatewayId`
+lives in the `Gateway` package, which `Domain` does not depend on (§0.2), so the aggregate
+cannot name the type at all — and a `string`-keyed map of provider identifiers would be the
+same infrastructure smuggled in untyped. Which customer a provider knows under which id is a
+fact about that provider, and it already has a home: `CustomerRepository` and the
+`gateway_customers` table, re-keyed in F2. The aggregate holds identity; the map holds
+identifiers.
+
+That leaves the aggregate deliberately thin: an id, who this is, and where they are. Thin is
+the point — §0.3 is easier to hold to when there is nothing on the aggregate to hang a
+provider concern from.
 
 **Invariants covered by tests:**
 
 - An email is not identity. Two customers may share one; changing it changes nothing about
   which customer this is. This is the defect in `Nuvei/src/CreateCustomerRequest.php:39` and
   the test says so by name.
-- `CustomerLinkedToGateway` is one reference per gateway, and re-linking the same gateway to
-  a different reference is refused rather than overwritten — an overwrite orphans whatever
-  the old reference owned. New refusal + `ErrorCode` case.
 - A customer with no email is registrable. Today both Stripe and Nuvei make a missing email
   decide whether the customer exists at all; that must stop being expressible.
-- `CustomerForgotten` leaves the aggregate replayable: identity reads as stubs, gateway links
-  survive (they are not PII), and the id still resolves. See §0.4 and F7.
+- `CustomerForgotten` leaves the aggregate replayable: identity reads as stubs and the id
+  still resolves. See §0.4 and F7.
 
 **Done when:** unit tests green under `--testsuite=Domain` and `--testsuite=Common`. No
 gateway code, no provider names.
@@ -211,7 +228,28 @@ Today the contract is `findByInstrument(GatewayId, PaymentInstrument): ?string`.
 
 That deletes the pivot's reason to exist: `gateway_reference_customer` links a customer to a
 *gateway reference*, which is why identity is unreachable for a raw card (§0.1). The new
-shape is `gateway_customers(gateway_id, customer_id, customer_reference)`.
+shape is `gateway_customers(gateway_id, customer_id, customer_reference)`, UNIQUE on
+`(gateway_id, customer_id)`.
+
+That uniqueness is where the "one reference per gateway per customer" rule belongs. It is a
+constraint on the map rather than an invariant of the customer: re-pointing a gateway at a
+different reference orphans whatever the old one owned, and the table is what can refuse it
+without the domain learning that providers exist.
+
+**Also here: the read side.** Provider packages need the customer's name, email and address
+to build a provider-side customer (F4, F5) and cannot load the aggregate (§0.2). So `Gateway`
+declares a second contract next to `CustomerRepository`:
+
+```php
+interface CustomerIdentitySource
+{
+    public function find(CustomerId $customerId): ?CustomerIdentity;
+}
+```
+
+Implemented by the host, against the aggregate or against its projection — the host's choice,
+and neither is this package's business. The same shape as `TransactionIdResolver`, for the
+same reason: `Gateway` states what it needs and stays free of domain types beyond `Common`.
 
 **The instrument-keyed method stays**, deprecated, until A2 has backfilled owners — it is the
 only way to answer "whose card is this" for existing rows, and F4/F5 need an answer during
@@ -249,8 +287,8 @@ the suite is green.
 **Files:** `src/Stripe/src/StripeGateway.php`, `CreateCustomerRequest.php`.
 
 `resolveCustomerReference()` becomes: look up this customer's reference for this gateway; if
-absent, create a Stripe Customer from the aggregate's identity and link it. The
-`BillingAddress`-derived branch goes.
+absent, create a Stripe Customer from the identity read through `CustomerIdentitySource`
+and link it. The `BillingAddress`-derived branch goes.
 
 `adoptCustomerFromStripe()` **stays**, demoted. It is the repair path for a crash between the
 Stripe attach and the local link, and it is still the only answer for a PaymentMethod created
@@ -258,7 +296,7 @@ in Stripe's dashboard. Its docblock currently reads as a normal path; it must re
 recovery.
 
 **Done when:** a customer with a reference authorizes with one lookup and no `customers.create`;
-one without gets a Customer built from the aggregate rather than from an address; the
+one without gets a Customer built from the identity source rather than from an address; the
 adoption test still passes.
 
 ## F5. Nuvei: `userTokenId` stops being an email
@@ -271,7 +309,7 @@ the consumer *in the merchant's system* and requires it to reuse a stored
 `userPaymentOptionId` — so a UUID is what it always wanted, and an email was a value that
 changes.
 
-`firstName` / `lastName` / `countryCode` come from the aggregate's identity. The `'N/A'` and
+`firstName` / `lastName` / `countryCode` come from `CustomerIdentitySource`. The `'N/A'` and
 `'US'` defaults stay as the last resort they were meant to be
 (`CreateCustomerRequest.php:31-33` says as much in a comment) but stop being the normal case.
 
@@ -280,7 +318,7 @@ are keyed by email. Sending a UUID for a customer Nuvei knows by email creates a
 Nuvei customer and the stored `userPaymentOptionId` values hang off the first. The plan is
 A3, and F5 must not ship without it.
 
-**Done when:** the token is the customer id, identity comes from the aggregate, and a test
+**Done when:** the token is the customer id, identity comes from the source contract, and a test
 pins that an email change does not change the token.
 
 ## F6. ConnexPay: `CustomerID` gets a home
@@ -318,9 +356,11 @@ the probe's answer is written down.
 `CustomerForgotten` and the `#[Pii]` markings. §0.4 supplies the mechanism; what this task
 decides is the policy edge that the mechanism does not:
 
-- **A forgotten customer keeps its gateway links.** A reference like `cus_...` is not personal
-  data, and dropping it would orphan every instrument and payment that points at it. State
-  this in the docblock, because the opposite is the intuitive reading of "forget".
+- **Erasure does not touch the gateway map.** A reference like `cus_...` is not personal data,
+  and dropping it would orphan every instrument and payment that points at it. This needs
+  saying somewhere, but not in the aggregate — it holds no such links (F0), so the note
+  belongs with `CustomerRepository`, whose rows survive a `CustomerForgotten` by design
+  rather than by omission.
 - **Instruments are not erased with the customer.** A card's PAN is already shredded through
   the same store; a payment that happened still happened. The aggregate refuses to be the
   place where that policy is decided.
@@ -346,8 +386,9 @@ fall back to.
 Not implemented in this repository. Listed because Part I's events have to be sufficient for
 it; if a task here cannot be built from what Part I emits, that is a Part I bug.
 
-- **A0. Wiring.** The `CustomerAggregateRepositoryInterface` implementation, and passing a
-  `CustomerId` at every gateway call site.
+- **A0. Wiring.** The `CustomerAggregateRepositoryInterface` implementation,
+  `CustomerIdentitySource` (against the aggregate or a projection — the host's call), and
+  passing a `CustomerId` at every gateway call site.
 - **A1. Identity resolution.** Which person a request belongs to — lookup, dedupe, merge.
   Explicitly the application's (§0.3). Foundation takes the id it is given.
 - **A2. Backfill.** Assign owners to existing `PaymentMethod` and `Token` rows. The available
