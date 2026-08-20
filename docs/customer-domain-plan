@@ -1,0 +1,437 @@
+# Implementation Plan: `Customer`
+
+Written to be executed by an agent. Tasks are ordered by dependency. Every claim about the
+current code carries a `file:line` — **verified against this repository on 2026-08-20**, not
+recalled. Provider facts are in the reference at the end, with the source of each stated;
+do not invent fields outside it.
+
+---
+
+## 0. Why this exists
+
+Nothing in `src/Domain/src/` names a customer. Three docblocks say the word in prose
+(`Checkout/Port/CheckoutCapturePort.php:36`, `Subscription/SubscriptionAggregate.php:99`,
+`Subscription/Port/SubscriptionCapturePort.php:35`) and that is all.
+
+Yet every gateway needs one, so each package invented its own way around the absence, and
+the three ways disagree:
+
+- **Nuvei: the customer's identity is their email address.**
+  `Nuvei/src/CreateCustomerRequest.php:39` — `'userTokenId' => $email`. Nuvei documents
+  `userTokenId` as the id that "uniquely identifies your consumer/user in your system", and
+  as REQUIRED to reuse a stored `userPaymentOptionId`. So a customer who changes their email
+  becomes a different customer and their saved cards are orphaned; two people sharing an
+  address are one customer. Email is optional on `BillingAddress`
+  (`Common/src/ValueObject/BillingAddress.php:22`), and when it is missing the token is empty
+  — which Nuvei rejects outright, so the field is omitted
+  (`Nuvei/src/NuveiPaymentRequest.php:123`) and a stored-instrument payment then fails
+  (`Nuvei/src/NuveiGateway.php:293`).
+
+- **Stripe: a reconciliation mechanism instead of an identity.**
+  `Stripe/src/StripeGateway.php:239-295` looks the customer up by instrument, and failing
+  that *adopts* one from Stripe by retrieving the PaymentMethod and reading its owner
+  (`:297-328`), and failing that invents one from a `BillingAddress`. Forty lines whose only
+  job is to recover an identity that was never assigned.
+
+- **ConnexPay: nothing at all.** `ConnexPay/src/ConnexPayGateway.php:333` injects
+  `customerRepository` into every request and no request reads or writes it — there is no
+  ConnexPay-side customer object to reference. Its `CustomerID` field, which the API accepts
+  on Auth Only, Create Sale and Capture, is therefore never sent.
+
+- **Paynet and Revolut** implement `setCustomerRepository()` to satisfy the interface
+  (`Paynet/src/PaynetGateway.php:49`, `Revolut/src/RevolutGateway.php:55`) and use it nowhere.
+
+**The point of this plan.** These are not four missing fields. `Gateway\Contract\CustomerRepository`
+already *is* a customer model — its own docblock says "Stores customer references and links
+them to instrument references via a pivot table" — expressed as a map with no entity at its
+centre. The boundary "a customer is the application's business" was crossed before this plan
+was written; what is left is to put the entity where the map already points.
+
+### 0.1 What the map cannot do, and why a reference would not have been enough
+
+`EloquentCustomerRepository::findByInstrument()` joins customer → pivot → gateway reference
+(`Laravel/src/Repository/EloquentCustomerRepository.php:30-44`), and `resolveId()` (`:79`)
+returns **null for `CreditCard` and for `Cash`** (`:85`, `:91`). Consequences, all of them today's
+behaviour:
+
+1. **Identity is reachable only through a stored instrument.** A raw-card payment can never
+   resolve a customer, so it can never be attributed to one.
+2. **The key is the instrument, not the person.** One customer with three saved cards is
+   three rows and nothing says they are the same person. `adoptCustomerFromStripe()` exists
+   because that mapping loses information.
+3. **The customer's attributes have nowhere to live.** Nuvei marks `firstName`, `lastName`
+   and `countryCode` required, and `Nuvei/src/CreateCustomerRequest.php:42-44` substitutes
+   `'N/A'` and `'US'` when the address that happened to ride along has none. The
+   provider-side record is a function of the last payment's address.
+4. **`BillingAddress` is copied into every `PaymentMethod`**
+   (`Common/src/ValueObject/PaymentMethod.php`), so a customer who moves has as many
+   addresses as saved cards.
+
+A single caller-supplied id fixes (1) and (2) and leaves (3) and (4) exactly as they are.
+That is why this is an aggregate and not a parameter.
+
+### 0.2 Package dependency direction — read before choosing where a type goes
+
+From `composer.json` per package, verified:
+
+- `Common` depends on nothing of ours.
+- `Gateway` depends on `Common` only. **It does not depend on `Domain`** and contains no
+  reference to that namespace.
+- `Domain` depends on `Common` only. It has no reference to the `Gateway` namespace.
+- Every provider package depends on `Common` + `Gateway`.
+
+So: **`CustomerId` goes in `Common`**, for the reason `ErrorCode` and `CardBrand` are there
+— both `Gateway` and `Domain` can see it, and an SDK consumer needs it. The aggregate goes
+in `Domain`. A provider package may name `CustomerId` and must never name the aggregate.
+
+`bin/split.sh` publishes each package separately, so a type in the wrong package is not a
+style question — the split produces something that does not autoload.
+
+### 0.3 Boundary — what this aggregate is NOT
+
+Stated up front because a `Customer` attracts everything.
+
+It exists for two jobs: **carry identity to gateways**, and **own instruments**. Not in
+scope, now or later, without a new plan:
+
+- segments, tags, lifetime value, order history, preferences, marketing consent;
+- **identity resolution.** Whether two records are the same person is application policy.
+  The aggregate takes a `CustomerId` from the caller and refuses to guess, exactly as
+  `PaymentIntentAggregate` takes a `PaymentIntentId`;
+- deduplication and merging, for the same reason;
+- authentication or accounts.
+
+If a task below seems to require any of these, the task is wrong.
+
+### 0.4 Erasure is cheaper than it looks
+
+The machinery exists and is already applied to `BillingAddress`, `CreditCard`, `Country` and
+`CreditCard\Address`:
+
+`#[Pii(stub)]` marks a property (`Common/src/Pii.php`). `PiiAwareObjectNormalizer` replaces
+each marked value with a `{__pii, hash, stub}` envelope on the way out and resolves it to
+either the plaintext or the stub on the way back
+(`Laravel/src/Serializer/PiiAwareObjectNormalizer.php:23-44`). The plaintext lives in
+`shredding_values`, keyed by hash (`create_shredding_values_table.php.stub`).
+
+So erasure is deleting a row in a side table; the stream keeps a stable placeholder and
+still replays. `ShreddingStubs` supplies the per-type placeholders, and
+`BillingAddress::unknown()` already demonstrates the pattern of "we never had this" reading
+identically to "we deleted this".
+
+**A `Customer` reuses this wholesale.** Its identifying fields get `#[Pii]` and nothing new
+has to be invented. What does have to be decided is in F7.
+
+### 0.5 Rules
+
+1. Do not start a task before its dependencies.
+2. Every task ends with the suite green — `vendor/bin/pest`, and `vendor/bin/psalm` with no
+   errors. A task that cannot be left green is specified wrong; stop and report.
+3. Red test first, in the same session, demonstrating the defect the task removes. This plan
+   exists because behaviour was asserted and not measured.
+4. New typed refusals use `Common\Concern\CarriesErrorCode` and a case on
+   `Common\ValueObject\ErrorCode`. The structural test in `ErrorCodeTest` fails any refusal
+   built with `new static(...)` instead of `coded()`.
+5. Do not touch the PaymentIntent, Checkout, Subscription or Refund invariants. The contact
+   points are the ports and `CustomerRepository`.
+6. No provider HTTP in tests. Sandbox probes are for establishing facts, and their findings
+   belong in the reference below, not in the suite.
+
+---
+
+# Part I — Foundation
+
+## F0. `CustomerId` and the aggregate
+
+**Depends on:** nothing.
+**Files:** `src/Common/src/ValueObject/CustomerId.php`, `src/Domain/src/Customer/`.
+
+`CustomerId extends UuidValueObject` in `Common` (§0.2). The aggregate mirrors the layout of
+`src/Domain/src/PaymentIntent/`: `Command/`, `Event/`, `Exception/`, `ValueObject/`, plus
+`CustomerAggregate.php` and `CustomerAggregateRepositoryInterface.php` (`retrieve` / `persist`).
+
+State:
+
+```
+CustomerAggregate
+  CustomerId
+  CustomerIdentity  — name, email, phone; all #[Pii]
+  ?BillingAddress   — the customer's own, distinct from a payment's
+  array<string, string>  — gateway id → that gateway's reference for this customer
+```
+
+Events: `CustomerRegistered`, `CustomerIdentityChanged`, `CustomerAddressChanged`,
+`CustomerLinkedToGateway`, `CustomerForgotten`.
+
+**Invariants covered by tests:**
+
+- An email is not identity. Two customers may share one; changing it changes nothing about
+  which customer this is. This is the defect in `Nuvei/src/CreateCustomerRequest.php:39` and
+  the test says so by name.
+- `CustomerLinkedToGateway` is one reference per gateway, and re-linking the same gateway to
+  a different reference is refused rather than overwritten — an overwrite orphans whatever
+  the old reference owned. New refusal + `ErrorCode` case.
+- A customer with no email is registrable. Today both Stripe and Nuvei make a missing email
+  decide whether the customer exists at all; that must stop being expressible.
+- `CustomerForgotten` leaves the aggregate replayable: identity reads as stubs, gateway links
+  survive (they are not PII), and the id still resolves. See §0.4 and F7.
+
+**Done when:** unit tests green under `--testsuite=Domain` and `--testsuite=Common`. No
+gateway code, no provider names.
+
+## F1. Instruments gain an owner
+
+**Depends on:** F0.
+**Files:** `src/Common/src/ValueObject/PaymentMethod.php`, `Token.php`.
+
+A stored instrument belongs to a customer. Add `CustomerId` to `PaymentMethod` and `Token`.
+
+Two things make this delicate and both must be handled in this task:
+
+- **The payload is in the event stream.** `PaymentMethod::toPayload()` is read back by
+  `fromPayload()` on replay, so the new key is written but read with a fallback, exactly as
+  `ChallengeArraySerializer` reads the pre-rename 3DS keys
+  (`Domain/src/PaymentIntent/ChallengeArraySerializer.php:38-52`). Rows without an owner must
+  keep loading.
+- **The address duplication is not resolved here.** `PaymentMethod` keeps its own
+  `BillingAddress` for now; removing it is F8 and needs the backfill in A2 first. Say so in
+  the docblock so the next reader does not take the duplication for a decision.
+
+**Done when:** an instrument round-trips with and without an owner, and the suite is green.
+
+## F2. `CustomerRepository` re-keyed
+
+**Depends on:** F1.
+**Files:** `src/Gateway/src/Contract/CustomerRepository.php`,
+`src/Laravel/src/Repository/EloquentCustomerRepository.php`, a migration.
+
+Today the contract is `findByInstrument(GatewayId, PaymentInstrument): ?string`. It becomes
+`findForCustomer(GatewayId, CustomerId): ?string` and
+`saveForCustomer(GatewayId, CustomerId, string $reference): void`.
+
+That deletes the pivot's reason to exist: `gateway_reference_customer` links a customer to a
+*gateway reference*, which is why identity is unreachable for a raw card (§0.1). The new
+shape is `gateway_customers(gateway_id, customer_id, customer_reference)`.
+
+**The instrument-keyed method stays**, deprecated, until A2 has backfilled owners — it is the
+only way to answer "whose card is this" for existing rows, and F4/F5 need an answer during
+the transition. Its docblock must say what replaces it and when it goes.
+
+**Done when:** both lookups work, the migration is in `hasMigrations` (a stub in the
+directory alone does nothing — `Laravel/src/GatewayServiceProvider.php:96`), and the
+suite is green.
+
+## F3. The customer reaches the gateway call
+
+**Depends on:** F2.
+**Files:** `src/Gateway/src/Contract/PaymentGatewayInterface.php`,
+`src/Gateway/src/PaymentGatewayRouter.php`, `src/Domain/src/PaymentIntent/Port/Request/CreateRequest.php`.
+
+`authorize()`, `charge()` and the rebilling variants take `?CustomerId $customerId = null`.
+
+**On the signature, not on the credential.** A customer is a fact about this payment, which
+is what distinguishes it from `authenticationUrl` and `returnUrl` — those are one address per
+deployment and belong in configuration
+(`Stripe/src/StripeGateway.php::setAuthenticationUrl`). It sits with `clientUniqueId`,
+`billingAddress`, `description` and `initiation`, which are per-payment facts too.
+
+Whether it also rides `CreateRequest` and therefore the domain: **yes, but as an id only.**
+The aggregate does not read it and records nothing from it; it is carried so the port can
+pass it on, the way `billingAddress` is. Adding a method to `CreatePaymentIntentCommand` is
+breaking for every host implementation — say so in the task, once.
+
+**Done when:** the router forwards it, a gateway that ignores it still passes its tests, and
+the suite is green.
+
+## F4. Stripe: the lookup replaces the search
+
+**Depends on:** F3.
+**Files:** `src/Stripe/src/StripeGateway.php`, `CreateCustomerRequest.php`.
+
+`resolveCustomerReference()` becomes: look up this customer's reference for this gateway; if
+absent, create a Stripe Customer from the aggregate's identity and link it. The
+`BillingAddress`-derived branch goes.
+
+`adoptCustomerFromStripe()` **stays**, demoted. It is the repair path for a crash between the
+Stripe attach and the local link, and it is still the only answer for a PaymentMethod created
+in Stripe's dashboard. Its docblock currently reads as a normal path; it must read as
+recovery.
+
+**Done when:** a customer with a reference authorizes with one lookup and no `customers.create`;
+one without gets a Customer built from the aggregate rather than from an address; the
+adoption test still passes.
+
+## F5. Nuvei: `userTokenId` stops being an email
+
+**Depends on:** F3.
+**Files:** `src/Nuvei/src/CreateCustomerRequest.php`, `NuveiGateway.php`, `NuveiPaymentRequest.php`.
+
+`userTokenId` becomes the `CustomerId`. Nuvei documents it as the id that uniquely identifies
+the consumer *in the merchant's system* and requires it to reuse a stored
+`userPaymentOptionId` — so a UUID is what it always wanted, and an email was a value that
+changes.
+
+`firstName` / `lastName` / `countryCode` come from the aggregate's identity. The `'N/A'` and
+`'US'` defaults stay as the last resort they were meant to be
+(`CreateCustomerRequest.php:31-33` says as much in a comment) but stop being the normal case.
+
+**Migration hazard, and the reason this task cannot be done alone.** Existing Nuvei customers
+are keyed by email. Sending a UUID for a customer Nuvei knows by email creates a *second*
+Nuvei customer and the stored `userPaymentOptionId` values hang off the first. The plan is
+A3, and F5 must not ship without it.
+
+**Done when:** the token is the customer id, identity comes from the aggregate, and a test
+pins that an email change does not change the token.
+
+## F6. ConnexPay: `CustomerID` gets a home
+
+**Depends on:** F3.
+**Files:** `src/ConnexPay/src/Concern/ConnexPayRequestParameters.php`, `AuthorizeRequest.php`,
+`PurchaseRequest.php`, `CaptureRequest.php`.
+
+`withCustomerId()` alongside the existing `withOrderNumber()` and `withSequenceNumber()`.
+Applied on **Auth Only, Create Sale and Capture only** — Void and Return do not accept the
+field (reference below), so it must not go through `withIdentifiers()`.
+
+Constraints: ≤100 characters, alphanumeric plus `[._/-]`. A UUID's hyphens are allowed here,
+unlike in `SequenceNumber`.
+
+Also in this task: the dead `customerRepository` wiring at `ConnexPayGateway.php:333` either
+starts being used or is removed. Leaving an injected dependency that nothing reads is how it
+came to be mistaken for a working customer path in the first place.
+
+**Open question this task must answer, by probe, before writing code.** ConnexPay documents
+that a Capture's `OrderNumber` overwrites the Auth's. Whether `CustomerID` behaves the same
+is undocumented. If it does, a capture without it blanks what the auth sent, and the id must
+be threaded through `CapturePort`. Sandbox credentials are in `.env`
+(`CONNEXPAY_SANDBOX_*`); auth with the field, capture without, then read back via
+`Search/Sales`. Record the finding in the reference below either way.
+
+**Done when:** the field is sent on the three endpoints and absent from the other two, and
+the probe's answer is written down.
+
+## F7. Erasure
+
+**Depends on:** F0.
+**Files:** `src/Domain/src/Customer/`.
+
+`CustomerForgotten` and the `#[Pii]` markings. §0.4 supplies the mechanism; what this task
+decides is the policy edge that the mechanism does not:
+
+- **A forgotten customer keeps its gateway links.** A reference like `cus_...` is not personal
+  data, and dropping it would orphan every instrument and payment that points at it. State
+  this in the docblock, because the opposite is the intuitive reading of "forget".
+- **Instruments are not erased with the customer.** A card's PAN is already shredded through
+  the same store; a payment that happened still happened. The aggregate refuses to be the
+  place where that policy is decided.
+- **Registering a forgotten customer again is refused**, not silently revived. Same shape as
+  `SubscriptionAggregate`: once terminal, terminal.
+
+**Done when:** a forgotten customer replays, its identity reads as stubs, its links resolve,
+and re-registration is refused with a coded error.
+
+## F8. Remove the address copy (deferred inside Part I)
+
+**Depends on:** F1, A2.
+
+`PaymentMethod` stops carrying its own `BillingAddress` and reads the customer's, with a
+per-payment override still possible on the payment itself. **Do not start before A2's
+backfill has run in production** — an instrument whose owner is unknown has no address to
+fall back to.
+
+---
+
+# Part II — Application
+
+Not implemented in this repository. Listed because Part I's events have to be sufficient for
+it; if a task here cannot be built from what Part I emits, that is a Part I bug.
+
+- **A0. Wiring.** The `CustomerAggregateRepositoryInterface` implementation, and passing a
+  `CustomerId` at every gateway call site.
+- **A1. Identity resolution.** Which person a request belongs to — lookup, dedupe, merge.
+  Explicitly the application's (§0.3). Foundation takes the id it is given.
+- **A2. Backfill.** Assign owners to existing `PaymentMethod` and `Token` rows. The available
+  evidence is `gateway_reference_customer` plus each row's own `BillingAddress`. Some rows
+  will be unanswerable: three references for one person cannot be distinguished from three
+  people without outside knowledge, so the migration must be allowed to leave an owner null
+  and F1's fallback must hold for those rows indefinitely.
+- **A3. Nuvei re-keying.** Every existing Nuvei customer is keyed by email (F5). Either
+  re-register each customer under its UUID and re-tokenize the cards, or keep the email token
+  for pre-existing customers and use UUIDs only for new ones. The second is less work and
+  leaves two conventions in the data; the choice belongs to whoever owns the migration
+  window, not to this plan.
+- **A4. Erasure surface.** The endpoint or job that triggers `CustomerForgotten`, and the
+  audit of who asked.
+
+---
+
+# Part III — Deferred
+
+**D1. Customer-scoped reporting.** Payments by customer, lifetime value, and anything that
+wants to read across payments. It belongs in the application's read model and it is the thing
+most likely to be mistaken for a reason to widen the aggregate. Do not start until Part I and
+A0–A2 are stable.
+
+---
+
+# Provider Reference
+
+Each fact states where it came from. Nothing here is recalled.
+
+## ConnexPay — verified from docs.connexpay.com on 2026-08-20
+
+**`CustomerID`** — accepted on **Auth Only**, **Create Sale**, **Capture**. **Absent** from
+**Void** and **Return** request bodies. String, optional, max 100 characters, alphanumeric
+plus `[._/-]`.
+
+> "Transaction ID within client environment associated with the customer. This value acts as
+> a secondary identifier in conjunction with OrderNumber. The value is searchable and
+> reportable in the ConnexPay portal. This value may be sent in multiple times within the
+> integration for multiple purposes."
+
+**`Customer` object** — top level, and:
+
+> "Customer Data. This will only be used if TenderType is not Credit"
+
+So the block at `PurchaseRequest.php:132` is correctly sent only on the Cash path
+(`visitCash`), and card payments carry identity through `Card.Customer` and `RiskData`
+instead. This is already right; do not change it.
+
+**`OrderNumber`** — max 50, alphanumeric plus `[._/-]`. A reporting and reconciliation key,
+searchable in Bridge, carried into the Chargeback Management System. **Not** an idempotency
+key. Capture's value **overwrites** the Auth's.
+
+**`SequenceNumber`** — max 100 alphanumeric, no specials listed. Duplicate detection, and
+only in combination:
+
+> "If a sale request with the same parameter data and the same SequenceNumber is sent within
+> 30 minutes it will be considered a duplicate request and the sale will not process."
+
+Sandbox-verified 2026-08-19: dedupe fires only when OrderNumber, SequenceNumber and amount
+all match, and the reply is the original transaction rather than an error. The window is 30
+minutes, so this is not replay protection — see
+`Laravel/src/Port/OmnipayCreatePort.php`.
+
+## Nuvei — verified from docs.nuvei.com on 2026-08-20
+
+**`userTokenId`** — assigned by the merchant, not by Nuvei.
+
+> "This ID uniquely identifies your consumer/user in your system. It is REQUIRED only if you
+> wish to use the userPaymentOptionId parameter for future charging of this user without
+> re-collecting the payment details."
+
+The docs do **not** state what happens to stored `userPaymentOptionId` values if the token
+changes. A3 must not assume they survive.
+
+`firstName`, `lastName`, `countryCode` are required on customer creation — this is why
+`CreateCustomerRequest.php:41-44` has `'N/A'` / `'US'` defaults.
+
+## Stripe — from this repository's own code, not re-read from docs
+
+A `Customer` is required for a `PaymentMethod` to be reusable; an unattached PM is spent by
+the first confirm and refused afterwards. Established while fixing
+`CreatePaymentMethodRequest` on 2026-08-06 and recorded in its docblock. `customers.create`
+requires no field at all, which is why the email gate that used to guard it was removable.
+
+**Not verified for this plan:** whether Stripe's Customer object has constraints that would
+refuse an identity the aggregate considers valid. Check before F4 rather than assuming.
