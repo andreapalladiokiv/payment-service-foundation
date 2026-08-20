@@ -140,7 +140,7 @@ has to be invented. What does have to be decided is in F7.
    `Common\ValueObject\ErrorCode`. The structural test in `ErrorCodeTest` fails any refusal
    built with `new static(...)` instead of `coded()`.
 5. Do not touch the PaymentIntent, Checkout, Subscription or Refund invariants. The contact
-   points are the ports and `CustomerRepository`.
+   points are the ports and the repositories in F2.
 6. No provider HTTP in tests. Sandbox probes are for establishing facts, and their findings
    belong in the reference below, not in the suite.
 
@@ -179,9 +179,9 @@ Events: `CustomerRegistered`, `CustomerIdentityChanged`, `CustomerAddressChanged
 lives in the `Gateway` package, which `Domain` does not depend on (§0.2), so the aggregate
 cannot name the type at all — and a `string`-keyed map of provider identifiers would be the
 same infrastructure smuggled in untyped. Which customer a provider knows under which id is a
-fact about that provider, and it already has a home: `CustomerRepository` and the
-`gateway_customers` table, re-keyed in F2. The aggregate holds identity; the map holds
-identifiers.
+fact about that provider, and F2 gives it a home of its own:
+`GatewayCustomerRepository` and the `gateway_customers` table. The aggregate holds identity;
+the map holds identifiers.
 
 That leaves the aggregate deliberately thin: an id, who this is, and where they are. Thin is
 the point — §0.3 is easier to hold to when there is nothing on the aggregate to hang a
@@ -295,29 +295,65 @@ Events: `InstrumentRegistered`, `InstrumentDetached`.
 
 **Done when:** the collection survives a snapshot round-trip — an array of arrays in
 `createSnapshotState()`, with no child protocol — every refusal above has a test, and the
-suite is green. `Common\ValueObject\PaymentMethod` is not modified by this task.## F2. `CustomerRepository` re-keyed
+suite is green. `Common\ValueObject\PaymentMethod` is not modified by this task.
+
+## F2. Give the customer its own repositories
 
 **Depends on:** F1.
-**Files:** `src/Gateway/src/Contract/CustomerRepository.php`,
-`src/Laravel/src/Repository/EloquentCustomerRepository.php`, a migration.
+**Files:** `src/Gateway/src/Contract/GatewayCustomerRepository.php` (new),
+`src/Gateway/src/Contract/CustomerIdentitySource.php` (new),
+`src/Gateway/src/Contract/CustomerRepository.php` (deprecated),
+`src/Laravel/src/Repository/`, two migrations.
 
-Today the contract is `findByInstrument(GatewayId, PaymentInstrument): ?string`. It becomes
-`findForCustomer(GatewayId, CustomerId): ?string` and
-`saveForCustomer(GatewayId, CustomerId, string $reference): void`.
+`CustomerRepository` is the reason the map was mistaken for a customer model in the first
+place (§0). It is named for the *thing* while every sibling is named for what it stores, and
+it is keyed by an instrument while every sibling is keyed by the thing it belongs to:
 
-That deletes the pivot's reason to exist: `gateway_reference_customer` links a customer to a
-*gateway reference*, which is why identity is unreachable for a raw card (§0.1). The new
-shape is `gateway_customers(gateway_id, customer_id, customer_reference)`, UNIQUE on
-`(gateway_id, customer_id)`.
+| contract | keyed by | returns |
+|---|---|---|
+| `GatewayInstrumentRepository` | instrument | that gateway's reference |
+| `GatewayTransactionRepository` | payment intent, refund | that gateway's reference |
+| `VirtualCardReferenceRepository` | virtual card id | that gateway's reference |
+| `CustomerRepository` | **an instrument** | a *customer* reference |
 
-That uniqueness is where the "one reference per gateway per customer" rule belongs. It is a
+So the customer gets what each of the others already has, and the odd one out goes.
+
+### F2a. The aggregate's repository
+
+`Domain\Customer\CustomerAggregateRepositoryInterface` — `retrieve(CustomerId)` /
+`persist(CustomerAggregate)`, exactly the shape of the three that exist
+(`PaymentIntent`, `Checkout`, `Subscription`). Declared in F0; this is where it gets its
+Eloquent implementation and its own event stream.
+
+This is the customer's actual repository. Nothing about gateways touches it.
+
+### F2b. The gateway reference map
+
+`Gateway\Contract\GatewayCustomerRepository`:
+
+```php
+public function find(GatewayId $gatewayId, CustomerId $customerId): ?string;
+public function saveReference(GatewayId $gatewayId, CustomerId $customerId, string $reference): void;
+```
+
+Named and shaped like `VirtualCardReferenceRepository`, because it is the same kind of thing.
+
+**Its own table, standing alone.** `gateway_customers(gateway_id, customer_id,
+customer_reference)`, UNIQUE on `(gateway_id, customer_id)`. That deletes the pivot's reason
+to exist: `gateway_reference_customer` links a customer to a *gateway reference*, which is why
+identity is unreachable for a raw card (§0.1) and why a `Token` can resolve one (F1). Full
+extraction means the customer's references stop being a satellite of instrument references —
+no pivot, no join through `gateway_references`, no shared row.
+
+The UNIQUE is where the "one reference per gateway per customer" rule belongs. It is a
 constraint on the map rather than an invariant of the customer: re-pointing a gateway at a
-different reference orphans whatever the old one owned, and the table is what can refuse it
-without the domain learning that providers exist.
+different reference orphans whatever the old one owned, and the table can refuse that without
+the domain learning that providers exist.
 
-**Also here: the read side.** Provider packages need the customer's name, email and address
-to build a provider-side customer (F4, F5) and cannot load the aggregate (§0.2). So `Gateway`
-declares a second contract next to `CustomerRepository`:
+### F2c. The identity read side
+
+Provider packages need the customer's name, email and address to build a provider-side
+customer (F4, F5) and cannot load the aggregate (§0.2). So `Gateway` declares:
 
 ```php
 interface CustomerIdentitySource
@@ -326,18 +362,33 @@ interface CustomerIdentitySource
 }
 ```
 
-Implemented by the host, against the aggregate or against its projection — the host's choice,
+Implemented by the host, against the aggregate or against a projection — the host's choice,
 and neither is this package's business. The same shape as `TransactionIdResolver`, for the
 same reason: `Gateway` states what it needs and stays free of domain types beyond `Common`.
 
-**The instrument-keyed method stays**, deprecated, until A2 has backfilled — it is the only
-way to answer "whose card is this" for existing rows, and F4/F5 need an answer during the
-transition. Its docblock must name its replacement: the projection in A2b, since F1 gives
-instruments no back-pointer on purpose.
+### F2d. Retiring `CustomerRepository`
 
-**Done when:** both lookups work, the migration is in `hasMigrations` (a stub in the
-directory alone does nothing — `Laravel/src/GatewayServiceProvider.php:96`), and the
-suite is green.
+It is **deprecated whole, not extended.** `findByInstrument()` is the only way to answer
+"whose card is this" for rows written before F1, and F4, F5 and A2 all need that answer during
+the transition — but the new contract must not be born carrying it. Its docblock names both
+successors: `GatewayCustomerRepository` for the reference, and A2b's projection for the
+instrument question.
+
+It is deleted, with the pivot table, once A2 has run. That deletion is the task that closes
+§0's argument: the map stops being a customer model because it is finally named for what it
+stores.
+
+**One consequence that reaches every provider package.** `setCustomerRepository()` is on
+`Gateway\Contract\Gateway` itself (`src/Gateway/src/Contract/Gateway.php:16`), so all five
+gateways implement it — Stripe and Nuvei use it, ConnexPay injects it unread, Paynet and
+Revolut only satisfy the signature. Retiring the contract changes that interface method, and
+the three that never used it should lose it rather than be given a new one to ignore. A
+gateway that has no customer concept should not be made to declare that it has.
+
+**Done when:** the aggregate persists and replays through F2a, the new map answers by
+`CustomerId`, both migrations are listed in `hasMigrations` (a stub in the directory alone
+does nothing — `Laravel/src/GatewayServiceProvider.php:96`), the deprecated contract still
+answers for old rows, and the suite is green.
 
 ## F3. The customer reaches the gateway call
 
@@ -439,8 +490,8 @@ decides is the policy edge that the mechanism does not:
 - **Erasure does not touch the gateway map.** A reference like `cus_...` is not personal data,
   and dropping it would orphan every instrument and payment that points at it. This needs
   saying somewhere, but not in the aggregate — it holds no such links (F0), so the note
-  belongs with `CustomerRepository`, whose rows survive a `CustomerForgotten` by design
-  rather than by omission.
+  belongs with `GatewayCustomerRepository`, whose rows survive a `CustomerForgotten` by
+  design rather than by omission.
 - **Instruments are not erased with the customer.** A card's PAN is already shredded through
   the same store; a payment that happened still happened. The aggregate refuses to be the
   place where that policy is decided.
