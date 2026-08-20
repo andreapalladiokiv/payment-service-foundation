@@ -200,7 +200,7 @@ provider concern from.
 **Done when:** unit tests green under `--testsuite=Domain` and `--testsuite=Common`. No
 gateway code, no provider names.
 
-## F1. The customer owns its instruments
+## F1. The customer owns its payment methods
 
 **Depends on:** F0.
 **Files:** `src/Domain/src/Customer/`.
@@ -211,8 +211,20 @@ two jobs, and a collection is what that job means.
 ```
 CustomerAggregate
   …
-  array<string, StoredInstrument>  — keyed by PaymentMethodId / TokenId
+  array<string, StoredInstrument>  — keyed by PaymentMethodId
 ```
+
+**Payment methods only — not tokens.** A `Token` carries an `ExpiresAt`
+(`Common/src/ValueObject/Token.php:21`): it is a transient handle to a card, good for one use
+and then gone. A customer's collection of them would fill with dead entries and would imply a
+reusability a token does not have. The interface already says these are different kinds —
+`tokenize()` and `createPaymentMethod()` are separate operations
+(`Gateway/src/Contract/PaymentGatewayInterface.php:60,62`) — and only the second produces
+something worth owning.
+
+Worth noting because today it is not so: `EloquentCustomerRepository::visitToken()` returns
+the `TokenId` (`:97-100`), so an expiring handle can resolve a customer link. F2 removes that
+by keying the map on the customer instead of on an instrument.
 
 **Not a `CustomerId` on `PaymentMethod`.** That was the first draft and it is the weaker
 direction, for three reasons:
@@ -235,7 +247,9 @@ direction, for three reasons:
 **Naming.** `StoredInstrument`, not `PaymentMethod` — `Common\ValueObject\PaymentMethod`
 already exists and is a different thing (the instrument itself, as a payment carries it).
 Two things with one name in one plan is the mistake `dispute-domain-plan` made with
-`DisputeEvent`.
+`DisputeEvent`. "Instrument" rather than "payment method" in the child's name is deliberate
+even though tokens are excluded: what is owned is the registration, and the word leaves room
+for a future stored kind without reopening the naming question.
 
 **Default: a collection of small child aggregates**, as `Refund` is, each holding its
 `PaymentMethodId` and its status. Plain value objects would do if instruments turn out to
@@ -435,8 +449,9 @@ it; if a task here cannot be built from what Part I emits, that is a Part I bug.
   passing a `CustomerId` at every gateway call site.
 - **A1. Identity resolution.** Which person a request belongs to — lookup, dedupe, merge.
   Explicitly the application's (§0.3). Foundation takes the id it is given.
-- **A2. Backfill.** Register existing instruments onto their customers, i.e. emit F1's
-  `InstrumentRegistered` for each. The available evidence is `gateway_reference_customer`
+- **A2. Backfill.** Register existing payment methods onto their customers, i.e. emit F1's
+  `InstrumentRegistered` for each. Tokens are out of scope for the same reason they are out
+  of F1 — the expired ones are most of them. The available evidence is `gateway_reference_customer`
   plus each row's own `BillingAddress`. Some rows are unanswerable: three references for one
   person cannot be distinguished from three people without outside knowledge, so the backfill
   must be allowed to leave an instrument held by nobody, and everything downstream must
