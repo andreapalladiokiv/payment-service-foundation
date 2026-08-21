@@ -6,7 +6,6 @@ namespace Techork\PaymentService\Gateway;
 
 use Omnipay\Common\GatewayFactory as OmnipayGatewayFactory;
 use RuntimeException;
-use Techork\PaymentService\Gateway\Contract\CustomerIdentitySource;
 use Techork\PaymentService\Gateway\Contract\GatewayCustomerRepository;
 use Techork\PaymentService\Gateway\Contract\ResolvesGatewayCustomers;
 use Techork\PaymentService\Gateway\Contract\Gateway;
@@ -29,7 +28,6 @@ class GatewayFactory extends OmnipayGatewayFactory
 
     public function __construct(
         private readonly ?GatewayCustomerRepository $gatewayCustomers = null,
-        private readonly ?CustomerIdentitySource $identities = null,
     ) {
     }
 
@@ -56,7 +54,6 @@ class GatewayFactory extends OmnipayGatewayFactory
             // nothing reads.
             if ($gateway instanceof ResolvesGatewayCustomers) {
                 $this->gatewayCustomers === null || $gateway->setGatewayCustomerRepository($this->gatewayCustomers);
-                $this->identities === null || $gateway->setCustomerIdentitySource($this->identities);
             }
 
             $this->instances[$key] = $gateway;

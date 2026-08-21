@@ -6,10 +6,14 @@ namespace Techork\PaymentService\Domain\Customer\Event;
 
 use EventSauce\EventSourcing\Serialization\SerializablePayload;
 use Override;
-use Techork\PaymentService\Common\ValueObject\PaymentMethod;
+use Techork\PaymentService\Domain\Customer\ValueObject\AttachedPaymentMethod;
 
 /**
- * Carries the payment method itself, because that is what the customer comes to hold.
+ * Carries the payment method together with the customer it belongs to.
+ *
+ * The pairing rather than the bare instrument, so the fact of ownership is in the stream and not
+ * only implied by which stream it is in. {@see AttachedPaymentMethod} says why the pairing is a
+ * domain type instead of a field on the `Common` value object.
  *
  * No timestamp: every message already has one — EventSauce writes
  * {@see \EventSauce\EventSourcing\Header::TIME_OF_RECORDING} on all of them — so a
@@ -22,18 +26,18 @@ use Techork\PaymentService\Common\ValueObject\PaymentMethod;
 final readonly class PaymentMethodRegistered implements SerializablePayload
 {
     public function __construct(
-        public PaymentMethod $paymentMethod,
+        public AttachedPaymentMethod $attached,
     ) {}
 
     #[Override]
     public function toPayload(): array
     {
-        return ['payment_method' => $this->paymentMethod->toPayload()];
+        return ['attached' => $this->attached->toPayload()];
     }
 
     #[Override]
     public static function fromPayload(array $payload): static
     {
-        return new self(PaymentMethod::fromPayload($payload['payment_method']));
+        return new self(AttachedPaymentMethod::fromPayload($payload['attached']));
     }
 }

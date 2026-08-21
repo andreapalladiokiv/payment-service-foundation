@@ -11,7 +11,6 @@ use EventSauce\EventSourcing\Snapshotting\SnapshottingBehaviour;
 use Override;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
 use Techork\PaymentService\Common\ValueObject\CustomerIdentity;
-use Techork\PaymentService\Common\ValueObject\PaymentMethod;
 use Techork\PaymentService\Common\ValueObject\PaymentMethodId;
 use Techork\PaymentService\Domain\Customer\Command\ForgetCustomerCommand;
 use Techork\PaymentService\Domain\Customer\Command\RegisterCustomerCommand;
@@ -24,6 +23,7 @@ use Techork\PaymentService\Domain\Customer\Event\PaymentMethodRegistered;
 use Techork\PaymentService\Domain\Customer\Exception\CustomerForgottenException;
 use Techork\PaymentService\Domain\Customer\Exception\PaymentMethodNotDetachable;
 use Techork\PaymentService\Domain\Customer\Exception\PaymentMethodNotRegistrable;
+use Techork\PaymentService\Domain\Customer\ValueObject\AttachedPaymentMethod;
 use Techork\PaymentService\Domain\Customer\ValueObject\CustomerId;
 
 /**
@@ -68,7 +68,9 @@ final class CustomerAggregate implements AggregateRootWithSnapshotting
      *
      * The payment methods themselves, not references to them and not flags about them: this is
      * what owning them means, and it is what lets a card's billing address be the customer's rather
-     * than a copy per card.
+     * than a copy per card. Each entry is an {@see AttachedPaymentMethod} — the card paired with
+     * the customer it belongs to — so ownership is a fact the entry carries rather than one implied
+     * by which collection it sits in.
      *
      * Detaching removes the entry. Nothing is remembered about it, because the fact that a
      * provider will not take a released reference back is a fact about that reference — it
@@ -82,7 +84,7 @@ final class CustomerAggregate implements AggregateRootWithSnapshotting
      * Tokens are never here — a {@see \Techork\PaymentService\Common\ValueObject\Token}
      * expires, and a collection of one-use handles would fill with dead entries.
      *
-     * @var array<string, PaymentMethod>
+     * @var array<string, AttachedPaymentMethod>
      */
     private array $paymentMethods = [];
 
@@ -112,7 +114,7 @@ final class CustomerAggregate implements AggregateRootWithSnapshotting
         return isset($this->paymentMethods[$paymentMethodId->toString()]);
     }
 
-    /** @return array<string, PaymentMethod> */
+    /** @return array<string, AttachedPaymentMethod> */
     public function paymentMethods(): array
     {
         return $this->paymentMethods;
@@ -141,13 +143,24 @@ final class CustomerAggregate implements AggregateRootWithSnapshotting
         $this->recordThat(new CustomerIdentityChanged($identity));
     }
 
-    public function registerPaymentMethod(PaymentMethod $paymentMethod): void
+    /**
+     * The card says whose it is, and this is where that is checked — by `CustomerId::equals()`,
+     * against this aggregate's own id.
+     *
+     * Checking it at all is the point of {@see AttachedPaymentMethod}: a card offered to the wrong
+     * customer would otherwise join the collection without complaint, and the collection would
+     * then say it belongs to someone it does not.
+     */
+    public function registerPaymentMethod(AttachedPaymentMethod $attached): void
     {
         $this->status === CustomerStatus::Forgotten && throw CustomerForgottenException::cannotChange('payment methods');
 
-        $this->holds($paymentMethod->id) && throw PaymentMethodNotRegistrable::alreadyRegistered($paymentMethod->id);
+        $attached->belongsTo($this->aggregateRootId())
+            || throw PaymentMethodNotRegistrable::belongsToAnotherCustomer($attached->paymentMethod->id, $attached->customerId);
 
-        $this->recordThat(new PaymentMethodRegistered($paymentMethod));
+        $this->holds($attached->paymentMethod->id) && throw PaymentMethodNotRegistrable::alreadyRegistered($attached->paymentMethod->id);
+
+        $this->recordThat(new PaymentMethodRegistered($attached));
     }
 
     public function detachPaymentMethod(PaymentMethodId $paymentMethodId): void
@@ -184,7 +197,7 @@ final class CustomerAggregate implements AggregateRootWithSnapshotting
             'identity' => $this->identity->toArray(),
             'address' => $this->address?->toArray(),
             'status' => $this->status->value,
-            'payment_methods' => array_map(static fn (PaymentMethod $paymentMethod): array => $paymentMethod->toPayload(), $this->paymentMethods),
+            'payment_methods' => array_map(static fn (AttachedPaymentMethod $attached): array => $attached->toPayload(), $this->paymentMethods),
         ];
     }
 
@@ -199,7 +212,7 @@ final class CustomerAggregate implements AggregateRootWithSnapshotting
         $self->identity = CustomerIdentity::fromArray($state['identity']);
         $self->address = isset($state['address']) ? BillingAddress::fromArray($state['address']) : null;
         $self->status = CustomerStatus::from($state['status'] ?? CustomerStatus::Active->value);
-        $self->paymentMethods = array_map(PaymentMethod::fromPayload(...), $state['payment_methods'] ?? []);
+        $self->paymentMethods = array_map(AttachedPaymentMethod::fromPayload(...), $state['payment_methods'] ?? []);
 
         return $self;
     }
@@ -221,7 +234,7 @@ final class CustomerAggregate implements AggregateRootWithSnapshotting
 
     protected function applyPaymentMethodRegistered(PaymentMethodRegistered $event): void
     {
-        $this->paymentMethods[$event->paymentMethod->id->toString()] = $event->paymentMethod;
+        $this->paymentMethods[$event->attached->id()] = $event->attached;
     }
 
     protected function applyPaymentMethodDetached(PaymentMethodDetached $event): void

@@ -7,6 +7,7 @@ namespace Techork\PaymentService\Gateway\Contract;
 use Money\Money;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
+use Techork\PaymentService\Common\ValueObject\CustomerIdentity;
 use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSResult;
 use Techork\PaymentService\Gateway\ValueObject\CardSpendCategory;
@@ -68,9 +69,49 @@ use Techork\PaymentService\Common\ValueObject\CardBrand;
  */
 interface PaymentGatewayInterface
 {
+    /**
+     * Brings one of our customers into existence at this gateway and reports the id it got.
+     *
+     * Its own operation, because a customer has its own lifecycle. It used to happen inside
+     * {@see createPaymentMethod} as a lookup-or-create buried in the adapter, so saving a card
+     * could mint a Stripe Customer or a Nuvei user as a side effect — and on a payment it could
+     * mint one that could not possibly own the instrument being charged. Attaching an instrument
+     * and registering a person are different acts; only one of them is allowed to create anything.
+     *
+     * The identity is passed in rather than looked up. Whoever calls this holds the customer, so
+     * there is nothing for the gateway layer to go and find — which is what retired
+     * `CustomerIdentitySource`.
+     *
+     * Gateways with no customer object do not implement it: ConnexPay's `CustomerID` is a field on
+     * a transaction, not a thing to create, which is why all of its payment methods are attached by
+     * definition.
+     */
+    public function registerCustomer(GatewayId $gatewayId, string $customerId, CustomerIdentity $identity): GatewayResult;
+
+    /**
+     * No customer here, and the asymmetry with {@see createPaymentMethod} is deliberate.
+     *
+     * A token is a one-use handle that expires; a collection of them belonging to a person would
+     * fill with dead entries, which is why `CustomerAggregate` refuses to hold them. So tokenizing
+     * is an operation on an instrument and nothing else, while registering a payment method is an
+     * operation on somebody's instrument.
+     */
     public function tokenize(GatewayId $gatewayId, PaymentInstrument $instrument, ?BillingAddress $billingAddress = null, ?string $clientUniqueId = null): RegistrationResult;
 
-    public function createPaymentMethod(GatewayId $gatewayId, PaymentInstrument $instrument, ?BillingAddress $billingAddress = null, ?string $clientUniqueId = null): RegistrationResult;
+    /**
+     * `$customerId` is required, unlike everywhere else it appears.
+     *
+     * Storing an instrument for later use is storing it *for someone*: Stripe will not make a
+     * PaymentMethod reusable without a customer, and Nuvei cannot hand back a
+     * `userPaymentOptionId` without a `userTokenId`. A registration with nobody named is refused
+     * with {@see \Techork\PaymentService\Gateway\Exception\RegistrationNeedsCustomer} rather
+     * than attempted — the provider would otherwise build a customer out of whatever address rode
+     * along, which is the behaviour `docs/customer-domain-plan` exists to end.
+     *
+     * On a payment it stays optional, because a payment can legitimately belong to nobody we have
+     * a record of: a one-off card charge is complete without a stored customer.
+     */
+    public function createPaymentMethod(GatewayId $gatewayId, PaymentInstrument $instrument, string $customerId, ?BillingAddress $billingAddress = null, ?string $clientUniqueId = null): RegistrationResult;
 
     public function authorize(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated, ?string $customerId = null): AuthorizationResult;
 
@@ -116,6 +157,7 @@ interface PaymentGatewayInterface
         ?ThreeDSResult $threeDS = null,
         ?string $statementDescription = null,
         ?string $description = null,
+        ?string $customerId = null,
     ): AuthorizationResult;
 
     /**

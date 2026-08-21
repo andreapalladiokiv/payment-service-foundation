@@ -433,6 +433,96 @@ breaking for every host implementation — say so in the task, once.
 **Done when:** the router forwards it, a gateway that ignores it still passes its tests, and
 the suite is green.
 
+**The customer is paired with the card in the domain, not carried on the `Common` value object.**
+`Domain\Customer\ValueObject\AttachedPaymentMethod` holds a `CustomerId` and a `PaymentMethod`;
+`PaymentMethodRegistered` carries it and the aggregate's collection is made of it. So ownership is
+checked with `CustomerId::equals()` against the aggregate's own id, and a card offered to the wrong
+customer is refused.
+
+This is where two earlier attempts landed wrong, and the reasoning is the part worth keeping.
+Putting `?string $customerId` on `Common\ValueObject\PaymentMethod` types nothing — it avoids the
+question. Making it a real type there is impossible without moving `CustomerId` into `Common`,
+which would put an aggregate's identity in a package that has no aggregates; `CustomerId`
+implements EventSauce's `AggregateRootId` and `Common` does not depend on eventsauce, so `Common`
+cannot even name it. The pairing is therefore a domain type, because that is the only place both
+names can be spoken. `Common\ValueObject\PaymentMethod` stays what it was — the instrument a
+gateway is handed, which knows a card, an address and an id, and deliberately not a customer.
+
+**`authorizeRebilling` takes the customer as an argument**, like `authorize` and `charge`, supplied
+by `OmnipayRebillingCreatePort` the way `OmnipayCreatePort` supplies it. It had none at all and put
+none in its options, while routing through the gateways' `authorize()` — exactly where both read
+that key. For Nuvei that is not a degradation but an impossibility: a subsequent rebilling payment
+uses a `userPaymentOptionId`, which exists only under a `userTokenId`.
+
+**Attached and unattached are now different things, and the providers differ in whether the
+distinction exists at all.**
+
+- **ConnexPay** has no customer object. `CustomerID` is a searchable field on the transaction, so
+  there is nothing to attach to and every payment method is attached by definition. Its
+  `CreatePaymentMethodRequest` names no customer and does not need to.
+- **Stripe** has both states. A PaymentMethod created without a customer is spent by the first
+  confirm; reuse requires attachment. Its registration therefore creates the PM, `attach`es it,
+  and confirms a SetupIntent — an attached instrument is the whole product of that call.
+- **Nuvei** attaches permanently and to the key *we* chose. A `userPaymentOptionId` exists only
+  under the `userTokenId` it was stored against, and the docs do not promise it survives a change
+  of token (see the provider reference; it is also why A3 exists).
+
+What the distinction reveals is that **creating a provider-side customer was never the adapter's
+job**, and it was doing it in two places it should not. `resolveCustomerReference()` was
+lookup-**or-create** and hung on `purchase` and `authorize` as well as on `createPaymentMethod`. So
+saving a card could mint a Stripe Customer or a Nuvei user as a side effect, and taking a payment
+could mint one that cannot possibly own the instrument being charged: an attached instrument
+belongs to the customer it was attached to, so Stripe refuses the pair and Nuvei never finds the
+stored option. What is left behind is a stray customer and a failed payment — the "invent a
+customer" behaviour this plan exists to end, merely moved to another operation.
+
+**The customer has its own lifecycle now, so registering it at a provider is its own operation.**
+`PaymentGatewayInterface::registerCustomer(GatewayId, string $customerId, CustomerIdentity)` —
+performed deliberately by whoever holds the customer, not as a consequence of attaching a card.
+Three things follow:
+
+- `resolveCustomerReference()` is lookup-only and has no creating variant. A miss means no customer
+  on that request; on a registration `CreatePaymentMethodRequest` refuses rather than inventing a
+  person to attach the card to.
+- **`CustomerIdentitySource` is deleted.** It existed so an adapter could go and find out who a
+  customer is in order to create one. The caller holds the identity and passes it, so there was
+  nothing left for the source to answer — and an injected dependency nothing reads is how the old
+  `CustomerRepository` came to be mistaken for a working path.
+- **`RegistersCustomers`** is the capability, narrow like `ResolvesGatewayCustomers`: only Stripe
+  and Nuvei have a customer object. Asking ConnexPay is refused with `UnsupportedOperation`, not
+  degraded to a failed result — its `CustomerID` is a field on a transaction, so there is nothing
+  to create and turning that into a decline would read as the provider refusing a customer it was
+  never told about. psalm caught this: `Gateway::createCustomer` is not declared, so the call would
+  have been fatal on the three gateways that lack it.
+
+**One regression this introduced, and where the suite failed to see it.** Moving the provider call
+out of the adapter changed the key it is passed under: `createCustomerFor()` had sent
+`'userTokenId' => $customerId`, and the router sends `'customerId'`. Omnipay applies an option only
+where a matching setter exists, so on Nuvei the key was dropped in silence,
+`CreateCustomerRequest` reached for its email fallback, and the user was registered under an email
+again — F5 undone, and invisibly, because the response reports the token as its reference so the
+saved pair (our id → email) would agree with every later lookup.
+
+`PaymentGatewayRouterTest` could not catch it: it asserts on a mocked omnipay gateway, which proves
+the router *sends* the key and not that the adapter reads it. The mirror of F6's mistake, where the
+assertion sat where the value is printed instead of where it enters. Fixed by translating in the
+adapter — `Nuvei\CreateCustomerRequest::setCustomerId()` writes the same slot as `setUserTokenId()`,
+so the router keeps speaking of *our* customer id — and by **removing the email fallback
+altogether**: with `registerCustomer()` the only caller, the only thing it could still do was mint
+the state A3 exists to migrate away from, so a missing customer is now a typed refusal. Stripe needs
+no equivalent: it assigns the id itself, which its request now says in place of a setter that would
+accept ours and ignore it.
+
+**Registration is the exception: there the customer is required.** `createPaymentMethod` takes a
+non-nullable `$customerId` and refuses an empty one with `RegistrationNeedsCustomer`, because
+storing an instrument for later use is storing it for somebody — Stripe will not make a
+PaymentMethod reusable without a customer, and Nuvei cannot produce a `userPaymentOptionId`
+without a `userTokenId`. Both adapters already read `customerId` from their options; the router
+was what never supplied it, so every vaulted instrument was stored for nobody while the code
+looked wired. On a payment the id stays optional — a one-off charge can belong to nobody we have
+a record of — and `tokenize()` has no customer at all, for the same reason tokens are not in the
+aggregate: they expire.
+
 ## F4. Stripe: the lookup replaces the search
 
 **Depends on:** F3.

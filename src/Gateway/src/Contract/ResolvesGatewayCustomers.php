@@ -14,10 +14,13 @@ namespace Techork\PaymentService\Gateway\Contract;
  *
  * {@see \Techork\PaymentService\Gateway\GatewayFactory} hands these over only to gateways that
  * ask, which is what lets the method on `Gateway` be retired.
+ *
+ * It used to hand over a `CustomerIdentitySource` too, so an adapter could look up who a customer
+ * is and create one at the provider. That is
+ * {@see PaymentGatewayInterface::registerCustomer()}'s job now, and the identity is passed to it
+ * by the caller that holds the customer — so there was nothing left for the source to answer.
  */
 interface ResolvesGatewayCustomers
 {
     public function setGatewayCustomerRepository(GatewayCustomerRepository $repository): void;
-
-    public function setCustomerIdentitySource(CustomerIdentitySource $source): void;
 }

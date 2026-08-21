@@ -28,6 +28,7 @@ use Techork\PaymentService\Domain\Customer\Event\PaymentMethodRegistered;
 use Techork\PaymentService\Domain\Customer\Exception\CustomerForgottenException;
 use Techork\PaymentService\Domain\Customer\Exception\PaymentMethodNotDetachable;
 use Techork\PaymentService\Domain\Customer\Exception\PaymentMethodNotRegistrable;
+use Techork\PaymentService\Domain\Customer\ValueObject\AttachedPaymentMethod;
 use Techork\PaymentService\Domain\Customer\ValueObject\CustomerId;
 use Techork\PaymentService\Tests\Support\CustomerAggregateTestCase;
 
@@ -201,6 +202,30 @@ function makeCustomerPaymentMethod(string $suffix = '01'): PaymentMethod
     );
 }
 
+function makeAttachedPaymentMethod(CustomerId $customerId, string $suffix = '01'): AttachedPaymentMethod
+{
+    return new AttachedPaymentMethod($customerId, makeCustomerPaymentMethod($suffix));
+}
+
+/**
+ * A card offered to the wrong customer is refused, and the comparison is a real one.
+ *
+ * {@see AttachedPaymentMethod} pairs the card with a `CustomerId`, so this is
+ * `CustomerId::equals()` against the aggregate's own id — not a string comparison, and not a
+ * nullable field that could mean either "nobody" or "not recorded". There is no "names nobody"
+ * case to test: the type does not have one.
+ */
+it('refuses a payment method that belongs to a different customer', function () {
+    /** @var CustomerId $id */
+    $id = $this->aggregateRootId();
+    given(new CustomerRegistered(makeCustomerIdentity()));
+
+    $aggregate = $this->retrieveAggregateRoot($id);
+
+    expect(fn () => $aggregate->registerPaymentMethod(makeAttachedPaymentMethod(CustomerId::generate(), '12')))
+        ->toThrow(PaymentMethodNotRegistrable::class);
+});
+
 /**
  * Registering the same instrument twice is refused rather than deduplicated. Today the same
  * card registered twice is two `gateway_references` rows and nothing says they are one card,
@@ -210,10 +235,10 @@ it('refuses to register the same payment method twice', function () {
     /** @var CustomerId $id */
     $id = $this->aggregateRootId();
 
-    given(new CustomerRegistered(makeCustomerIdentity()), new PaymentMethodRegistered(makeCustomerPaymentMethod()));
+    given(new CustomerRegistered(makeCustomerIdentity()), new PaymentMethodRegistered(makeAttachedPaymentMethod($id)));
 
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->registerPaymentMethod(makeCustomerPaymentMethod());
+    $aggregate->registerPaymentMethod(makeAttachedPaymentMethod($id));
 })->throws(PaymentMethodNotRegistrable::class, 'already');
 
 it('holds the payment methods registered to it', function () {
@@ -223,8 +248,8 @@ it('holds the payment methods registered to it', function () {
     given(new CustomerRegistered(makeCustomerIdentity()));
 
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->registerPaymentMethod(makeCustomerPaymentMethod('01'));
-    $aggregate->registerPaymentMethod(makeCustomerPaymentMethod('02'));
+    $aggregate->registerPaymentMethod(makeAttachedPaymentMethod($id, '01'));
+    $aggregate->registerPaymentMethod(makeAttachedPaymentMethod($id, '02'));
     $this->persistAggregateRoot($aggregate);
 
     expect(array_keys($aggregate->paymentMethods()))->toBe([
@@ -233,11 +258,13 @@ it('holds the payment methods registered to it', function () {
     ])->and($aggregate->holds(makeCustomerPaymentMethodId('01')))->toBeTrue()
         // The card itself, which is what owning it means — and what lets its address be the
         // customer's rather than a copy per card.
-        ->and($aggregate->paymentMethods()[makeCustomerPaymentMethodId('01')->toString()]->billingAddress->city)->toBe('London');
+        ->and($aggregate->paymentMethods()[makeCustomerPaymentMethodId('01')->toString()]->paymentMethod->billingAddress->city)->toBe('London')
+        // And each entry says whose it is, which is the whole reason it is a pairing.
+        ->and($aggregate->paymentMethods()[makeCustomerPaymentMethodId('01')->toString()]->customerId->equals($id))->toBeTrue();
 
     then(
-        new PaymentMethodRegistered(makeCustomerPaymentMethod('01')),
-        new PaymentMethodRegistered(makeCustomerPaymentMethod('02')),
+        new PaymentMethodRegistered(makeAttachedPaymentMethod($id, '01')),
+        new PaymentMethodRegistered(makeAttachedPaymentMethod($id, '02')),
     );
 });
 
@@ -259,7 +286,7 @@ it('stops holding a payment method once it is detached', function () {
     /** @var CustomerId $id */
     $id = $this->aggregateRootId();
 
-    given(new CustomerRegistered(makeCustomerIdentity()), new PaymentMethodRegistered(makeCustomerPaymentMethod()));
+    given(new CustomerRegistered(makeCustomerIdentity()), new PaymentMethodRegistered(makeAttachedPaymentMethod($id)));
 
     $aggregate = $this->retrieveAggregateRoot($id);
     $aggregate->detachPaymentMethod(makeCustomerPaymentMethodId());
@@ -282,7 +309,7 @@ it('keeps holding its payment methods after being forgotten', function () {
 
     given(
         new CustomerRegistered(makeCustomerIdentity()),
-        new PaymentMethodRegistered(makeCustomerPaymentMethod()),
+        new PaymentMethodRegistered(makeAttachedPaymentMethod($id)),
         new CustomerForgotten('erasure_request'),
     );
 
@@ -317,7 +344,7 @@ it('refuses to take a new payment method for a forgotten customer', function () 
     given(new CustomerRegistered(makeCustomerIdentity()), new CustomerForgotten('erasure_request'));
 
     $aggregate = $this->retrieveAggregateRoot($id);
-    $aggregate->registerPaymentMethod(makeCustomerPaymentMethod());
+    $aggregate->registerPaymentMethod(makeAttachedPaymentMethod($id));
 })->throws(CustomerForgottenException::class);
 
 /**
@@ -330,7 +357,7 @@ it('still lets a forgotten customer release a payment method', function () {
 
     given(
         new CustomerRegistered(makeCustomerIdentity()),
-        new PaymentMethodRegistered(makeCustomerPaymentMethod()),
+        new PaymentMethodRegistered(makeAttachedPaymentMethod($id)),
         new CustomerForgotten('erasure_request'),
     );
 

@@ -11,6 +11,7 @@ use RuntimeException;
 use Techork\PaymentService\Common\Contract\DecryptInterface;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
+use Techork\PaymentService\Common\ValueObject\CustomerIdentity;
 use Techork\PaymentService\Common\ValueObject\CardBrand;
 use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSResult;
@@ -32,6 +33,9 @@ use Techork\PaymentService\Gateway\Exception\UnsupportedByGateway;
 use Techork\PaymentService\Gateway\Logger\GatewayLoggerInterface;
 use Techork\PaymentService\Gateway\Logger\NullGatewayLogger;
 use Techork\PaymentService\Gateway\ValueObject\CardSpendCategory;
+use Techork\PaymentService\Gateway\Contract\RegistersCustomers;
+use Techork\PaymentService\Gateway\Exception\UnsupportedOperation;
+use Techork\PaymentService\Gateway\Exception\RegistrationNeedsCustomer;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 use Throwable;
 
@@ -47,6 +51,48 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         private GatewayTransactionRepository $transactionRepository,
         private GatewayLoggerInterface $logger = new NullGatewayLogger(),
     ) {}
+
+    #[Override]
+    public function registerCustomer(GatewayId $gatewayId, string $customerId, CustomerIdentity $identity): GatewayResult
+    {
+        $credential = $this->credentialRepository->findOrFail($gatewayId);
+        $omnipay = $this->gatewayFactory->createForCredential($credential);
+
+        // Refused, not degraded: a provider with no customer object cannot be asked to make one,
+        // and turning that into a failed result would read as the provider saying no to a customer
+        // it was never told about. ConnexPay is the case — its `CustomerID` is a field on a
+        // transaction, so its payment methods are attached by definition and there is nothing here
+        // to create.
+        $omnipay instanceof RegistersCustomers || throw UnsupportedOperation::forGateway(
+            $credential->getGatewayName(),
+            'registerCustomer',
+            'the provider has no customer object to create.',
+        );
+
+        $this->logger->log('Gateway registerCustomer request', [
+            'gatewayId' => $gatewayId->toString(),
+            'gatewayName' => $credential->getGatewayName(),
+            'customerId' => $customerId,
+        ]);
+
+        // Not saved here. Remembering which id a provider knows a customer under is
+        // `GatewayCustomerRepository`'s, and the caller owns that pairing the same way it owns the
+        // transaction references the ports persist — this only performs the call.
+        $result = $this->buildOutcome(fn () => $omnipay->createCustomer([
+            'customerId' => $customerId,
+            'customerIdentity' => $identity,
+            'gateway' => $credential,
+        ])->send());
+
+        $this->logger->log('Gateway registerCustomer response', [
+            'customerId' => $customerId,
+            'success' => $result->success,
+            'reference' => $result->reference,
+            'message' => $result->message,
+        ]);
+
+        return $result;
+    }
 
     #[Override]
     public function tokenize(GatewayId $gatewayId, PaymentInstrument $instrument, ?BillingAddress $billingAddress = null, ?string $clientUniqueId = null): RegistrationResult
@@ -86,9 +132,15 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
     }
 
     #[Override]
-    public function createPaymentMethod(GatewayId $gatewayId, PaymentInstrument $instrument, ?BillingAddress $billingAddress = null, ?string $clientUniqueId = null): RegistrationResult
+    public function createPaymentMethod(GatewayId $gatewayId, PaymentInstrument $instrument, string $customerId, ?BillingAddress $billingAddress = null, ?string $clientUniqueId = null): RegistrationResult
     {
         $credential = $this->credentialRepository->findOrFail($gatewayId);
+
+        // Before the gateway is even built. Registering for nobody is a wiring mistake of the
+        // caller's, and reaching the provider first would turn it into something that looks like
+        // the provider's answer.
+        trim($customerId) === '' && throw RegistrationNeedsCustomer::forGateway($credential->getGatewayName());
+
         $omnipay = $this->gatewayFactory->createForCredential($credential);
 
         $this->logger->log('Gateway createPaymentMethod request', [
@@ -97,6 +149,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             'instrument' => $instrument->toPayload(),
             'billingAddress' => $billingAddress?->toArray(),
             'clientUniqueId' => $clientUniqueId,
+            'customerId' => $customerId,
         ]);
 
         $result = $this->buildRegistration(fn () => $omnipay->createPaymentMethod([
@@ -106,6 +159,9 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             'referenceResolver' => $this->referenceRepository,
             'billingAddress' => $billingAddress,
             'clientUniqueId' => $clientUniqueId,
+            // Both adapters that can vault an instrument already read this; until now the router
+            // never supplied it, so the resolution got null and the card was stored for nobody.
+            'customerId' => $customerId,
         ])->send());
 
         $this->logger->log('Gateway createPaymentMethod response', [
@@ -183,6 +239,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         ?ThreeDSResult $threeDS = null,
         ?string $statementDescription = null,
         ?string $description = null,
+        ?string $customerId = null,
     ): AuthorizationResult {
         $credential = $this->credentialRepository->findOrFail($gatewayId);
         $omnipay = $this->gatewayFactory->createForCredential($credential);
@@ -199,6 +256,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             'description' => $description,
             'initiation' => $initiation->value,
             'genesisReference' => $genesisReference,
+            'customerId' => $customerId,
         ]);
 
         // The same Omnipay `authorize` request the ordinary path uses. The series
@@ -221,6 +279,10 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             'initiation' => $initiation,
             'rebillingReference' => $genesisReference,
             'rebilling' => true,
+            // Both gateways that can renew read this off their `authorize()`, which is what this
+            // routes through. Nuvei cannot renew without it: a subsequent rebilling payment uses
+            // a `userPaymentOptionId`, and that only exists under a `userTokenId`.
+            'customerId' => $customerId,
         ])->send());
 
         $this->logger->log('Gateway authorizeRebilling response', [
