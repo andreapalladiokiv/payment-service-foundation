@@ -82,9 +82,12 @@ interface PaymentGatewayInterface
      * there is nothing for the gateway layer to go and find — which is what retired
      * `CustomerIdentitySource`.
      *
-     * Gateways with no customer object do not implement it: ConnexPay's `CustomerID` is a field on
-     * a transaction, not a thing to create, which is why all of its payment methods are attached by
-     * definition.
+     * Gateways with no way to create a customer on its own do not implement it, and that is a
+     * narrower claim than "no customer object". ConnexPay has one — `/api/v1/verify` returns
+     * `card.customer.guid`, and {@see createPaymentMethod} is where it comes into existence — but
+     * every endpoint that makes one takes a card, so there is nothing to call with an identity and
+     * no instrument. Registering a ConnexPay customer therefore happens by registering their
+     * payment method, which is why that operation takes the identity too.
      */
     public function registerCustomer(GatewayId $gatewayId, string $customerId, CustomerIdentity $identity): GatewayResult;
 
@@ -110,8 +113,22 @@ interface PaymentGatewayInterface
      *
      * On a payment it stays optional, because a payment can legitimately belong to nobody we have
      * a record of: a one-off card charge is complete without a stored customer.
+     *
+     * **`$identity` is here because for one provider this call is also the customer registration.**
+     * ConnexPay creates its customer inside the same `/api/v1/verify` that vaults the card and
+     * hands back its guid on the response as {@see RegistrationResult::$customerReference}. Until
+     * the identity arrived here, the only name that reached it was the one on `$billingAddress` —
+     * so the provider-side customer was built out of whatever address rode along with the card,
+     * the behaviour `docs/customer-domain-plan` exists to end, surviving in the one place nothing
+     * was looking. Passing it makes the customer the source of the customer.
+     *
+     * Optional rather than required, and only because a name is not a precondition for storing a
+     * card: Stripe and Nuvei build their billing details from the address and ignore it. Absent, a
+     * ConnexPay customer falls back to the address the way {@see \Techork\PaymentService\Nuvei\CreateCustomerRequest}
+     * does — the last resort rather than the normal case, and now visible in the signature instead
+     * of being the only path.
      */
-    public function createPaymentMethod(GatewayId $gatewayId, PaymentInstrument $instrument, string $customerId, ?BillingAddress $billingAddress = null, ?string $clientUniqueId = null): RegistrationResult;
+    public function createPaymentMethod(GatewayId $gatewayId, PaymentInstrument $instrument, string $customerId, ?BillingAddress $billingAddress = null, ?string $clientUniqueId = null, ?CustomerIdentity $identity = null): RegistrationResult;
 
     public function authorize(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated, ?string $customerId = null): AuthorizationResult;
 

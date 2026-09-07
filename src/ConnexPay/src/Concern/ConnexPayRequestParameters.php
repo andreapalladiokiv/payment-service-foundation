@@ -10,6 +10,7 @@ use Money\Currencies\ISOCurrencies;
 use Money\Formatter\DecimalMoneyFormatter;
 use Money\Money;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
+use Techork\PaymentService\Common\ValueObject\CustomerIdentity;
 use Transliterator;
 
 trait ConnexPayRequestParameters
@@ -311,19 +312,46 @@ trait ConnexPayRequestParameters
         ];
     }
 
-    protected function formatCustomer(BillingAddress $address): array
+    /**
+     * ConnexPay's `Customer` block, which is two things at once and had only one source.
+     *
+     * The four person fields — name, phone, email — say who the customer is, and ConnexPay creates
+     * or links a customer object from them, returning its guid as `card.customer.guid`. The six
+     * address fields are the AVS payload: they are what makes `addressVerificationCode` come back
+     * at all. That split is why the identity does not replace the address here. Handing over a
+     * {@see CustomerIdentity} in place of the address would have registered the right person and
+     * silently ended address verification, since a `CustomerIdentity` holds no address by design.
+     *
+     * So the identity supplies the person and the address supplies the address, and the mapping is
+     * exact: `CustomerIdentity`'s four fields are precisely the four this block has that an
+     * address should never have decided. Absent an identity the address answers for both, which is
+     * the state every ConnexPay customer was created in before — see `docs/customer-domain-plan`
+     * on why an address-derived customer is the thing being ended. It stays reachable as a last
+     * resort, not as the only path.
+     *
+     * Names are transliterated for the same reason the city always was: ConnexPay rejects
+     * non-ASCII on this block, and a customer's own name is far likelier to carry an accent than
+     * anything that survived being typed into an address form.
+     */
+    protected function formatCustomer(?BillingAddress $address, ?CustomerIdentity $identity = null): array
     {
+        $firstName = $identity?->firstName ?: $address?->firstName;
+        $lastName = $identity?->lastName ?: $address?->lastName;
+        $phone = $identity?->phone ?? $address?->phone;
+        $email = $identity?->email ?? $address?->email;
+        $state = $address?->state;
+
         return [
-            'FirstName' => $address->firstName,
-            'LastName' => $address->lastName,
-            'Phone' => $address->phone ? (string) $address->phone : null,
-            'City' => self::transliterate($address->city),
-            'State' => $address->state ? (string) $address->state : null,
-            'Country' => (string) $address->country,
-            'Email' => $address->email ? (string) $address->email : null,
-            'Address1' => $address->line,
-            'Address2' => $address->lineExtra,
-            'Zip' => $address->postalCode,
+            'FirstName' => $firstName === null ? null : self::transliterate($firstName),
+            'LastName' => $lastName === null ? null : self::transliterate($lastName),
+            'Phone' => $phone ? (string) $phone : null,
+            'City' => $address === null ? null : self::transliterate($address->city),
+            'State' => $state === null ? null : (string) $state,
+            'Country' => $address === null ? null : (string) $address->country,
+            'Email' => $email ? (string) $email : null,
+            'Address1' => $address?->line,
+            'Address2' => $address?->lineExtra,
+            'Zip' => $address?->postalCode,
         ];
     }
 

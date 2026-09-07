@@ -7,15 +7,24 @@ namespace Techork\PaymentService\Gateway\Contract;
 use Omnipay\Common\Message\AbstractRequest;
 
 /**
- * A gateway that has a customer object of its own, which can therefore be created.
+ * A gateway whose customer object can be created on its own, from an identity and nothing else.
  *
- * Narrow for the same reason {@see ResolvesGatewayCustomers} is: not every provider has the
- * concept. ConnexPay's `CustomerID` is a *field on a transaction* — searchable, and nothing to
- * bring into existence — which is why every ConnexPay payment method is attached by definition and
- * why asking it to register a customer is a wiring error rather than a decline. Paynet and Revolut
- * have no customer either.
+ * Narrow for the same reason {@see ResolvesGatewayCustomers} is, but read the boundary carefully:
+ * it is *creatable independently*, not *exists*. Paynet and Revolut have no customer at all.
+ * **ConnexPay does have one** — `/api/v1/verify` returns `card.customer.guid`, and
+ * `ConnexPay\CreatePaymentMethodRequest` is what brings it into existence — and it is still
+ * excluded here, because every ConnexPay endpoint that creates a customer requires a card. There
+ * is no call to make with an identity and no instrument, so asking is a wiring error rather than a
+ * decline; the customer is registered by registering their payment method, which takes the
+ * identity for that reason.
  *
- * Stripe and Nuvei do, and they differ in what attaching means. A Stripe PaymentMethod is
+ * This used to say ConnexPay had no customer object, on the grounds that its `CustomerID` is a
+ * searchable field on a transaction. That field is real and is a different thing: it carries *our*
+ * id for reporting, alongside a `Customer` object that the provider owns and keys itself. Reading
+ * the first as evidence against the second is what left an address-derived provider customer alive
+ * inside a registration.
+ *
+ * Stripe and Nuvei are the two that qualify, and they differ in what attaching means. A Stripe PaymentMethod is
  * unattached until it is attached to a Customer, and unattached means single-use. A Nuvei
  * `userPaymentOptionId` exists only under the `userTokenId` it was stored against, and the docs do
  * not promise it survives a change of token. Both make a customer created *after* the fact useless

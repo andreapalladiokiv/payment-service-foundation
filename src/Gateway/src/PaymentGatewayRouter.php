@@ -58,15 +58,22 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
         $credential = $this->credentialRepository->findOrFail($gatewayId);
         $omnipay = $this->gatewayFactory->createForCredential($credential);
 
-        // Refused, not degraded: a provider with no customer object cannot be asked to make one,
-        // and turning that into a failed result would read as the provider saying no to a customer
-        // it was never told about. ConnexPay is the case — its `CustomerID` is a field on a
-        // transaction, so its payment methods are attached by definition and there is nothing here
-        // to create.
+        // Refused, not degraded: a provider that cannot be asked to make a customer on its own
+        // is not a provider declining one, and a failed result would read as it saying no to a
+        // customer it was never told about.
+        //
+        // ConnexPay is the case, and the reason is narrower than it used to say here. It does have
+        // a customer object — `/api/v1/verify` returns `card.customer.guid` — but every endpoint
+        // that creates one takes a card, so there is no call to make with an identity and no
+        // instrument. Its customers are registered through `createPaymentMethod`, which takes the
+        // identity for exactly that reason; the pairing comes back as the registration's
+        // `customerReference`. What the old wording asserted — that the provider has no customer
+        // object, so its payment methods are attached by definition — was false, and it is what
+        // hid an address-derived customer inside `CreatePaymentMethodRequest`.
         $omnipay instanceof RegistersCustomers || throw UnsupportedOperation::forGateway(
             $credential->getGatewayName(),
             'registerCustomer',
-            'the provider has no customer object to create.',
+            'the provider creates a customer only alongside a card; register the payment method instead.',
         );
 
         $this->logger->log('Gateway registerCustomer request', [
@@ -132,7 +139,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
     }
 
     #[Override]
-    public function createPaymentMethod(GatewayId $gatewayId, PaymentInstrument $instrument, string $customerId, ?BillingAddress $billingAddress = null, ?string $clientUniqueId = null): RegistrationResult
+    public function createPaymentMethod(GatewayId $gatewayId, PaymentInstrument $instrument, string $customerId, ?BillingAddress $billingAddress = null, ?string $clientUniqueId = null, ?CustomerIdentity $identity = null): RegistrationResult
     {
         $credential = $this->credentialRepository->findOrFail($gatewayId);
 
@@ -150,6 +157,7 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             'billingAddress' => $billingAddress?->toArray(),
             'clientUniqueId' => $clientUniqueId,
             'customerId' => $customerId,
+            'customerIdentity' => $identity?->toArray(),
         ]);
 
         $result = $this->buildRegistration(fn () => $omnipay->createPaymentMethod([
@@ -162,6 +170,13 @@ final readonly class PaymentGatewayRouter implements PaymentGatewayInterface
             // Both adapters that can vault an instrument already read this; until now the router
             // never supplied it, so the resolution got null and the card was stored for nobody.
             'customerId' => $customerId,
+            // Who that customer is, not merely which id they have. ConnexPay's registration
+            // creates the provider-side customer, and with only the address to read it created one
+            // for whoever the card was billed to. Only the adapter that builds a customer here
+            // declares a setter for this, so it reaches ConnexPay and is dropped by the rest —
+            // which is the shape wanted, not an oversight: Stripe and Nuvei build billing details
+            // from the address and register their customers through `registerCustomer`.
+            'customerIdentity' => $identity,
         ])->send());
 
         $this->logger->log('Gateway createPaymentMethod response', [

@@ -34,9 +34,13 @@ the three ways disagree:
   job is to recover an identity that was never assigned.
 
 - **ConnexPay: nothing at all.** `ConnexPay/src/ConnexPayGateway.php:333` injects
-  `customerRepository` into every request and no request reads or writes it — there is no
-  ConnexPay-side customer object to reference. Its `CustomerID` field, which the API accepts
-  on Auth Only, Create Sale and Capture, is therefore never sent.
+  `customerRepository` into every request and no request reads or writes it. Its `CustomerID`
+  field, which the API accepts on Auth Only, Create Sale and Capture, is therefore never sent.
+
+  This entry originally went on to say there is no ConnexPay-side customer object to reference.
+  There is one — see the correction under §F5 — and it was being created from a billing address
+  by `CreatePaymentMethodRequest` the whole time. The unread repository and the unsent field were
+  read as evidence of an absent concept rather than of an unwired one.
 
 - **Paynet and Revolut** implement `setCustomerRepository()` to satisfy the interface
   (`Paynet/src/PaynetGateway.php:49`, `Revolut/src/RevolutGateway.php:55`) and use it nowhere.
@@ -457,9 +461,19 @@ uses a `userPaymentOptionId`, which exists only under a `userTokenId`.
 **Attached and unattached are now different things, and the providers differ in whether the
 distinction exists at all.**
 
-- **ConnexPay** has no customer object. `CustomerID` is a searchable field on the transaction, so
-  there is nothing to attach to and every payment method is attached by definition. Its
-  `CreatePaymentMethodRequest` names no customer and does not need to.
+- **ConnexPay** was written up here as having no customer object at all, and that was wrong.
+  `CustomerID` is indeed a searchable field on the transaction carrying *our* id — but alongside it
+  the provider keeps a `Customer` object of its own: `/api/v1/verify` returns
+  `card.customer.guid`, and `CreatePaymentMethodRequest` was already creating one on every
+  registration, from `billingAddress`. So the address-derived provider customer this plan exists to
+  end (§F2d) survived on this gateway, in the one place the plan had declared there was nothing to
+  look at. Corrected 2026-09-07: the request now takes `customerIdentity` for the person and keeps
+  the address for the address, which is also the AVS payload — see
+  `ConnexPayRequestParameters::formatCustomer()`.
+
+  What stays true is that ConnexPay has nothing to attach an *existing* customer to and no endpoint
+  that creates one without a card, which is why it still does not implement `RegistersCustomers`
+  (§F5) — a refusal for that reason rather than for the absent object.
 - **Stripe** has both states. A PaymentMethod created without a customer is spent by the first
   confirm; reuse requires attachment. Its registration therefore creates the PM, `attach`es it,
   and confirms a SetupIntent — an attached instrument is the whole product of that call.
@@ -489,11 +503,17 @@ Three things follow:
   nothing left for the source to answer — and an injected dependency nothing reads is how the old
   `CustomerRepository` came to be mistaken for a working path.
 - **`RegistersCustomers`** is the capability, narrow like `ResolvesGatewayCustomers`: only Stripe
-  and Nuvei have a customer object. Asking ConnexPay is refused with `UnsupportedOperation`, not
-  degraded to a failed result — its `CustomerID` is a field on a transaction, so there is nothing
-  to create and turning that into a decline would read as the provider refusing a customer it was
-  never told about. psalm caught this: `Gateway::createCustomer` is not declared, so the call would
-  have been fatal on the three gateways that lack it.
+  and Nuvei can be asked for a customer on its own. Asking ConnexPay is refused with
+  `UnsupportedOperation`, not degraded to a failed result — turning it into a decline would read as
+  the provider refusing a customer it was never told about. psalm caught this:
+  `Gateway::createCustomer` is not declared, so the call would have been fatal on the three
+  gateways that lack it.
+
+  **The stated reason was wrong even though the refusal was right**, and the difference mattered:
+  this said ConnexPay has no customer object, when what it has is no way to create one from an
+  identity alone. Every endpoint that makes a ConnexPay customer takes a card. Believing the
+  stronger claim is what left `CreatePaymentMethodRequest` building one out of `billingAddress`
+  unexamined — the capability boundary is "creatable independently", not "exists".
 
 **One regression this introduced, and where the suite failed to see it.** Moving the provider call
 out of the adapter changed the key it is passed under: `createCustomerFor()` had sent
@@ -754,6 +774,17 @@ plus `[._/-]`.
 So the block at `PurchaseRequest.php:132` is correctly sent only on the Cash path
 (`visitCash`), and card payments carry identity through `Card.Customer` and `RiskData`
 instead. This is already right; do not change it.
+
+**`Card.Customer`** — the nested one, and a different thing from the top-level block above. Two
+jobs in one object, which is why neither source can be dropped: `FirstName`, `LastName`, `Phone`
+and `Email` are the customer ConnexPay creates or links, returning it as `card.customer.guid` on
+the Verify response; `Address1`, `Address2`, `City`, `State`, `Zip` and `Country` are the AVS
+payload that makes `addressVerificationCode` come back at all. Non-ASCII is rejected on this block
+(`München`, `Kraków` fail validation), names included, so everything textual is transliterated.
+
+**No customer endpoint exists.** The v1 surface is `/verify`, `/token`, `/sales`, `/authonlys`,
+`/void`, `/returns`; every route that can create a customer takes a card. So a ConnexPay customer
+cannot be registered ahead of, or apart from, one of their payment methods.
 
 **`OrderNumber`** — max 50, alphanumeric plus `[._/-]`. A reporting and reconciliation key,
 searchable in Bridge, carried into the Chargeback Management System. **Not** an idempotency
