@@ -13,6 +13,7 @@ use Techork\PaymentService\Common\ValueObject\CardBrand;
 use Techork\PaymentService\ConnexPay\Concern\ConnexPayRequestParameters;
 use Techork\PaymentService\Gateway\ValueObject\CardSpendCategory;
 use Techork\PaymentService\Gateway\ValueObject\PurchaseTypeBridge;
+use ValueError;
 
 /**
  * Issues a virtual card via ConnexPay Purchases API.
@@ -119,8 +120,11 @@ final class IssueVirtualCardRequest extends AbstractRequest
     private function resolvePurchaseTypeCode(): string
     {
         $raw = $this->getSpendCategory();
-        $category = CardSpendCategory::tryFrom($raw)
-            ?? throw new InvalidArgumentException("Unknown CardSpendCategory '{$raw}'");
+        try {
+            $category = CardSpendCategory::from($raw);
+        } catch (ValueError $e) {
+            throw new InvalidArgumentException("Unknown CardSpendCategory '$raw'", previous: $e);
+        }
 
         $purchaseType = PurchaseTypeBridge::fromCategory($category);
 
@@ -140,9 +144,7 @@ final class IssueVirtualCardRequest extends AbstractRequest
             null => null,
             CardBrand::Visa => 'Visa',
             CardBrand::Mastercard => 'Mastercard',
-            default => throw new InvalidArgumentException(
-                "Unsupported ConnexPay card brand: {$brand->value}"
-            ),
+            default => throw new InvalidArgumentException("Unsupported ConnexPay card brand: $brand->value"),
         };
     }
 
@@ -154,10 +156,7 @@ final class IssueVirtualCardRequest extends AbstractRequest
 
             return new IssueVirtualCardResponse($this, $response);
         } catch (GuzzleException $e) {
-            return new IssueVirtualCardResponse($this, [
-                'cardGuid' => null,
-                'status' => $e->getMessage(),
-            ]);
+            return new IssueVirtualCardResponse($this, ['cardGuid' => null, 'status' => $e->getMessage()]);
         }
     }
 }
