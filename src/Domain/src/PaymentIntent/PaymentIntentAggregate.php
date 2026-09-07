@@ -298,12 +298,12 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                     $command->merchantDescriptor(),
                     $command->description(),
                     $authenticator->initiate(new InitiateChallengeRequest(
-                        paymentIntentId: $command->paymentIntentId(),
-                        amount: $command->amount(),
-                        instrument: $command->instrument(),
-                        billingAddress: $command->billingAddress(),
-                        initiation: $command->initiation(),
-                        reason: $decision->reason,
+                        $command->paymentIntentId(),
+                        $command->amount(),
+                        $command->instrument(),
+                        $command->billingAddress(),
+                        $command->initiation(),
+                        $decision->reason,
                     )),
                     $command->initiation(),
                 ));
@@ -318,11 +318,11 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
             // service issued — for which card, for how much, and whether it has been spent — not
             // against what the request says about itself.
             $authentication = $authenticator->verify(new VerifyChallengeRequest(
-                paymentIntentId: $command->paymentIntentId(),
-                presented: $evidence,
-                amount: $command->amount(),
-                instrument: $command->instrument(),
-                reason: $decision->reason,
+                $command->paymentIntentId(),
+                $evidence,
+                $command->amount(),
+                $command->instrument(),
+                $decision->reason,
             ));
 
             if (! $authentication->wasPassed()) {
@@ -351,13 +351,13 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
 
         try {
             $outcome = $port->create(new CreateRequest(
-                paymentIntentId: $command->paymentIntentId(),
-                amount: $command->amount(),
-                instrument: $command->instrument(),
-                captureMethod: $command->captureMethod(),
-                billingAddress: $command->billingAddress(),
-                challengeResult: $evidence,
-                initiation: $command->initiation(),
+                $command->paymentIntentId(),
+                $command->amount(),
+                $command->instrument(),
+                $command->captureMethod(),
+                $command->billingAddress(),
+                $evidence,
+                $command->initiation(),
             ));
         } catch (GatewayDeclinedException $e) {
             $self->recordThat(new PaymentIntentFailed(
@@ -465,13 +465,13 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         // failure would also be a lie the aggregate cannot take back: the funds
         // may well still be held.
         $outcome = $port->capture(new CaptureRequest(
-            paymentIntentId: $this->aggregateRootId(),
-            amount: $command->amount(),
+            $this->aggregateRootId(),
+            $command->amount(),
             // Both from our own state rather than from the command: what was held and
             // what it was held on are facts about this intent, not a caller's choice,
             // and a caller free to restate them could contradict them.
-            authorizedAmount: $this->amount,
-            instrument: $this->instrument,
+            $this->amount,
+            $this->instrument,
         ));
 
         $this->recordThat(new PaymentIntentCaptured($command->amount(), $outcome->convertedAmount));
@@ -484,13 +484,10 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
 
         try {
             $port->cancel(new CancelRequest($this->aggregateRootId()));
+            $this->recordThat(new PaymentIntentCancelled($command->reason()));
         } catch (GatewayDeclinedException $e) {
             $this->recordThat($this->failedFromState($e->reason, ErrorCode::GatewayDeclined));
-
-            return;
         }
-
-        $this->recordThat(new PaymentIntentCancelled($command->reason()));
     }
 
     /**
@@ -533,33 +530,31 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
 
         try {
             $outcome = $port->confirm(new ConfirmChallengeRequest(
-                paymentIntentId: $this->aggregateRootId(),
-                challengeResult: $result,
-                challenge: $this->challenge,
-                amount: $this->amount,
-                instrument: $this->instrument,
-                captureMethod: $this->captureMethod,
-                billingAddress: $this->billingAddress,
-                initiation: $this->initiation,
+                $this->aggregateRootId(),
+                $result,
+                $this->amount,
+                $this->instrument,
+                $this->captureMethod,
+                $this->billingAddress,
+                $this->initiation,
+                $this->challenge,
             ));
+
+            $this->chargeOrAuthorize(
+                $this->captureMethod,
+                $this->amount,
+                $this->instrument,
+                $this->billingAddress,
+                $this->metadata,
+                $this->merchantDescriptor(),
+                $this->description,
+                $result,
+                $this->initiation,
+                $outcome->convertedAmount,
+            );
         } catch (GatewayDeclinedException $e) {
             $this->recordThat($this->failedFromState($e->reason, ErrorCode::GatewayDeclined, $result));
-
-            return;
         }
-
-        $this->chargeOrAuthorize(
-            $this->captureMethod,
-            $this->amount,
-            $this->instrument,
-            $this->billingAddress,
-            $this->metadata,
-            $this->merchantDescriptor(),
-            $this->description,
-            $result,
-            $this->initiation,
-            $outcome->convertedAmount,
-        );
     }
 
     public function refund(CreateRefundCommand $command, RefundPort $port): void
@@ -574,18 +569,15 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
 
         try {
             $port->refund(new RefundRequest(
-                paymentIntentId: $this->aggregateRootId(),
-                refundId: $command->refundId(),
-                amount: $command->amount(),
-                retryInstrument: $command->retryInstrument(),
+                $this->aggregateRootId(),
+                $command->refundId(),
+                $command->amount(),
+                $command->retryInstrument(),
             ));
+            $this->recordThat(new RefundProcessed($command->refundId(), $command->amount(), $command->retryInstrument()));
         } catch (GatewayDeclinedException $e) {
             $this->recordThat(new RefundFailed($command->refundId(), $command->amount(), $e->reason, ErrorCode::GatewayDeclined, $command->retryInstrument()));
-
-            return;
         }
-
-        $this->recordThat(new RefundProcessed($command->refundId(), $command->amount(), $command->retryInstrument()));
     }
 
     public function recordRefundFee(RecordRefundFeeCommand $command): void
@@ -653,10 +645,8 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
      * connection facts merely fail to match. Skipping because an input is absent would let a
      * forgotten field bypass the firewall.
      */
-    private function firewallDecision(
-        CreatePaymentIntentCommand $command,
-        PaymentIntentFirewallPort $firewall,
-    ): ?FirewallDecision {
+    private function firewallDecision(CreatePaymentIntentCommand $command, PaymentIntentFirewallPort $firewall): ?FirewallDecision
+    {
         $card = CardSummaryExtractor::from($command->instrument());
 
         if ($card === null) {
@@ -664,13 +654,13 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         }
 
         return $firewall->evaluate(new PaymentIntentFirewallRequest(
-            amount: $command->amount(),
-            card: $card,
-            billing: $command->billingAddress(),
-            connection: $command->connection(),
-            paymentIntentId: $command->paymentIntentId(),
-            gatewayId: $command->gatewayId(),
-            initiation: $command->initiation(),
+            $command->amount(),
+            $card,
+            $command->billingAddress(),
+            $command->connection(),
+            $command->paymentIntentId(),
+            $command->gatewayId(),
+            $command->initiation(),
         ));
     }
 
@@ -686,7 +676,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
     {
         return $decision->reason === null || $decision->reason === ''
             ? 'Refused by the payment firewall.'
-            : "Refused by the payment firewall: {$decision->reason}";
+            : "Refused by the payment firewall: $decision->reason";
     }
 
     /**
@@ -700,7 +690,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
     {
         return $outcome->reason === null || $outcome->reason === ''
             ? 'Authentication was refused.'
-            : "Authentication was refused: {$outcome->reason}";
+            : "Authentication was refused: $outcome->reason";
     }
 
     private function chargeOrAuthorize(
