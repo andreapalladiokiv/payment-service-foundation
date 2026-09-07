@@ -5,7 +5,16 @@
          colors="true"
          cacheDirectory=".phpunit.cache"
 >
+    <!-- Parsing whole vendor trees for the Arch suite needs more than the
+         PHP default. -->
+    <php>
+        <ini name="memory_limit" value="512M"/>
+    </php>
+
     <testsuites>
+        <testsuite name="Arch">
+            <directory>tests/Arch</directory>
+        </testsuite>
         <testsuite name="Common">
             <directory>src/Common/tests</directory>
         </testsuite>
