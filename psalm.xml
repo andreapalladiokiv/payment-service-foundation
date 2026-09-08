@@ -37,7 +37,6 @@
         <MethodSignatureMismatch>
             <errorLevel type="suppress">
                 <file name="src/Domain/src/Checkout/ValueObject/CheckoutId.php"/>
-                <file name="src/Domain/src/Customer/ValueObject/CustomerId.php"/>
                 <file name="src/Domain/src/PaymentIntent/ValueObject/PaymentIntentId.php"/>
                 <file name="src/Domain/src/Subscription/ValueObject/SubscriptionId.php"/>
             </errorLevel>
@@ -54,7 +53,6 @@
         <InvalidArgument>
             <errorLevel type="suppress">
                 <file name="src/Laravel/src/EventSourcing/Repositories/CheckoutAggregateRepository.php"/>
-                <file name="src/Laravel/src/EventSourcing/Repositories/CustomerAggregateRepository.php"/>
                 <file name="src/Laravel/src/EventSourcing/Repositories/PaymentIntentAggregateRepository.php"/>
                 <file name="src/Laravel/src/EventSourcing/Repositories/SubscriptionAggregateRepository.php"/>
             </errorLevel>

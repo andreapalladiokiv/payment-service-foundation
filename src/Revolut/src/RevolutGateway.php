@@ -7,6 +7,7 @@ namespace Techork\PaymentService\Revolut;
 use Omnipay\Common\AbstractGateway;
 use Omnipay\Common\Message\AbstractRequest;
 use Override;
+use Techork\PaymentService\Gateway\Contract\CustomerRepository;
 use Techork\PaymentService\Gateway\Contract\Gateway;
 use Techork\PaymentService\Revolut\Exception\UnsupportedOperationException;
 
@@ -50,6 +51,14 @@ final class RevolutGateway extends AbstractGateway implements Gateway
         return 'revolut';
     }
 
+    #[Override]
+    public function setCustomerRepository(CustomerRepository $repository): void
+    {
+        // These cards are auto-issued with no holder at all (Revolut wants a
+        // `product` code instead), so there is no payment customer to look up
+        // — the contract method exists for cross-gateway uniformity and the
+        // repository is intentionally ignored.
+    }
 
     #[Override]
     public function getDefaultParameters(): array

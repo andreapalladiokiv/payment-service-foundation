@@ -10,17 +10,10 @@ use Techork\PaymentService\Common\Contract\DecryptInterface;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
 use Techork\PaymentService\Common\ValueObject\Country;
-use Techork\PaymentService\Common\ValueObject\CustomerIdentity;
-use Techork\PaymentService\Common\ValueObject\PaymentMethodId;
-use Techork\PaymentService\Common\ValueObject\PaymentMethod;
-use Techork\PaymentService\Common\ValueObject\Cash;
 use Techork\PaymentService\Common\ValueObject\CreditCard\CheckResult;
 use Techork\PaymentService\Common\ValueObject\Email;
 use Techork\PaymentService\Common\ValueObject\HostedPayment;
 use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
-use Techork\PaymentService\Gateway\Exception\RegistrationNeedsCustomer;
-use Omnipay\Common\Message\AbstractRequest;
-use Techork\PaymentService\Gateway\Contract\RegistersCustomers;
 use Techork\PaymentService\Gateway\Exception\UnsupportedInstrument;
 use Techork\PaymentService\Gateway\Exception\UnsupportedOperation;
 use Techork\PaymentService\Gateway\Contract\CardChecksProvider;
@@ -209,35 +202,6 @@ it('passes billing address through to charge', function () {
     $result = $gateway->charge(GatewayId::generate(), $instrument, new Money(100, new Currency('USD')), billingAddress: $billing);
 
     expect($result->success)->toBeTrue();
-});
-
-/**
- * The acquirer that records who paid does it on the capture as well as on the authorization —
- * ConnexPay's `CustomerID`, whose `OrderNumber` sibling is documented as overwriting the auth's
- * value on capture. This asserts the id *reaches the request*, which is the half a request-level
- * test cannot see: `ConnexPay\CaptureRequest` had a passing test for emitting `CustomerID` while
- * nothing on the way in ever set the parameter, so the field was absent in production and green
- * in the suite.
- */
-it('hands the customer id to the capture request, not only to the authorization', function () {
-    $captured = null;
-    $request = Mockery::mock(RequestInterface::class);
-    $request->shouldReceive('send')->andReturn(makeSuccessResponse('cap_customer'));
-    $omnipay = Mockery::mock(GatewayContract::class);
-    $omnipay->shouldReceive('capture')->andReturnUsing(function (array $options) use (&$captured, $request) {
-        $captured = $options;
-
-        return $request;
-    });
-
-    makeRouter(omnipay: $omnipay)->capture(
-        GatewayId::generate(),
-        'txn_1',
-        new Money(100, new Currency('USD')),
-        customerId: 'cus-of-ours',
-    );
-
-    expect($captured['customerId'])->toBe('cus-of-ours');
 });
 
 // ──────────────────────────────────────────────
@@ -892,7 +856,7 @@ it('registers a payment method and hands the gateway everything the request need
     $instrument->shouldReceive('toPayload')->andReturn([]);
     $address = new BillingAddress('Ada', 'Lovelace', '1 Main St', 'London', new Country('GB'), 'E1 6AN');
 
-    $result = $router->createPaymentMethod(GatewayId::generate(), $instrument, 'cus-of-ours', $address, 'cuid-2');
+    $result = $router->createPaymentMethod(GatewayId::generate(), $instrument, $address, 'cuid-2');
 
     expect($result->success)->toBeTrue()
         ->and($result->reference)->toBe('pm_1')
@@ -900,181 +864,6 @@ it('registers a payment method and hands the gateway everything the request need
         ->and($seen['billingAddress'])->toBe($address)
         ->and($seen['clientUniqueId'])->toBe('cuid-2')
         ->and($seen)->toHaveKeys(['gateway', 'decrypter', 'referenceResolver']);
-});
-
-/**
- * Registering an instrument is *the* operation where the customer is not optional.
- *
- * Stripe will not make a PaymentMethod reusable without one, and Nuvei cannot produce a
- * `userPaymentOptionId` without a `userTokenId`. Both adapters already read `customerId` out of
- * their options — and the router never put it there, so the resolution got `null` every time and
- * the vaulted instrument came back attached to nobody. A stored card belongs to someone; that is
- * what makes it storable.
- */
-it('hands the customer to a registration, because a stored instrument belongs to somebody', function () {
-    $seen = null;
-    $router = makeRouter(omnipay: makeOmnipayCapturing('createPaymentMethod', makeSuccessResponse('pm_c'), $seen));
-    $instrument = Mockery::mock(PaymentInstrument::class);
-    $instrument->shouldReceive('toPayload')->andReturn([]);
-
-    $router->createPaymentMethod(GatewayId::generate(), $instrument, 'cus-of-ours');
-
-    expect($seen['customerId'])->toBe('cus-of-ours');
-});
-
-/**
- * And it is an invariant rather than a nicety, so the refusal is typed and does not pass for a
- * decline. An empty string is the case a nullable parameter used to swallow: the caller had
- * nothing to say and the provider built a customer out of the address that rode along.
- */
-it('refuses to register an instrument for nobody', function (string $customerId) {
-    $router = makeRouter(omnipay: makeOmnipayWithMethod('createPaymentMethod', makeSuccessResponse('pm_d')));
-    $instrument = Mockery::mock(PaymentInstrument::class);
-    $instrument->shouldReceive('toPayload')->andReturn([]);
-
-    expect(fn () => $router->createPaymentMethod(GatewayId::generate(), $instrument, $customerId))
-        ->toThrow(RegistrationNeedsCustomer::class);
-})->with([
-    'empty' => [''],
-    'whitespace' => ['   '],
-]);
-
-
-
-
-/**
- * A renewal is the payment that needs the customer most, and it had no way to get one.
- *
- * `authorizeRebilling` took no customer and put none in its options — while it routes through the
- * gateways' `authorize()`, which is exactly where both read that key. For Nuvei that is not a
- * degradation but an impossibility: a subsequent rebilling payment uses a `userPaymentOptionId`,
- * and that exists only under a `userTokenId`.
- */
-it('hands the customer to a renewal', function () {
-    $seen = null;
-    $router = makeRouter(omnipay: makeOmnipayCapturing('authorize', makeSuccessResponse('reb_1'), $seen));
-    $instrument = Mockery::mock(PaymentInstrument::class);
-    $instrument->shouldReceive('toPayload')->andReturn([]);
-
-    $router->authorizeRebilling(
-        GatewayId::generate(),
-        $instrument,
-        new Money(2999, new Currency('USD')),
-        PaymentInitiation::MerchantRecurring,
-        'genesis-ref',
-        customerId: 'cus-of-the-subscriber',
-    );
-
-    expect($seen['customerId'])->toBe('cus-of-the-subscriber')
-        ->and($seen['rebilling'])->toBeTrue();
-});
-
-/**
- * Bringing a customer into existence at a provider is its own operation.
- *
- * It used to happen inside `createPaymentMethod`, as a lookup-or-create hidden in the adapter — so
- * attaching an instrument could silently mint a Stripe Customer or a Nuvei user as a side effect.
- * The customer is a thing with its own lifecycle now, and its own aggregate; registering it at a
- * provider is a step the host takes deliberately, not a consequence of saving a card.
- */
-it('registers a customer at the gateway as an operation of its own', function () {
-    $seen = null;
-    // An `AbstractRequest`, not a `RequestInterface`: that is what `RegistersCustomers` declares,
-    // and Mockery enforces the declared return type.
-    $request = Mockery::mock(AbstractRequest::class);
-    $request->shouldReceive('send')->andReturn(makeSuccessResponse('cus_new'));
-
-    // Mocked as both, because only a `RegistersCustomers` may be asked.
-    $omnipay = Mockery::mock(GatewayContract::class, RegistersCustomers::class);
-    $omnipay->shouldReceive('createCustomer')->andReturnUsing(function (array $options) use (&$seen, $request) {
-        $seen = $options;
-
-        return $request;
-    });
-
-    $router = makeRouter(omnipay: $omnipay);
-    $identity = new CustomerIdentity('Ada', 'Lovelace', new Email('ada@example.test'));
-
-    $result = $router->registerCustomer(GatewayId::generate(), 'cus-of-ours', $identity);
-
-    expect($result->success)->toBeTrue()
-        ->and($result->reference)->toBe('cus_new')
-        ->and($seen['customerId'])->toBe('cus-of-ours')
-        ->and($seen['customerIdentity'])->toBe($identity);
-});
-
-/**
- * And a provider that cannot be asked for a customer on its own is refused rather than degraded.
- *
- * Turning it into a failed result would read as the provider declining a customer it was never
- * told about, which is the masking `UnsupportedOperation` exists to prevent.
- *
- * The boundary is "creatable independently", not "has one". ConnexPay has a customer object —
- * `/api/v1/verify` returns `card.customer.guid` — and is still refused here, because every
- * endpoint that creates one takes a card. Its customers are registered by registering their
- * payment method, which is what the next test is about.
- */
-it('refuses to register a customer at a gateway that cannot create one on its own', function () {
-    // A gateway that is not a `RegistersCustomers` — the shape ConnexPay, Paynet and Revolut have.
-    $omnipay = Mockery::mock(GatewayContract::class);
-    $omnipay->shouldNotReceive('createCustomer');
-
-    $router = makeRouter(omnipay: $omnipay);
-
-    expect(fn () => $router->registerCustomer(
-        GatewayId::generate(),
-        'cus-of-ours',
-        new CustomerIdentity('Ada', 'Lovelace'),
-    ))->toThrow(UnsupportedOperation::class);
-});
-
-/**
- * The other half of that refusal: for ConnexPay this call *is* the customer registration, so it
- * has to carry who the customer is and not only which id they have.
- *
- * `CreatePaymentMethodRequest` builds `Card.Customer` — the block ConnexPay creates or links its
- * customer from — and until the identity reached it the only name available was the one on
- * `billingAddress`. That is the address-derived provider customer `docs/customer-domain-plan`
- * removed for Nuvei and Stripe, surviving on the gateway the plan had written off as having no
- * customer at all.
- *
- * Asserted here, where the value enters, and not only in the adapter — the mistake F6 records is
- * a request-level test passing while nothing upstream ever set the field.
- */
-it('hands the customer identity to a registration, because for one provider this is the customer registration', function () {
-    $seen = null;
-    $router = makeRouter(omnipay: makeOmnipayCapturing('createPaymentMethod', makeSuccessResponse('pm_i'), $seen));
-    $instrument = Mockery::mock(PaymentInstrument::class);
-    $instrument->shouldReceive('toPayload')->andReturn([]);
-    $identity = new CustomerIdentity('Ada', 'Lovelace', new Email('ada@example.test'));
-    // A different person from the identity, which is the whole point: the address is the
-    // cardholder's and the identity is the customer's, and they need not be the same human.
-    $address = new BillingAddress('Charles', 'Babbage', '1 Main St', 'London', new Country('GB'), 'E1 6AN');
-
-    $router->createPaymentMethod(GatewayId::generate(), $instrument, 'cus-of-ours', $address, 'cuid-3', $identity);
-
-    expect($seen['customerIdentity'])->toBe($identity)
-        ->and($seen['customerId'])->toBe('cus-of-ours')
-        ->and($seen['billingAddress'])->toBe($address);
-});
-
-/**
- * And absent, the key is still present and null rather than missing.
- *
- * An adapter that reads `customerIdentity` must see "nobody was named" as a value, not as an
- * absent option — that is the difference between falling back to the address deliberately and
- * falling back to it because the option never arrived.
- */
-it('passes a null customer identity through rather than omitting it', function () {
-    $seen = null;
-    $router = makeRouter(omnipay: makeOmnipayCapturing('createPaymentMethod', makeSuccessResponse('pm_j'), $seen));
-    $instrument = Mockery::mock(PaymentInstrument::class);
-    $instrument->shouldReceive('toPayload')->andReturn([]);
-
-    $router->createPaymentMethod(GatewayId::generate(), $instrument, 'cus-of-ours');
-
-    expect($seen)->toHaveKey('customerIdentity')
-        ->and($seen['customerIdentity'])->toBeNull();
 });
 
 it('carries the customer reference a registration response reports', function () {
@@ -1090,7 +879,7 @@ it('carries the customer reference a registration response reports', function ()
     $instrument = Mockery::mock(PaymentInstrument::class);
     $instrument->shouldReceive('toPayload')->andReturn([]);
 
-    expect($router->createPaymentMethod(GatewayId::generate(), $instrument, 'cus-of-ours')->customerReference)->toBe('cus_42');
+    expect($router->createPaymentMethod(GatewayId::generate(), $instrument)->customerReference)->toBe('cus_42');
 });
 
 it('folds the AVS and CVC checks onto a registration result', function () {
@@ -1107,7 +896,7 @@ it('folds the AVS and CVC checks onto a registration result', function () {
     $instrument = Mockery::mock(PaymentInstrument::class);
     $instrument->shouldReceive('toPayload')->andReturn([]);
 
-    $result = $router->createPaymentMethod(GatewayId::generate(), $instrument, 'cus-of-ours');
+    $result = $router->createPaymentMethod(GatewayId::generate(), $instrument);
 
     expect($result->addressLineCheck)->toBe(CheckResult::Pass)
         ->and($result->postalCodeCheck)->toBe(CheckResult::Fail)
@@ -1120,7 +909,7 @@ it('refuses a registration the gateway called successful without naming it', fun
     $instrument = Mockery::mock(PaymentInstrument::class);
     $instrument->shouldReceive('toPayload')->andReturn([]);
 
-    $result = $router->createPaymentMethod(GatewayId::generate(), $instrument, 'cus-of-ours');
+    $result = $router->createPaymentMethod(GatewayId::generate(), $instrument);
 
     expect($result->success)->toBeFalse()
         ->and($result->message)->toBe('The gateway reported success without naming a transaction reference.');

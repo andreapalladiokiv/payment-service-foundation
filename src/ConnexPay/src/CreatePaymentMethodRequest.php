@@ -16,7 +16,6 @@ use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\Contract\PaymentInstrumentVisitor;
 use Techork\PaymentService\Common\ValueObject\Cash;
 use Techork\PaymentService\Common\ValueObject\CreditCard;
-use Techork\PaymentService\Common\ValueObject\CustomerIdentity;
 use Techork\PaymentService\Common\ValueObject\HostedPayment;
 use Techork\PaymentService\Common\ValueObject\PaymentMethod;
 use Techork\PaymentService\Common\ValueObject\Token;
@@ -31,29 +30,8 @@ use Techork\PaymentService\Gateway\Exception\UnsupportedInstrument;
  * `addPaymentMethod`; a local pass-through (what this request used to be)
  * skips customer creation entirely.
  *
- * **This is where a ConnexPay customer is born, and it is the only place.**
- * ConnexPay publishes no endpoint that creates one from an identity alone —
- * every one of them takes a card — so `PaymentGatewayInterface::registerCustomer`
- * is refused for this gateway and the registration does that job instead. The
- * guid comes back on {@see CreatePaymentMethodResponse::getCustomerReference()},
- * reaches the caller as `RegistrationResult::$customerReference`, and pairs with
- * the `customerId` the caller already passed to this same call — so the caller
- * has both halves and can record them in `GatewayCustomerRepository`.
- *
- * **What that made of `billingAddress` until now.** `Card.Customer` was built
- * from the address alone, so the customer ConnexPay created was whoever the
- * card happened to be billed to, and `CustomerIdentity` — the name, email and
- * phone the merchant actually recorded — never reached it. That is the
- * address-derived provider customer `docs/customer-domain-plan` exists to end,
- * removed for Nuvei and Stripe in F5 and surviving here because nothing in the
- * plan expected a customer object on this gateway at all. `customerIdentity`
- * now names the person and the address keeps naming the address; see
- * {@see ConnexPayRequestParameters::formatCustomer()} for why both are needed
- * rather than one replacing the other.
- *
  * Expects: instrument (PaymentInstrument), gateway (Gateway). Optional:
- * customerIdentity (the person on `Card.Customer`), billingAddress (the
- * address on it, and the AVS payload).
+ * billingAddress (becomes `Card.Customer`).
  *
  * @implements PaymentInstrumentVisitor<array>
  */
@@ -74,13 +52,8 @@ final class CreatePaymentMethodRequest extends AbstractRequest implements Paymen
         $card = $instrument->accept($this);
 
         $billingAddress = $this->getParameter('billingAddress');
-        $identity = $this->getCustomerIdentity();
-
-        // Either one is enough to be worth sending: an identity with no address still tells
-        // ConnexPay who this customer is, and an address with no identity is the AVS payload plus
-        // the fallback person. Only both absent leaves nothing to say.
-        if ($billingAddress !== null || $identity !== null) {
-            $card['Customer'] = $this->formatCustomer($billingAddress, $identity);
+        if ($billingAddress !== null) {
+            $card['Customer'] = $this->formatCustomer($billingAddress);
         }
 
         // A registration that was authenticated must carry the result through,
@@ -179,26 +152,5 @@ final class CreatePaymentMethodRequest extends AbstractRequest implements Paymen
     public function visitHostedPayment(HostedPayment $hosted): never
     {
         throw UnsupportedInstrument::forGateway('connexpay', 'createPaymentMethod', $hosted);
-    }
-
-    /**
-     * Declared here and not on {@see ConnexPayRequestParameters}, deliberately.
-     *
-     * Omnipay applies an option only where a matching setter exists, so putting this on the shared
-     * trait would have every ConnexPay request accept `customerIdentity` and all but this one
-     * ignore it — the "injected dependency nothing reads" that let a dead customer path look wired
-     * for as long as it did. Narrow instead: the request that builds a customer is the request
-     * that can be told who it is.
-     */
-    public function setCustomerIdentity(?CustomerIdentity $value): self
-    {
-        return $this->setParameter('customerIdentity', $value);
-    }
-
-    public function getCustomerIdentity(): ?CustomerIdentity
-    {
-        $identity = $this->getParameter('customerIdentity');
-
-        return $identity instanceof CustomerIdentity ? $identity : null;
     }
 }

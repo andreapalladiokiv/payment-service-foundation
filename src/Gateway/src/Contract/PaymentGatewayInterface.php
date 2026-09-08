@@ -7,7 +7,6 @@ namespace Techork\PaymentService\Gateway\Contract;
 use Money\Money;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
-use Techork\PaymentService\Common\ValueObject\CustomerIdentity;
 use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSResult;
 use Techork\PaymentService\Gateway\ValueObject\CardSpendCategory;
@@ -15,17 +14,6 @@ use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 use Techork\PaymentService\Common\ValueObject\CardBrand;
 
 /**
- * `$customerId` names whose payment this is — our own customer id, as a string for the reason
- * {@see Webhook\Contract\TransactionIdResolver} gives. Adapters that have a customer concept
- * forward it as that provider's own field: Stripe looks up or creates a `cus_...` for it, Nuvei
- * sends it as `userTokenId`, ConnexPay as `CustomerID`. Ones that do not, ignore it.
- *
- * It is per-payment rather than configuration, which is what separates it from a return address
- * — see {@see \Techork\PaymentService\Stripe\StripeGateway::setAuthenticationUrl}, which is one
- * value per deployment and belongs with the credential. Null means the caller is not telling us,
- * and every adapter must still work: today two of them would build a provider-side customer out
- * of whatever address rode along with the payment, and this is how they learn to stop.
- *
  * Every mutating gateway operation accepts an optional `$clientUniqueId` —
  * the caller's idempotency key. Concrete implementations forward it as the
  * gateway-native idempotency mechanism (Stripe `Idempotency-Key` HTTP
@@ -69,70 +57,13 @@ use Techork\PaymentService\Common\ValueObject\CardBrand;
  */
 interface PaymentGatewayInterface
 {
-    /**
-     * Brings one of our customers into existence at this gateway and reports the id it got.
-     *
-     * Its own operation, because a customer has its own lifecycle. It used to happen inside
-     * {@see createPaymentMethod} as a lookup-or-create buried in the adapter, so saving a card
-     * could mint a Stripe Customer or a Nuvei user as a side effect — and on a payment it could
-     * mint one that could not possibly own the instrument being charged. Attaching an instrument
-     * and registering a person are different acts; only one of them is allowed to create anything.
-     *
-     * The identity is passed in rather than looked up. Whoever calls this holds the customer, so
-     * there is nothing for the gateway layer to go and find — which is what retired
-     * `CustomerIdentitySource`.
-     *
-     * Gateways with no way to create a customer on its own do not implement it, and that is a
-     * narrower claim than "no customer object". ConnexPay has one — `/api/v1/verify` returns
-     * `card.customer.guid`, and {@see createPaymentMethod} is where it comes into existence — but
-     * every endpoint that makes one takes a card, so there is nothing to call with an identity and
-     * no instrument. Registering a ConnexPay customer therefore happens by registering their
-     * payment method, which is why that operation takes the identity too.
-     */
-    public function registerCustomer(GatewayId $gatewayId, string $customerId, CustomerIdentity $identity): GatewayResult;
-
-    /**
-     * No customer here, and the asymmetry with {@see createPaymentMethod} is deliberate.
-     *
-     * A token is a one-use handle that expires; a collection of them belonging to a person would
-     * fill with dead entries, which is why `CustomerAggregate` refuses to hold them. So tokenizing
-     * is an operation on an instrument and nothing else, while registering a payment method is an
-     * operation on somebody's instrument.
-     */
     public function tokenize(GatewayId $gatewayId, PaymentInstrument $instrument, ?BillingAddress $billingAddress = null, ?string $clientUniqueId = null): RegistrationResult;
 
-    /**
-     * `$customerId` is required, unlike everywhere else it appears.
-     *
-     * Storing an instrument for later use is storing it *for someone*: Stripe will not make a
-     * PaymentMethod reusable without a customer, and Nuvei cannot hand back a
-     * `userPaymentOptionId` without a `userTokenId`. A registration with nobody named is refused
-     * with {@see \Techork\PaymentService\Gateway\Exception\RegistrationNeedsCustomer} rather
-     * than attempted — the provider would otherwise build a customer out of whatever address rode
-     * along, which is the behaviour `docs/customer-domain-plan` exists to end.
-     *
-     * On a payment it stays optional, because a payment can legitimately belong to nobody we have
-     * a record of: a one-off card charge is complete without a stored customer.
-     *
-     * **`$identity` is here because for one provider this call is also the customer registration.**
-     * ConnexPay creates its customer inside the same `/api/v1/verify` that vaults the card and
-     * hands back its guid on the response as {@see RegistrationResult::$customerReference}. Until
-     * the identity arrived here, the only name that reached it was the one on `$billingAddress` —
-     * so the provider-side customer was built out of whatever address rode along with the card,
-     * the behaviour `docs/customer-domain-plan` exists to end, surviving in the one place nothing
-     * was looking. Passing it makes the customer the source of the customer.
-     *
-     * Optional rather than required, and only because a name is not a precondition for storing a
-     * card: Stripe and Nuvei build their billing details from the address and ignore it. Absent, a
-     * ConnexPay customer falls back to the address the way {@see \Techork\PaymentService\Nuvei\CreateCustomerRequest}
-     * does — the last resort rather than the normal case, and now visible in the signature instead
-     * of being the only path.
-     */
-    public function createPaymentMethod(GatewayId $gatewayId, PaymentInstrument $instrument, string $customerId, ?BillingAddress $billingAddress = null, ?string $clientUniqueId = null, ?CustomerIdentity $identity = null): RegistrationResult;
+    public function createPaymentMethod(GatewayId $gatewayId, PaymentInstrument $instrument, ?BillingAddress $billingAddress = null, ?string $clientUniqueId = null): RegistrationResult;
 
-    public function authorize(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated, ?string $customerId = null): AuthorizationResult;
+    public function authorize(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated): AuthorizationResult;
 
-    public function charge(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated, ?string $customerId = null): AuthorizationResult;
+    public function charge(GatewayId $gatewayId, PaymentInstrument $instrument, Money $amount, ?string $clientUniqueId = null, ?BillingAddress $billingAddress = null, ?ThreeDSResult $threeDS = null, ?string $statementDescription = null, ?string $description = null, PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated): AuthorizationResult;
 
     /**
      * Authorizes a payment that belongs to a rebilling series — a
@@ -174,7 +105,6 @@ interface PaymentGatewayInterface
         ?ThreeDSResult $threeDS = null,
         ?string $statementDescription = null,
         ?string $description = null,
-        ?string $customerId = null,
     ): AuthorizationResult;
 
     /**
@@ -183,7 +113,7 @@ interface PaymentGatewayInterface
      *  a partial request and fall back to void + a fresh sale with
      *  `$instrument`. Gateways with native partial capture ignore both.
      */
-    public function capture(GatewayId $gatewayId, string $transactionReference, Money $amount, ?string $clientUniqueId = null, ?Money $authorizedAmount = null, ?PaymentInstrument $instrument = null, ?string $customerId = null): GatewayResult;
+    public function capture(GatewayId $gatewayId, string $transactionReference, Money $amount, ?string $clientUniqueId = null, ?Money $authorizedAmount = null, ?PaymentInstrument $instrument = null): GatewayResult;
 
     public function cancel(GatewayId $gatewayId, string $transactionReference, ?string $clientUniqueId = null): GatewayResult;
 

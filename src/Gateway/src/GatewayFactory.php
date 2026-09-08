@@ -6,8 +6,7 @@ namespace Techork\PaymentService\Gateway;
 
 use Omnipay\Common\GatewayFactory as OmnipayGatewayFactory;
 use RuntimeException;
-use Techork\PaymentService\Gateway\Contract\GatewayCustomerRepository;
-use Techork\PaymentService\Gateway\Contract\ResolvesGatewayCustomers;
+use Techork\PaymentService\Gateway\Contract\CustomerRepository;
 use Techork\PaymentService\Gateway\Contract\Gateway;
 use Techork\PaymentService\Gateway\Contract\GatewayCredential;
 
@@ -26,9 +25,8 @@ class GatewayFactory extends OmnipayGatewayFactory
     /** @var array<string, Gateway> */
     private array $instances = [];
 
-    public function __construct(
-        private readonly ?GatewayCustomerRepository $gatewayCustomers = null,
-    ) {
+    public function __construct(private readonly CustomerRepository $repository)
+    {
     }
 
     public function createForCredential(GatewayCredential $credential): Gateway
@@ -49,12 +47,7 @@ class GatewayFactory extends OmnipayGatewayFactory
 
             $gateway = $this->instantiate($class);
             $gateway->initialize($credential->getCredentials());
-            // Only to the gateways that asked. Three of the five have no customer of their own,
-            // and handing one to them anyway is how ConnexPay came to inject a repository that
-            // nothing reads.
-            if ($gateway instanceof ResolvesGatewayCustomers) {
-                $this->gatewayCustomers === null || $gateway->setGatewayCustomerRepository($this->gatewayCustomers);
-            }
+            $gateway->setCustomerRepository($this->repository);
 
             $this->instances[$key] = $gateway;
         }

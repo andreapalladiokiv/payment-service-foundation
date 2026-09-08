@@ -94,8 +94,7 @@ The Laravel bridge supplies the persistence-side implementations:
 | `GatewayCredential` / `GatewayCredentialRepository` | tenant credential: `GatewayId` → gateway name + credential array; `all()` feeds webhook routing |
 | `GatewayInstrumentRepository` | instrument ↔ gateway reference (token) storage |
 | `GatewayTransactionRepository` | payment-intent / refund → gateway transaction reference (+ metadata) |
-| `GatewayCustomerRepository` | our customer id → that gateway's customer reference, one per gateway. Replaced `CustomerRepository`, which was keyed by an *instrument*: a raw-card payment resolved nobody and an expiring token resolved somebody |
-| `RegistersCustomers` | a gateway that *has* a customer object, so one can be created — Stripe and Nuvei only. ConnexPay's `CustomerID` is a field on a transaction, so asking it is refused rather than degraded |
+| `CustomerRepository` | gateway-side customer references, linked to instruments |
 | `VirtualCardReferenceRepository` | virtual card id ↔ gateway card reference (both directions) |
 
 `GatewayFactory` extends Omnipay's factory with `createForCredential()`:
