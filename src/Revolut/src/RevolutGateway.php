@@ -17,6 +17,7 @@ use Techork\PaymentService\Gateway\Command\RefundCommand;
 use Techork\PaymentService\Gateway\Command\PlacementCommand;
 use Techork\PaymentService\Gateway\Command\RebillingCommand;
 use Techork\PaymentService\Gateway\Contract\AuthorizationResult;
+use Techork\PaymentService\Gateway\Command\RegisterCustomerCommand;
 use Techork\PaymentService\Gateway\Command\VaultCommand;
 use Techork\PaymentService\Gateway\Contract\RegistrationResult;
 use Techork\PaymentService\Gateway\Command\IssueCardCommand;
@@ -270,6 +271,16 @@ final class RevolutGateway implements Gateway
     public function registerPaymentMethod(VaultCommand $command): RegistrationResult
     {
         throw UnsupportedOperationException::operation('registerPaymentMethod');
+    }
+
+    /**
+     * Revolut has no customer object, so this is the same absence as the two above rather than a
+     * capability gap: there is nothing to create and nothing to key.
+     */
+    #[Override]
+    public function registerCustomer(RegisterCustomerCommand $command): RegistrationResult
+    {
+        throw UnsupportedOperationException::operation('registerCustomer');
     }
 
     /**

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Techork\PaymentService\Gateway\Command;
 
 use Money\Money;
+use Techork\PaymentService\Common\Contract\CustomerIdentifier;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 
@@ -28,6 +29,11 @@ final readonly class CaptureCommand
      *   a native partial capture need it — ConnexPay compares the two to decide between a plain
      *   capture and voiding the authorization to run a fresh sale — and that fallback is also
      *   why it may need `$instrument`. Providers with native partial capture ignore both.
+     * @param  ?CustomerIdentifier  $customerId  Whose payment this is, for the acquirers that record it on a
+     *   capture as well as on the authorization — ConnexPay accepts `CustomerID` on Capture and
+     *   not on Void or Return. A caller that named a customer on the authorization sends the same
+     *   value here, so an overwrite writes what was already there; one that named none never had
+     *   a value to lose.
      */
     public function __construct(
         public GatewayId $gatewayId,
@@ -36,6 +42,7 @@ final readonly class CaptureCommand
         public ?string $clientUniqueId = null,
         public ?Money $authorizedAmount = null,
         public ?PaymentInstrument $instrument = null,
+        public ?CustomerIdentifier $customerId = null,
     ) {}
 
 
@@ -51,6 +58,7 @@ final readonly class CaptureCommand
             'clientUniqueId' => $this->clientUniqueId,
             'authorizedAmount' => $this->authorizedAmount,
             'instrument' => $this->instrument?->toPayload(),
+            'customerId' => $this->customerId?->toString(),
         ];
     }
 }

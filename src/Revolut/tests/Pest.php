@@ -5,7 +5,7 @@ declare(strict_types=1);
 use Techork\PaymentService\Revolut\RevolutGateway;
 use Techork\PaymentService\Revolut\RevolutHttpClientInterface;
 use Techork\PaymentService\Common\Contract\DecryptInterface;
-use Techork\PaymentService\Gateway\Contract\CustomerRepository;
+use Techork\PaymentService\Gateway\Contract\GatewayCustomerRepository;
 use Techork\PaymentService\Gateway\Contract\GatewayCredential;
 use Techork\PaymentService\Gateway\Contract\GatewayInstrumentRepository;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
@@ -25,7 +25,7 @@ function makeRevolutGateway(?RevolutHttpClientInterface $client = null, array $p
         Mockery::mock(GatewayCredential::class, ['getId' => GatewayId::generate()]),
         Mockery::mock(DecryptInterface::class),
         Mockery::mock(GatewayInstrumentRepository::class, ['find' => null]),
-        Mockery::mock(CustomerRepository::class, ['findByInstrument' => null]),
+        Mockery::mock(GatewayCustomerRepository::class, ['find' => null]),
         [
             'clientId' => 'client-test',
             'privateKey' => 'key-test',

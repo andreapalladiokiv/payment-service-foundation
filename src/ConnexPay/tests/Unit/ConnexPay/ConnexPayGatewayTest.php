@@ -4,12 +4,19 @@ declare(strict_types=1);
 
 use Money\Currency;
 use Money\Money;
+use Techork\PaymentService\Common\Contract\CustomerIdentifier;
 use Techork\PaymentService\Common\ValueObject\Cash;
+use Techork\PaymentService\Common\ValueObject\CustomerIdentity;
+use Techork\PaymentService\Common\ValueObject\Email;
 use Techork\PaymentService\ConnexPay\ConnexPayGateway;
 use Techork\PaymentService\ConnexPay\ConnexPaySettings;
 use Techork\PaymentService\ConnexPay\Refund;
 use Techork\PaymentService\Gateway\Command\CancelCommand;
 use Techork\PaymentService\Gateway\Command\RefundCommand;
+use Techork\PaymentService\Gateway\Command\RegisterCustomerCommand;
+use Techork\PaymentService\Gateway\Contract\GatewayCustomerRepository;
+use Techork\PaymentService\Gateway\Exception\UnsupportedByGateway;
+use Techork\PaymentService\Gateway\Exception\UnsupportedOperation;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 use Techork\PaymentService\Gateway\ValueObject\GatewayInfrastructure;
 
@@ -23,7 +30,7 @@ function makeConnexPayGateway(array $settings = []): ConnexPayGateway
         cpCredential(),
         cpDecrypter(),
         cpInstruments(null),
-        Mockery::mock(Techork\PaymentService\Gateway\Contract\CustomerRepository::class, ['findByInstrument' => null]),
+        Mockery::mock(Techork\PaymentService\Gateway\Contract\GatewayCustomerRepository::class, ['find' => null]),
         [
             'username' => 'test-user',
             'password' => 'test-pass',
@@ -180,3 +187,78 @@ it('sends a cancel to void', function () {
  * mapped an option array onto a command so a test could get at the request the gateway would have
  * sent.
  */
+
+/**
+ * Refused for CAPABILITY, not for absence — and the difference is the whole reason this test
+ * exists rather than a one-line dataset row.
+ *
+ * ConnexPay HAS a customer object. `/api/v1/verify` creates one from what it is handed and returns
+ * it as `card.customer.guid`, which is what `RegistrationResult::$customerReference` carries back;
+ * `CreatePaymentMethod` has been bringing one into existence on every registration all along. What
+ * ConnexPay has no route for is creating one from an identity alone: the v1 surface is `/verify`,
+ * `/token`, `/sales`, `/authonlys`, `/void` and `/returns`, and every one of those that can make a
+ * customer takes a card.
+ *
+ * This was written down the other way round once — that ConnexPay had no customer object, on the
+ * grounds that its `CustomerID` field is a searchable transaction attribute. That field is real and
+ * is a different thing: it carries OUR id for reporting, alongside a `Customer` the provider owns
+ * and keys itself. Believing the stronger claim is what left an address-derived provider customer
+ * alive inside a registration, unexamined, in the one place that had been declared empty. So the
+ * message is asserted, not just the type: the refusal was always right and the reason was not, and
+ * the reason is what the next reader acts on.
+ */
+it('refuses to register a customer because none can be made without a card', function () {
+    $thrown = null;
+
+    try {
+        makeConnexPayGateway()->registerCustomer(new RegisterCustomerCommand(
+            gatewayId: GatewayId::generate(),
+            customerId: connexPayTestCustomerId(),
+            identity: new CustomerIdentity('Ada', 'Lovelace', new Email('ada@example.com')),
+        ));
+    } catch (Throwable $e) {
+        $thrown = $e;
+    }
+
+    expect($thrown)->toBeInstanceOf(UnsupportedOperation::class)
+        // Marked, so the stack rethrows it. Folded into a failed result it would say ConnexPay
+        // refused a customer, when ConnexPay was never told about one.
+        ->and($thrown)->toBeInstanceOf(UnsupportedByGateway::class)
+        ->and($thrown->getMessage())->toContain('has a customer object but no endpoint that creates one without a card');
+});
+
+/**
+ * A customer this gateway has no reference for yet is an ordinary state, not a failure.
+ *
+ * It is the state EVERY ConnexPay customer is in until a payment method is registered, because
+ * that registration is the only thing that can create one. A contract shaped as "give me the
+ * reference or throw", or a caller reading null as an error, would break this gateway on its first
+ * call — against every provider-side customer already out there.
+ */
+it('takes a missing customer reference as an ordinary answer', function () {
+    $customers = Mockery::mock(GatewayCustomerRepository::class, ['find' => null]);
+
+    expect($customers->find(GatewayId::generate(), connexPayTestCustomerId()))->toBeNull();
+});
+
+/**
+ * A customer id this adapter can hold without being able to make one: ConnexPay depends on
+ * `Common` and `Gateway`, never on the domain.
+ */
+function connexPayTestCustomerId(): CustomerIdentifier
+{
+    static $id = null;
+
+    return $id ??= new readonly class implements CustomerIdentifier
+    {
+        public function toString(): string
+        {
+            return '01920000-0000-7000-8000-00000000cafe';
+        }
+
+        public function __toString(): string
+        {
+            return $this->toString();
+        }
+    };
+}

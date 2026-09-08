@@ -34,7 +34,7 @@ use Techork\PaymentService\Gateway\Command\CancelCommand;
 use Techork\PaymentService\Gateway\Command\CaptureCommand;
 use Techork\PaymentService\Gateway\Command\PlacementCommand;
 use Techork\PaymentService\Gateway\Command\VaultCommand;
-use Techork\PaymentService\Gateway\Contract\CustomerRepository;
+use Techork\PaymentService\Gateway\Contract\GatewayCustomerRepository;
 use Techork\PaymentService\Gateway\Contract\GatewayCredential;
 use Techork\PaymentService\Gateway\Contract\GatewayInstrumentRepository;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
@@ -114,7 +114,7 @@ function cpInfrastructure(array $overrides = []): GatewayInfrastructure
         $overrides['credential'] ?? cpCredential(),
         $overrides['decrypter'] ?? cpDecrypter(),
         $overrides['instruments'] ?? Mockery::mock(GatewayInstrumentRepository::class, ['find' => null]),
-        $overrides['customers'] ?? Mockery::mock(CustomerRepository::class, ['findByInstrument' => null]),
+        $overrides['customers'] ?? Mockery::mock(GatewayCustomerRepository::class, ['find' => null]),
         $overrides['settings'] ?? [],
     );
 }

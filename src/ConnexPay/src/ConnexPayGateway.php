@@ -14,6 +14,7 @@ use Techork\PaymentService\Gateway\Command\IssueCardCommand;
 use Techork\PaymentService\Gateway\Command\PlacementCommand;
 use Techork\PaymentService\Gateway\Command\RebillingCommand;
 use Techork\PaymentService\Gateway\Command\RefundCommand;
+use Techork\PaymentService\Gateway\Command\RegisterCustomerCommand;
 use Techork\PaymentService\Gateway\Command\TerminateCardCommand;
 use Techork\PaymentService\Gateway\Command\UpdateCardCommand;
 use Techork\PaymentService\Gateway\Command\VaultCommand;
@@ -24,6 +25,7 @@ use Techork\PaymentService\Gateway\Contract\Gateway;
 use Techork\PaymentService\Gateway\Contract\GatewayResult;
 use Techork\PaymentService\Gateway\Contract\RegistrationResult;
 use Techork\PaymentService\Gateway\Contract\VirtualCardResult;
+use Techork\PaymentService\Gateway\Exception\UnsupportedOperation;
 use Techork\PaymentService\Gateway\ValueObject\GatewayInfrastructure;
 
 /**
@@ -175,6 +177,33 @@ final class ConnexPayGateway implements Gateway
     public function registerPaymentMethod(VaultCommand $command): RegistrationResult
     {
         return new CreatePaymentMethod($this->settings, $command, $this->infrastructure(), $this->client)->register();
+    }
+
+    /**
+     * Refused for capability, not for absence — the distinction that matters most on this
+     * gateway, because getting it wrong is what left an address-derived provider customer alive
+     * inside {@see registerPaymentMethod()} for as long as it did.
+     *
+     * ConnexPay HAS a customer object. `/api/v1/verify` creates one out of what it is handed and
+     * returns it as `card.customer.guid`, which is what
+     * {@see \Techork\PaymentService\Gateway\Contract\RegistrationResult::$customerReference}
+     * carries back. What it has no route for is creating one from an identity alone: the v1
+     * surface is `/verify`, `/token`, `/sales`, `/authonlys`, `/void` and `/returns`, and every
+     * one of those that can make a customer takes a card. So the customer here comes into
+     * existence by registering their payment method, and there is no call this method could
+     * make.
+     *
+     * Marked, so the stack rethrows rather than folding it into a decline: ConnexPay refusing a
+     * customer it was never asked about would be a lie about the provider.
+     */
+    #[Override]
+    public function registerCustomer(RegisterCustomerCommand $command): RegistrationResult
+    {
+        throw UnsupportedOperation::forGateway(
+            'connexpay',
+            'registerCustomer',
+            'ConnexPay has a customer object but no endpoint that creates one without a card; register the payment method instead and keep the reference it hands back.',
+        );
     }
 
     #[Override]

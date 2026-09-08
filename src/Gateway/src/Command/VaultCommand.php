@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Gateway\Command;
 
+use Techork\PaymentService\Common\Contract\CustomerIdentifier;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
@@ -19,11 +20,23 @@ use Techork\PaymentService\Gateway\ValueObject\GatewayId;
  */
 final readonly class VaultCommand
 {
+    /**
+     * @param  ?CustomerIdentifier  $customerId  Whom the instrument is being kept FOR.
+     *
+     * Nullable on the type and required in practice for `registerPaymentMethod`, which refuses
+     * an absent one with {@see \Techork\PaymentService\Gateway\Exception\RegistrationNeedsCustomer}:
+     * storing an instrument for later use is storing it for somebody. Stripe will not make a
+     * PaymentMethod reusable without a customer, and Nuvei cannot produce a
+     * `userPaymentOptionId` without a `userTokenId`. `tokenize()` genuinely has no customer —
+     * a token is one use and then gone, which is the same reason the aggregate will not hold
+     * one — so the field stays nullable rather than being split across two commands.
+     */
     public function __construct(
         public GatewayId $gatewayId,
         public PaymentInstrument $instrument,
         public ?BillingAddress $billingAddress = null,
         public ?string $clientUniqueId = null,
+        public ?CustomerIdentifier $customerId = null,
     ) {}
 
 
@@ -37,6 +50,7 @@ final readonly class VaultCommand
             'instrument' => $this->instrument->toPayload(),
             'billingAddress' => $this->billingAddress?->toArray(),
             'clientUniqueId' => $this->clientUniqueId,
+            'customerId' => $this->customerId?->toString(),
         ];
     }
 }

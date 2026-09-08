@@ -11,6 +11,7 @@ use Techork\PaymentService\Gateway\Command\RebillingCommand;
 use Techork\PaymentService\Gateway\Command\CancelCommand;
 use Techork\PaymentService\Gateway\Command\CaptureCommand;
 use Techork\PaymentService\Gateway\Command\RefundCommand;
+use Techork\PaymentService\Gateway\Command\RegisterCustomerCommand;
 use Techork\PaymentService\Gateway\Contract\GatewayCredentialRepository;
 use Techork\PaymentService\Gateway\Contract\AuthorizationResult;
 use Techork\PaymentService\Gateway\Contract\GatewayResult;
@@ -83,6 +84,12 @@ final class RoutedGateway implements AcquiringGateway
     public function registerPaymentMethod(VaultCommand $command): RegistrationResult
     {
         return $this->subject()->registerPaymentMethod($command);
+    }
+
+    #[Override]
+    public function registerCustomer(RegisterCustomerCommand $command): RegistrationResult
+    {
+        return $this->subject()->registerCustomer($command);
     }
 
     #[Override]

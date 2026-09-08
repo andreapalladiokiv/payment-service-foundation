@@ -7,6 +7,9 @@ use Money\Money;
 use Techork\PaymentService\Gateway\Command\CancelCommand;
 use Techork\PaymentService\Gateway\Command\CaptureCommand;
 use Techork\PaymentService\Gateway\Command\RefundCommand;
+use Techork\PaymentService\Gateway\Command\RegisterCustomerCommand;
+use Techork\PaymentService\Gateway\Command\VaultCommand;
+use Techork\PaymentService\Common\ValueObject\CustomerIdentity;
 use Techork\PaymentService\Gateway\Contract\Gateway as GatewayContract;
 use Techork\PaymentService\Gateway\Contract\GatewayCredential;
 use Techork\PaymentService\Gateway\Contract\GatewayCredentialRepository;
@@ -239,6 +242,11 @@ it('bounds and logs every operation the acquiring stack carries', function (stri
     $command = match ($operation) {
         'capture' => captureCommand(),
         'cancel' => new CancelCommand(GatewayId::generate(), 'auth_ref', 'pi-1:cancel'),
+        'registerCustomer' => new RegisterCustomerCommand(
+            gatewayId: GatewayId::generate(),
+            customerId: gatewaySuiteCustomerId(),
+            identity: new CustomerIdentity('Ada', 'Lovelace'),
+        ),
         default => new RefundCommand(
             gatewayId: GatewayId::generate(),
             transactionReference: 'sale_ref',
@@ -252,4 +260,77 @@ it('bounds and logs every operation the acquiring stack carries', function (stri
     expect($result->success)->toBeFalse()
         ->and($result->message)->toBe('connection reset')
         ->and($lines)->toBe(["Gateway {$operation} request", "Gateway {$operation} response"]);
-})->with(['capture', 'cancel', 'refund', 'retryRefund']);
+})->with(['capture', 'cancel', 'refund', 'retryRefund', 'registerCustomer']);
+
+/**
+ * Registering a customer at a provider that cannot make one from an identity alone must propagate,
+ * not decline.
+ *
+ * `UnsupportedByGateway` is what makes the difference, and this is the operation where getting it
+ * wrong reads worst: folded into a failed result it would say a provider refused a customer, when
+ * the provider was never told about one and has no route that could have been asked. ConnexPay is
+ * the case — it HAS a customer object, built by `/api/v1/verify`, and no endpoint that creates one
+ * without a card.
+ */
+it('rethrows a refusal to register a customer instead of reporting a decline', function () {
+    $driver = Mockery::mock(AcquiringGateway::class);
+    $driver->shouldReceive('registerCustomer')->andThrow(UnsupportedOperation::forGateway(
+        'connexpay',
+        'registerCustomer',
+        'no endpoint creates a customer without a card.',
+    ));
+
+    $stack = new LoggingGateway(new FailureBoundary($driver), Mockery::mock(GatewayLoggerInterface::class, ['log' => null]), 'test');
+
+    // Caught rather than `toThrow`: the marker is an interface, and Pest reads a non-Throwable
+    // class-string as an expected message.
+    $thrown = null;
+
+    try {
+        $stack->registerCustomer(new RegisterCustomerCommand(
+            gatewayId: GatewayId::generate(),
+            customerId: gatewaySuiteCustomerId(),
+            identity: new CustomerIdentity('Ada', 'Lovelace'),
+        ));
+    } catch (Throwable $e) {
+        $thrown = $e;
+    }
+
+    expect($thrown)->toBeInstanceOf(UnsupportedByGateway::class);
+});
+
+/**
+ * A payment carries the customer, and the commands are where that is guaranteed.
+ *
+ * Asserted structurally and on every command at once, because the failure this catches is a field
+ * added to one command and forgotten on another — which is invisible until a whole class of
+ * payment reaches a provider anonymous. `authorizeRebilling` is the one that had no customer at
+ * all while routing through the very call that reads the key, so a renewal could not use the
+ * stored instrument it existed to charge.
+ */
+it('gives every command a place to name the customer', function (string $class) {
+    expect(property_exists($class, 'customerId'))->toBeTrue();
+})->with([
+    PlacementCommand::class,
+    RebillingCommand::class,
+    CaptureCommand::class,
+    RefundCommand::class,
+    VaultCommand::class,
+    RegisterCustomerCommand::class,
+]);
+
+/**
+ * And a series payment keeps it when it degrades to an ordinary placement — the conversion Stripe
+ * takes, which drops the anchor deliberately and must not drop the payer with it.
+ */
+it('carries the customer through a series payment seen as a placement', function () {
+    $series = new RebillingCommand(
+        gatewayId: GatewayId::generate(),
+        instrument: Mockery::mock(PaymentInstrument::class),
+        amount: new Money(1000, new Currency('USD')),
+        initiation: PaymentInitiation::MerchantRecurring,
+        customerId: gatewaySuiteCustomerId(),
+    );
+
+    expect($series->toPlacement()->customerId)->toBe($series->customerId);
+});

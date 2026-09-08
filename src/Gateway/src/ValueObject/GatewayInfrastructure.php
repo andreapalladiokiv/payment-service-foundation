@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Techork\PaymentService\Gateway\ValueObject;
 
 use Techork\PaymentService\Common\Contract\DecryptInterface;
-use Techork\PaymentService\Gateway\Contract\CustomerRepository;
+use Techork\PaymentService\Gateway\Contract\GatewayCustomerRepository;
 use Techork\PaymentService\Gateway\Contract\GatewayCredential;
 use Techork\PaymentService\Gateway\Contract\GatewayInstrumentRepository;
 
@@ -17,6 +17,18 @@ use Techork\PaymentService\Gateway\Contract\GatewayInstrumentRepository;
  * applied afterwards were lost unless the whole thing was re-run — and providers that baked state
  * at initialise time (ConnexPay builds its HTTP clients there) had to be given the chance to bake
  * it again. One configuration step makes that class of bug unexpressible.
+ *
+ * `$customers` is keyed on OUR customer id. It used to be the instrument-keyed
+ * `CustomerRepository`, which is why a driver reading it could only find a provider-side customer
+ * for a card we had already stored a reference for — and, failing that, invented one out of
+ * whatever address rode along with the payment. A driver asks "which id does this gateway know
+ * customer X under" and gets an answer or a null; it no longer has any way to create a person as
+ * a side effect of taking money.
+ *
+ * That swap is also why the three tasks that were planned separately arrived together. The
+ * repository used to reach each driver through its own `setCustomerRepository()`, so it could be
+ * changed one gateway at a time; it arrives here once, typed, for all of them, so its type cannot
+ * be two things while one adapter is migrated and another is not.
  *
  * `$settings` is the merged credential row: what the tenant stored, with the deployment's
  * `services.{gateway}` defaults over the top, so a stored `environment=production` cannot open a
@@ -34,7 +46,7 @@ final readonly class GatewayInfrastructure
         public GatewayCredential $credential,
         public DecryptInterface $decrypter,
         public GatewayInstrumentRepository $instruments,
-        public CustomerRepository $customers,
+        public GatewayCustomerRepository $customers,
         public array $settings = [],
     ) {}
 

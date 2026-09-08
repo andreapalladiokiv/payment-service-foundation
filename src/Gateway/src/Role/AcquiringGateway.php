@@ -26,4 +26,5 @@ interface AcquiringGateway extends
     CapturesPayments,
     CancelsPayments,
     RefundsPayments,
-    VaultsInstruments {}
+    VaultsInstruments,
+    RegistersCustomers {}

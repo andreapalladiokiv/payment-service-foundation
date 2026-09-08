@@ -31,7 +31,7 @@ function partialCaptureGateway(?ConnexPayHttpClientInterface $client = null): Co
         cpCredential(),
         cpDecrypter(),
         cpInstruments('pm-guid-1'),
-        Mockery::mock(Techork\PaymentService\Gateway\Contract\CustomerRepository::class, ['findByInstrument' => null]),
+        Mockery::mock(Techork\PaymentService\Gateway\Contract\GatewayCustomerRepository::class, ['find' => null]),
         ['username' => 'u', 'password' => 'p', 'deviceGuid' => 'device-1'],
     ));
 

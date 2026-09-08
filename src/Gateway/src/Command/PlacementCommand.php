@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Techork\PaymentService\Gateway\Command;
 
 use Money\Money;
+use Techork\PaymentService\Common\Contract\CustomerIdentifier;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
 use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
@@ -26,6 +27,21 @@ use Techork\PaymentService\Gateway\ValueObject\GatewayId;
  */
 final readonly class PlacementCommand
 {
+    /**
+     * @param  ?CustomerIdentifier  $customerId  Whose payment this is — OUR id for them, minted by us and
+     *   never derived from an attribute, which is what keeps it stable when an email changes.
+     *   A {@see CustomerIdentifier} and not a string: there is a value object for this identity,
+     *   so it does not degrade at a package boundary. The interface lives in `Common` and its one
+     *   implementation is the aggregate's `CustomerId`, which is what lets this package name the
+     *   customer without being able to load a domain type — or to invent one.
+     *
+     * On the command and not on the credential, because a customer is a fact about THIS payment
+     * — which is what separates it from `authenticationUrl` and `returnUrl`, one address per
+     * deployment. It sits with `clientUniqueId`, `billingAddress` and `initiation`, which are
+     * per-payment facts too. Optional here: a one-off charge can belong to nobody we have a
+     * record of. Registering an instrument is the one operation where it is not
+     * ({@see \Techork\PaymentService\Gateway\Exception\RegistrationNeedsCustomer}).
+     */
     public function __construct(
         public GatewayId $gatewayId,
         public PaymentInstrument $instrument,
@@ -36,6 +52,7 @@ final readonly class PlacementCommand
         public ?string $statementDescription = null,
         public ?string $description = null,
         public PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated,
+        public ?CustomerIdentifier $customerId = null,
     ) {}
 
 
@@ -54,6 +71,7 @@ final readonly class PlacementCommand
             'statementDescription' => $this->statementDescription,
             'description' => $this->description,
             'initiation' => $this->initiation->value,
+            'customerId' => $this->customerId?->toString(),
         ];
     }
 }

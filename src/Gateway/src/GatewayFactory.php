@@ -6,7 +6,7 @@ namespace Techork\PaymentService\Gateway;
 
 use RuntimeException;
 use Techork\PaymentService\Common\Contract\DecryptInterface;
-use Techork\PaymentService\Gateway\Contract\CustomerRepository;
+use Techork\PaymentService\Gateway\Contract\GatewayCustomerRepository;
 use Techork\PaymentService\Gateway\Contract\Gateway;
 use Techork\PaymentService\Gateway\Contract\GatewayCredential;
 use Techork\PaymentService\Gateway\Contract\GatewayInstrumentRepository;
@@ -35,7 +35,7 @@ class GatewayFactory
     private array $instances = [];
 
     public function __construct(
-        private readonly CustomerRepository $customers,
+        private readonly GatewayCustomerRepository $customers,
         private readonly DecryptInterface $decrypter,
         private readonly GatewayInstrumentRepository $instruments,
     ) {}

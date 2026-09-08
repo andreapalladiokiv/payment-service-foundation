@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Gateway\Contract;
 
+use Techork\PaymentService\Common\Contract\CustomerIdentifier;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 
 /**
@@ -16,12 +17,19 @@ use Techork\PaymentService\Gateway\ValueObject\GatewayId;
  * is keyed by whatever the reference belongs to. That key is why a raw card can never resolve a
  * customer today and why an expiring `Token` can.
  *
- * The customer id arrives as a `string` for the reason
- * {@see Webhook\Contract\TransactionIdResolver} gives: it keeps this package free of domain
- * value objects, and the caller wraps back into a typed id at the domain boundary. This is also
- * the only place in the tree that speaks of a `customer_reference` at all — a provider's own id
- * for a person is not a fact the aggregate or `Common` is allowed to learn, and
- * `PackageHierarchyTest` pins that.
+ * The customer arrives as a {@see CustomerIdentifier}, an interface in `Common` whose one
+ * implementation is the aggregate's own `CustomerId`. So this package can name the customer's
+ * identity without being able to load a domain type: what it cannot do is mint one, and it has no
+ * reason to — a caller reaching a gateway already holds the customer it is acting for.
+ *
+ * The id does not degrade to a `string` at this boundary. A string here would be a value with no
+ * type at exactly the point where a wrong one is least visible, and there is a value object for
+ * it, so the boundary speaks it.
+ *
+ * The reference coming back the other way IS a bare string, and that asymmetry is the point: it
+ * is the *provider's* id for a person, and this is the only place in the tree allowed to know
+ * such a thing exists. `PackageHierarchyTest` pins that a `customer_reference` never appears in
+ * `Domain` or `Common`.
  *
  * **A miss is an ordinary answer, not a failure.** ConnexPay is the case that makes this
  * load-bearing: it has a customer object — `/api/v1/verify` builds one and hands it back as
@@ -45,7 +53,7 @@ use Techork\PaymentService\Gateway\ValueObject\GatewayId;
  */
 interface GatewayCustomerRepository
 {
-    public function find(GatewayId $gatewayId, string $customerId): ?string;
+    public function find(GatewayId $gatewayId, CustomerIdentifier $customerId): ?string;
 
-    public function saveReference(GatewayId $gatewayId, string $customerId, string $reference): void;
+    public function saveReference(GatewayId $gatewayId, CustomerIdentifier $customerId, string $reference): void;
 }

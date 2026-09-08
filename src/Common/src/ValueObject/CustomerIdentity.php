@@ -8,7 +8,9 @@ use Techork\PaymentService\Common\Pii;
 use Techork\PaymentService\Common\ShreddingStubs;
 
 /**
- * Who a customer is, as a payment provider needs to be told.
+ * WHO a customer is, as a payment provider needs to be told — their name, email and phone. Its
+ * neighbour {@see \Techork\PaymentService\Common\Contract\CustomerIdentifier} is the other
+ * half: WHICH customer this is. This one can be corrected, erased or absent; that one cannot.
  *
  * In `Common` rather than in the customer's own package because provider packages read it
  * directly to build a provider-side customer, the way they already read {@see BillingAddress}

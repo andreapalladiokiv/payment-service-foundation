@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Techork\PaymentService\Gateway\Command;
 
 use Money\Money;
+use Techork\PaymentService\Common\Contract\CustomerIdentifier;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
 use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
@@ -30,6 +31,14 @@ use Techork\PaymentService\Gateway\ValueObject\GatewayId;
  */
 final readonly class RebillingCommand
 {
+    /**
+     * @param  ?CustomerIdentifier  $customerId  Whose subscription this renews. Same shape and same reasons
+     *   as {@see PlacementCommand}, and it matters more here than anywhere else: Nuvei renews
+     *   through a `userPaymentOptionId`, which exists only under the `userTokenId` it was stored
+     *   against, so a renewal that names no customer cannot reach the stored instrument at all.
+     *   `authorizeRebilling` had no customer and put none in its options while routing through
+     *   the same provider call that reads the key.
+     */
     public function __construct(
         public GatewayId $gatewayId,
         public PaymentInstrument $instrument,
@@ -41,6 +50,7 @@ final readonly class RebillingCommand
         public ?ThreeDSResult $threeDS = null,
         public ?string $statementDescription = null,
         public ?string $description = null,
+        public ?CustomerIdentifier $customerId = null,
     ) {}
 
 
@@ -60,6 +70,7 @@ final readonly class RebillingCommand
             'description' => $this->description,
             'initiation' => $this->initiation->value,
             'genesisReference' => $this->genesisReference,
+            'customerId' => $this->customerId?->toString(),
         ];
     }
 
@@ -84,6 +95,7 @@ final readonly class RebillingCommand
             statementDescription: $this->statementDescription,
             description: $this->description,
             initiation: $this->initiation,
+            customerId: $this->customerId,
         );
     }
 }
