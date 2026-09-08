@@ -20,7 +20,6 @@ use Techork\PaymentService\Gateway\Command\UpdateCardCommand;
 use Techork\PaymentService\Gateway\Command\VaultCommand;
 use Techork\PaymentService\Gateway\Concern\HoldsInfrastructure;
 use Techork\PaymentService\Gateway\Contract\AuthorizationResult;
-use Techork\PaymentService\Gateway\Contract\CustomerRepository;
 use Techork\PaymentService\Gateway\Contract\Gateway;
 use Techork\PaymentService\Gateway\Contract\GatewayResult;
 use Techork\PaymentService\Gateway\Contract\RegistrationResult;
@@ -58,13 +57,6 @@ final class ConnexPayGateway implements Gateway
     public function getName(): string
     {
         return 'connexpay';
-    }
-
-    public function setCustomerRepository(CustomerRepository $repository): void
-    {
-        // ConnexPay's customer is created by `/api/v1/verify` and read back out of
-        // `card.customer.guid`, so nothing here has to look one up — the contract method exists
-        // for cross-gateway uniformity and the repository is intentionally ignored.
     }
 
     /**

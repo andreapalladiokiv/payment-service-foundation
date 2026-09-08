@@ -19,7 +19,8 @@ use Techork\PaymentService\Gateway\Contract\GatewayInstrumentRepository;
  * it again. One configuration step makes that class of bug unexpressible.
  *
  * `$customers` is keyed on OUR customer id. It used to be the instrument-keyed
- * `CustomerRepository`, which is why a driver reading it could only find a provider-side customer
+ * `Gateway\Contract\CustomerRepository`, now deleted, which is why a driver reading it could only
+ * find a provider-side customer
  * for a card we had already stored a reference for — and, failing that, invented one out of
  * whatever address rode along with the payment. A driver asks "which id does this gateway know
  * customer X under" and gets an answer or a null; it no longer has any way to create a person as

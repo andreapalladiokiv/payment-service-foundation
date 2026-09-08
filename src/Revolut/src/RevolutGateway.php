@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Techork\PaymentService\Revolut;
 
 use Override;
-use Techork\PaymentService\Gateway\Contract\CustomerRepository;
 use Techork\PaymentService\Gateway\Contract\Gateway;
 use Techork\PaymentService\Revolut\Exception\UnsupportedOperationException;
 use Techork\PaymentService\Gateway\Command\CaptureCommand;
@@ -86,14 +85,6 @@ final class RevolutGateway implements Gateway
     public function getName(): string
     {
         return 'revolut';
-    }
-
-    public function setCustomerRepository(CustomerRepository $repository): void
-    {
-        // These cards are auto-issued with no holder at all (Revolut wants a
-        // `product` code instead), so there is no payment customer to look up
-        // — the contract method exists for cross-gateway uniformity and the
-        // repository is intentionally ignored.
     }
 
     public function getClientId(): string
