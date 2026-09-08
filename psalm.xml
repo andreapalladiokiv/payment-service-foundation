@@ -54,6 +54,7 @@
         <InvalidArgument>
             <errorLevel type="suppress">
                 <file name="src/Laravel/src/EventSourcing/Repositories/CheckoutAggregateRepository.php"/>
+                <file name="src/Laravel/src/EventSourcing/Repositories/CustomerAggregateRepository.php"/>
                 <file name="src/Laravel/src/EventSourcing/Repositories/PaymentIntentAggregateRepository.php"/>
                 <file name="src/Laravel/src/EventSourcing/Repositories/SubscriptionAggregateRepository.php"/>
             </errorLevel>
