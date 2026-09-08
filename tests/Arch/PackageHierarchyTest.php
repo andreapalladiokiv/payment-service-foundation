@@ -105,3 +105,58 @@ arch('every package is placed in the hierarchy', function () use ($layers): void
         'the hierarchy map and the autoloaded packages have drifted apart',
     );
 });
+
+/*
+| The hierarchy above is about types, and one rule here is not about a type.
+|
+| A provider's own id for a person — `customer_reference`, `cus_...`, ConnexPay's
+| `card.customer.guid` — belongs to `Gateway` and to its Laravel implementation,
+| and nowhere else. The aggregate holds identity; the map holds identifiers. That
+| is what keeps a customer of ours from acquiring a second, provider-shaped
+| identity it would then have to reconcile — and it is why `CustomerForgotten`
+| can leave those rows alone without the aggregate needing to know they exist.
+|
+| `toUse()` cannot check it. The concept crosses as a string — a column name, an
+| array key, a property called `customerReference` — so there is no class to name
+| and no import to forbid. A source scan is the only assertion that would fail if
+| someone put the field on an event payload, and it is written here rather than
+| beside the repository because this file is where the package boundaries are
+| already enforced.
+*/
+
+arch('a provider-side customer reference never leaves the Gateway package', function (): void {
+    $offenders = [];
+
+    // Both spellings, because the two are the same fact in different clothes: the column and the
+    // key are snake_case, the property and the parameter are camelCase, and either one appearing
+    // in `Domain` or `Common` is the same leak.
+    foreach (['Domain', 'Common'] as $package) {
+        foreach (['src', 'tests'] as $directory) {
+            $root = dirname(__DIR__, 2)."/src/{$package}/{$directory}";
+
+            if (! is_dir($root)) {
+                continue;
+            }
+
+            /** @var iterable<SplFileInfo> $files */
+            $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS));
+
+            foreach ($files as $file) {
+                if (! $file->isFile() || $file->getExtension() !== 'php') {
+                    continue;
+                }
+
+                $contents = (string) file_get_contents($file->getPathname());
+
+                if (str_contains($contents, 'customer_reference') || str_contains($contents, 'customerReference')) {
+                    $offenders[] = $package.'/'.$directory.'/'.$file->getFilename();
+                }
+            }
+        }
+    }
+
+    expect($offenders)->toBe(
+        [],
+        'a provider\'s own id for a customer reached Domain or Common; it belongs to Gateway',
+    );
+});
