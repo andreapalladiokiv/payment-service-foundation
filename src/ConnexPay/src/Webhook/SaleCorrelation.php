@@ -19,7 +19,7 @@ use Techork\PaymentService\Gateway\Webhook\Contract\TransactionIdResolver;
  * buyer pays on ConnexPay's page — so the webhook is the first time we ever see
  * its guid, and looking it up finds nothing. What survives the redirect is
  * `OrderNumber`: we put the payment intent id there on the way out
- * ({@see \Techork\PaymentService\ConnexPay\Concern\ConnexPayRequestParameters::withOrderNumber})
+ * ({@see \Techork\PaymentService\ConnexPay\Concern\BuildsConnexPayPayload::withOrderNumber})
  * and ConnexPay echoes it on the sale message as the "client provided
  * transaction identifier".
  *

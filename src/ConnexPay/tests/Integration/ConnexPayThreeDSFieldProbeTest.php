@@ -20,7 +20,7 @@ use Techork\PaymentService\ConnexPay\ConnexPayClient;
  *
  *  Q1 Which of Cavv / Version / DirectoryServerTransactionID / AcsTransactionId
  *     / ECI does the Card.ThreeDS model actually BIND?
- *     {@see \Techork\PaymentService\ConnexPay\Concern\ConnexPayRequestParameters::formatThreeDS}
+ *     {@see \Techork\PaymentService\ConnexPay\Concern\FormatsThreeDS::formatThreeDS}
  *     sends exactly those five names; any it does not bind is silently dropped,
  *     and an authentication we believe we forwarded never reached the issuer.
  *

@@ -5,8 +5,8 @@ service, built on [EventSauce](https://eventsauce.io). Three aggregates
 (`PaymentIntentAggregate`, `CheckoutAggregate`, `SubscriptionAggregate`) plus
 the driven ports the payment flows call out through. Pure PHP, no framework and
 no I/O: gateways plug in behind port interfaces, and the Laravel package
-supplies the port adapters (`OmnipayCreatePort`, `OmnipayRebillingCreatePort`,
-...), repositories, snapshots and event-sourcing glue.
+supplies the port adapters (`CreateAdapter`, `RebillingCreateAdapter`, ...),
+repositories, snapshots and event-sourcing glue.
 
 Each aggregate namespace has the same shape: `Command/` (interfaces the
 consuming application implements — they are contracts, not DTOs), `Event/`
@@ -190,8 +190,8 @@ serialize two genuinely concurrent payments: each hydrates the intent and reads
 event is appended, so the aggregate guard rejects the second set of bookkeeping
 after the money has already left twice. The domain has no way to close that —
 it belongs to the adapter, via the gateway's own idempotency key keyed on the
-intent (`"{paymentIntentId}:capture"`, the convention documented on
-`PaymentGatewayInterface`). Anything claiming the aggregate is a concurrency
+intent (`"{paymentIntentId}:capture"`, the convention documented on the
+Gateway package's `Contract\Gateway`). Anything claiming the aggregate is a concurrency
 backstop is wrong.
 
 The checkout declares **its own** `Port\CheckoutCapturePort` rather than

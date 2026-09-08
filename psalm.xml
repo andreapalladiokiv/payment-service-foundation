@@ -60,7 +60,7 @@
 
         <!--
             Stripe's SDK declares an exhaustive array shape for every endpoint. Our params
-            are assembled from `getData()`, whose values pass through omnipay's untyped
+            are assembled in `payload()`, whose values pass through the untyped
             PaymentInstrumentVisitor contract, so they reach the call as `mixed` even though
             the lines that set them produce int and string. Coercion, not a mismatch: the
             keys and their real types are correct, and the shapes are far too large to
@@ -69,9 +69,8 @@
         -->
         <ArgumentTypeCoercion>
             <errorLevel type="suppress">
-                <file name="src/Stripe/src/AuthorizeRequest.php"/>
-                <file name="src/Stripe/src/PurchaseRequest.php"/>
-                <file name="src/Stripe/src/CreatePaymentMethodRequest.php"/>
+                <file name="src/Stripe/src/Authorize.php"/>
+                <file name="src/Stripe/src/Charge.php"/>
             </errorLevel>
         </ArgumentTypeCoercion>
 
@@ -82,8 +81,8 @@
             declaring ANY block here ACTIVATES that issue at every level, and `type="suppress"`
             then only exempts the paths listed inside it. A scoped suppression therefore turns
             the issue on everywhere else. Adding a `PropertyNotSetInConstructor` block for
-            src/Domain/src at errorLevel 3 switched it on globally and failed 37 omnipay request
-            classes over `$currencies`.
+            src/Domain/src at errorLevel 3 switched it on globally and failed 37 request
+            classes over `$currencies` back when the drivers were built on Omnipay.
 
             Three handlers were removed for that reason and belong with a move to errorLevel 2
             or 1, not before:

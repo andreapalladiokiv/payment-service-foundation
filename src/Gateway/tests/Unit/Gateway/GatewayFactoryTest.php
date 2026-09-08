@@ -2,10 +2,11 @@
 
 declare(strict_types=1);
 
-use Omnipay\Common\AbstractGateway;
+use Techork\PaymentService\Common\Contract\DecryptInterface;
 use Techork\PaymentService\Gateway\Contract\CustomerRepository;
 use Techork\PaymentService\Gateway\Contract\Gateway;
 use Techork\PaymentService\Gateway\Contract\GatewayCredential;
+use Techork\PaymentService\Gateway\Contract\GatewayInstrumentRepository;
 use Techork\PaymentService\Gateway\GatewayFactory;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 
@@ -24,14 +25,20 @@ function makeCredential(string $name = 'Stripe', array $credentials = [], ?Gatew
 
 function makeGatewayFactory(): GatewayFactory
 {
-    return new GatewayFactory(Mockery::mock(CustomerRepository::class));
+    return new GatewayFactory(
+        Mockery::mock(CustomerRepository::class, ['findByInstrument' => null]),
+        Mockery::mock(DecryptInterface::class),
+        Mockery::mock(GatewayInstrumentRepository::class, ['find' => null]),
+    );
 }
 
 it('registers and lists gateway mappings', function () {
     $factory = makeGatewayFactory();
-    $factory->replace(['TestGateway' => AbstractGateway::class]);
+    // The registry maps a name to a class string and does not load it; any class name will do,
+    // and it used to be Omnipay's `AbstractGateway` for no reason beyond it being on hand.
+    $factory->replace(['TestGateway' => Gateway::class]);
 
-    expect($factory->all())->toBe(['TestGateway' => AbstractGateway::class]);
+    expect($factory->all())->toBe(['TestGateway' => Gateway::class]);
 });
 
 it('throws RuntimeException for unregistered gateway name', function () {

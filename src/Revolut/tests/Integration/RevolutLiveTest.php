@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 use Money\Currency;
 use Money\Money;
-use Omnipay\Common\Http\PsrClient as OmnipayClient;
-use Symfony\Component\HttpFoundation\Request as HttpRequest;
 use Techork\PaymentService\Revolut\IssueVirtualCardRequest;
 use Techork\PaymentService\Revolut\RevolutClient;
+use Techork\PaymentService\Gateway\Command\IssueCardCommand;
+use Techork\PaymentService\Gateway\ValueObject\CardSpendCategory;
+use Techork\PaymentService\Gateway\ValueObject\GatewayId;
+use Techork\PaymentService\Revolut\CardSettings;
 
 /**
  * Live integration coverage for Revolut card issuing.
@@ -48,14 +50,16 @@ it('issues a virtual card against the live Revolut API', function () {
         baseUrl: RevolutClient::PRODUCTION_BASE_URL,
     );
 
-    $request = new IssueVirtualCardRequest(new OmnipayClient, new HttpRequest);
-    $request->initialize([
-        'revolutClient' => $client,
-        'money' => new Money(100, new Currency('GBP')),
-        'fetchSensitiveDetails' => false,
-    ]);
-
-    $result = $request->send()->toVirtualCardResult();
+    $result = new IssueVirtualCardRequest(
+        $client,
+        new CardSettings(fetchSensitiveDetails: false),
+        new IssueCardCommand(
+            gatewayId: GatewayId::generate(),
+            transactionReference: 'live-smoke',
+            amountLimit: new Money(100, new Currency('GBP')),
+            spendCategory: CardSpendCategory::TravelAir,
+        ),
+    )->send()->toVirtualCardResult();
 
     expect($result->success)->toBeTrue($result->message ?? 'issuance failed')
         ->and($result->cardGuid)->not->toBeEmpty();

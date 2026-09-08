@@ -118,7 +118,7 @@ function connexpayProbeBody(string $orderNumber): array
         'Card' => [
             'CardHolderName' => 'Probe Tester',
             'CardNumber' => '4111111111111111',
-            // YYMM, as ConnexPayRequestParameters::formatExpirationDate builds
+            // YYMM, as BuildsConnexPayPayload::formatExpirationDate builds
             // it. Captured responses echo '2030-12', which is NOT the request
             // format — sending that shape earns a modelState error.
             'ExpirationDate' => '3012',

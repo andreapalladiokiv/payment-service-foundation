@@ -2,57 +2,86 @@
 
 `techork/payment-service-gateway` — the gateway-agnostic layer between the
 domain (ports in Common/Domain) and the provider packages (ConnexPay, Nuvei,
-Paynet, Revolut, Stripe). Built on [Omnipay](https://github.com/thephpleague/omnipay-common):
-provider gateways are Omnipay gateways extended with this package's `Gateway`
-contract, and `PaymentGatewayRouter` translates typed domain calls into
-Omnipay request/response round-trips.
+Paynet, Revolut, Stripe). A provider package implements `Contract\Gateway`
+directly: no base class, no parameter bags, no request objects handed back for
+someone else to send. Each verb takes a typed command and performs the call.
 
-## Outbound: `PaymentGatewayInterface`
+## Outbound: `Contract\Gateway`
 
-`PaymentGatewayRouter` implements `Contract\PaymentGatewayInterface`. Every
-call resolves the tenant's `GatewayCredential` by `GatewayId`, obtains a
-cached gateway instance from `GatewayFactory`, and collapses the Omnipay
-response (or any thrown exception) into an immutable result object — the
-router never throws for gateway failures.
+`Gateway` has two methods of its own — `getName()` and
+`configure(GatewayInfrastructure)` — and inherits its verbs from two
+composites, so an implementor writes one `implements Gateway` and a client
+depends on the narrow role it actually uses:
 
-| Operation | Omnipay call | Result |
+- `Role\AcquiringGateway` — `tokenize`, `registerPaymentMethod`, `authorize`,
+  `authorizeRebilling`, `charge`, `capture`, `cancel`, `refund`, `retryRefund`,
+  assembled from `VaultsInstruments`, `PlacesPayments`,
+  `PlacesRebillingPayments`, `CapturesPayments`, `CancelsPayments`,
+  `RefundsPayments`.
+- `Role\CardIssuer` — `issueVirtualCard`, `updateVirtualCard`,
+  `terminateVirtualCard` (`IssuesVirtualCards`).
+
+| Operation | Command | Result |
 | --- | --- | --- |
-| `tokenize` | `createCard` | `RegistrationResult` |
-| `createPaymentMethod` | `createPaymentMethod` | `RegistrationResult` |
-| `authorize` | `authorize` | `AuthorizationResult` |
-| `charge` | `purchase` | `AuthorizationResult` |
-| `capture` | `capture` | `GatewayResult` |
-| `cancel` | `void` | `GatewayResult` |
-| `refund` | `refund`, then `retryRefund` (see below) | `GatewayResult` |
-| `issueVirtualCard` / `updateVirtualCard` | same names | `VirtualCardResult` |
-| `terminateVirtualCard` | `terminateVirtualCard` | `GatewayResult` |
+| `tokenize` / `registerPaymentMethod` | `VaultCommand` | `RegistrationResult` |
+| `authorize` / `charge` | `PlacementCommand` | `AuthorizationResult` |
+| `authorizeRebilling` | `RebillingCommand` | `AuthorizationResult` |
+| `capture` | `CaptureCommand` | `GatewayResult` |
+| `cancel` | `CancelCommand` | `GatewayResult` |
+| `refund` / `retryRefund` | `RefundCommand` | `GatewayResult` |
+| `issueVirtualCard` | `IssueCardCommand` | `VirtualCardResult` |
+| `updateVirtualCard` | `UpdateCardCommand` | `VirtualCardResult` |
+| `terminateVirtualCard` | `TerminateCardCommand` | `GatewayResult` |
+
+A driver builds one operation class per verb — `Stripe\Authorize`,
+`Nuvei\Refund`, `Revolut\IssueVirtualCard` — holding its collaborators, with a
+pure `payload()` that can be asserted without a network and an action method
+that sends and maps. The provider knows what it got back, so it says so
+directly; there is no shared response object and no shared folder reading
+capability interfaces off one.
+
+### The stack a call travels
+
+`Routing\RoutedGateway` / `RoutedCardIssuer` are the proxies the application
+holds: bound to a `GatewayId`, they resolve the tenant's credential once, ask
+`GatewayFactory` for the configured driver, and forward. Two decorators wrap
+what the resolve returns:
+
+- `Decorator\FailureBoundary` / `CardIssuerFailureBoundary` — folds a thrown
+  provider error into a failed result. Composed **inside** the resolve, so a
+  missing credential (`findOrFail`) propagates instead of being reported as a
+  decline.
+- `Decorator\LoggingGateway` / `LoggingCardIssuer` — logs the command and the
+  result through `Logger\GatewayLoggerInterface` (default
+  `NullGatewayLogger`).
 
 Behaviors worth knowing:
 
-- **Idempotency** — every mutating op takes an optional `$clientUniqueId`;
-  implementations forward it as the gateway-native mechanism (Stripe
-  `Idempotency-Key` header, Nuvei `clientUniqueId`, ConnexPay `OrderNumber`).
-  Convention: pass the aggregate id, or `"{id}:suffix"` when one aggregate
-  triggers several gateway ops. `updateVirtualCard` / `terminateVirtualCard`
-  deliberately omit it and rely on natural HTTP idempotency.
-- **Partial capture fallback** — `capture` also forwards `authorizedAmount` +
-  `instrument`; only gateways without native partial capture consume them
-  (ConnexPay voids the auth and runs a fresh sale), others ignore them.
-- **Refund retry** — if the standard refund fails and a `$retryInstrument`
-  was given, the router calls `retryRefund` (ConnexPay Return with
-  ReturnRetryCard, Nuvei Payout). Gateways without the method surface a
-  failed `GatewayResult` through the catch — never an exception.
-- `issueVirtualCard` throws `RuntimeException` when no transaction reference is
-  stored for the payment intent; `capture` / `cancel` / `refund` take the
-  acquirer's `$transactionReference` straight from the caller and never look one
-  up — that resolution, and its missing-row failure, live in the Laravel ports.
-- **Invariant violations are not payment outcomes** — the router folds any
+- **Idempotency** — every mutating command carries an optional
+  `clientUniqueId`; implementations forward it as the gateway-native mechanism
+  (Stripe `Idempotency-Key` header, Nuvei `clientUniqueId`, ConnexPay
+  `OrderNumber`). Convention: pass the aggregate id, or `"{id}:suffix"` when
+  one aggregate triggers several gateway ops. `UpdateCardCommand` /
+  `TerminateCardCommand` deliberately omit it and rely on natural HTTP
+  idempotency.
+- **Partial capture fallback** — `CaptureCommand` also carries
+  `authorizedAmount` + `instrument`; only gateways without native partial
+  capture consume them (ConnexPay voids the auth and runs a fresh sale),
+  others ignore them.
+- **Refund retry** — if a refund fails and the command carries a
+  `retryInstrument`, the Laravel `RefundAdapter` calls `retryRefund`
+  (ConnexPay Return with ReturnRetryCard, Nuvei Payout). A gateway without the
+  primitive surfaces a failed `GatewayResult` rather than an exception.
+- `capture` / `cancel` / `refund` take the acquirer's `transactionReference`
+  straight from the command and never look one up — that resolution, and its
+  missing-row failure, live in the Laravel adapters.
+- **Invariant violations are not payment outcomes** — the boundary folds any
   thrown exception into a failed result, which downstream becomes
   `GatewayDeclinedException` and a recorded `PaymentIntentFailed`, i.e. it
   enters the event stream as an acquirer decline. Anything implementing
-  `Exception\UnsupportedByGateway` is exempt: it is rethrown from all five
-  builders. Use it when the gateway structurally cannot do what was asked, so
-  a wiring mistake never masquerades as a decline.
+  `Exception\UnsupportedByGateway` is exempt: it is rethrown. Use it when the
+  gateway structurally cannot do what was asked, so a wiring mistake never
+  masquerades as a decline.
   - `Exception\UnsupportedInstrument` — instrument the gateway has no product
     for on that operation (a `HostedPayment` to an acquirer with no hosted
     page, raw card data to a hosted-only gateway). Thrown from the `visit*()`
@@ -60,30 +89,28 @@ Behaviors worth knowing:
   - `Exception\UnsupportedOperation` — operation the gateway does not have at
     all, whatever the instrument.
   - Not everything unsupported is an invariant: the per-package
-    `UnsupportedPaynetOperation` stays unmarked on purpose, and only on `void()`
-    because that backs `cancel()` — an unsupported operation has to degrade into
-    a failed `GatewayResult` mid-saga rather than throwing, the same way the
+    `UnsupportedPaynetOperation` stays unmarked on purpose, and only on the
+    cancel path — an unsupported operation has to degrade into a failed
+    `GatewayResult` mid-saga rather than throwing, the same way the
     refund-retry path above *depends* on it. Revolut's
     `UnsupportedOperationException` does carry the marker, on every operation it
     throws for: Revolut acquires nothing and has no `retryRefund` to degrade.
 
-### Results and response capabilities
+### Results
 
 `GatewayResult` (`success` / `reference` / `message` + `metadata`,
 `convertedAmount`) is the base; `AuthorizationResult` adds a `Challenge`
 (3DS step-up / hosted redirect → `isRequiresAction()`) and AVS/CVC
 `CheckResult` fields; `RegistrationResult` adds `customerReference` plus the
 same checks. `null` checks mean "no signal", distinct from
-`CheckResult::Unchecked`.
+`CheckResult::Unchecked`. `GatewayResult::UNNAMED_SUCCESS` is the message every
+driver uses for a provider that reports success and names no reference.
 
-Extra signals are pulled off Omnipay responses via optional capability
-interfaces (`instanceof` checks in the router): `ChallengeProvider`,
-`CardChecksProvider`, `CustomerReferenceProvider`, `TransactionMetadataProvider`
-(gateway attributes persisted with the reference, e.g. ConnexPay's incoming
-transaction code), `ConvertedAmountProvider` (FX-settled amount) and
-`VirtualCardResponseInterface`. Provider request classes share the
-`Concern\InstrumentParameters` trait for the common parameters the router
-passes (`instrument`, `gateway`, `decrypter`, `referenceResolver`, `threeDS`, …).
+`metadata` carries gateway attributes persisted with the reference — notably
+`opening_transaction_reference`, written only by the operations that OPEN a
+payment intent, because `reference` is overwritten on transition and can no
+longer answer which transaction opened it. `RebillingCreateAdapter` reads it
+back to anchor a series onto its genesis authorization.
 
 ### Contracts the host implements
 
@@ -97,13 +124,13 @@ The Laravel bridge supplies the persistence-side implementations:
 | `CustomerRepository` | gateway-side customer references, linked to instruments |
 | `VirtualCardReferenceRepository` | virtual card id ↔ gateway card reference (both directions) |
 
-`GatewayFactory` extends Omnipay's factory with `createForCredential()`:
-registry maps gateway name → class (must implement `Contract\Gateway`),
-instances are initialized with the credential array and cached per
+`GatewayFactory` keeps its own registry (name → class implementing
+`Contract\Gateway`), builds an instance, and calls `configure()` once with a
+`ValueObject\GatewayInfrastructure` — credential, decrypter, instrument and
+customer repositories, and the settings array. Instances are cached per
 `GatewayId`. The Laravel bridge subclasses it (`LaravelGatewayFactory`) to
-layer `services.{gateway_name}` app config over the credentials and
-re-initialize. `Logger\GatewayLoggerInterface` records every request/response
-pair; defaults to `NullGatewayLogger`.
+layer `services.{gateway_name}` app config over the credentials before
+`configure()` runs.
 
 ## Inbound: webhooks
 

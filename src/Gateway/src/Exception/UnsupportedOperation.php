@@ -15,7 +15,7 @@ use Techork\PaymentService\Common\ValueObject\ErrorCode;
  * The degradation this must not break is narrower than it first looks. It lives
  * on `retryRefund()` — refunding onto an *alternative* instrument, which Stripe
  * and others have no native primitive for and which
- * {@see \Techork\PaymentService\Gateway\PaymentGatewayRouter::refund} expects to
+ * the refund path expects to
  * fall through the catch as a failed `GatewayResult` so the aggregate records
  * `RefundFailed` and the saga carries on. That is step 2 of that method. It says
  * nothing about step 1, the plain refund.

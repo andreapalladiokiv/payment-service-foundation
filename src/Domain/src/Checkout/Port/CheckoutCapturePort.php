@@ -40,7 +40,7 @@ use Techork\PaymentService\Domain\Checkout\Port\Request\CheckoutCaptureRequest;
  * append, so the aggregate guard rejects the second set of bookkeeping while the
  * money has already left twice. Closing that is the adapter's job — the gateway's
  * own idempotency key, keyed on the intent (the convention in
- * {@see \Techork\PaymentService\Gateway\Contract\PaymentGatewayInterface} is
+ * the gateway roles is
  * `"{paymentIntentId}:capture"`) — and it is not something this contract can
  * promise on the domain's behalf.
  */

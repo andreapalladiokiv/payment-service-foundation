@@ -4,11 +4,10 @@ declare(strict_types=1);
 
 use Money\Currency;
 use Money\Money;
-use Omnipay\Common\Http\PsrClient as OmnipayClient;
-use Symfony\Component\HttpFoundation\Request as HttpRequest;
 use Techork\PaymentService\Common\Contract\DecryptInterface;
 use Techork\PaymentService\Common\Contract\EncryptInterface;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
+use Techork\PaymentService\Common\ValueObject\Challenge\RedirectChallenge;
 use Techork\PaymentService\Common\ValueObject\Country;
 use Techork\PaymentService\Common\ValueObject\CreditCard;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Cvc;
@@ -16,23 +15,30 @@ use Techork\PaymentService\Common\ValueObject\CreditCard\Expiration;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Holder;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Number;
 use Techork\PaymentService\Common\ValueObject\Email;
-use Techork\PaymentService\ConnexPay\AuthorizeRequest;
-use Techork\PaymentService\ConnexPay\CaptureRequest;
-use Techork\PaymentService\ConnexPay\ConnexPayClient;
-use Techork\PaymentService\ConnexPay\CreateCardRequest;
-use Techork\PaymentService\ConnexPay\CreatePaymentMethodRequest;
-use Techork\PaymentService\ConnexPay\PartialCaptureRequest;
-use Techork\PaymentService\ConnexPay\PurchaseRequest;
-use Techork\PaymentService\ConnexPay\RefundRequest;
-use Techork\PaymentService\ConnexPay\VoidRequest;
 use Techork\PaymentService\Common\ValueObject\ExpiresAt;
+use Techork\PaymentService\Common\ValueObject\HostedPayment;
 use Techork\PaymentService\Common\ValueObject\Token;
 use Techork\PaymentService\Common\ValueObject\TokenId;
-use Techork\PaymentService\Common\ValueObject\Challenge\RedirectChallenge;
-use Techork\PaymentService\Common\ValueObject\HostedPayment;
+use Techork\PaymentService\ConnexPay\Authorize;
+use Techork\PaymentService\ConnexPay\Capture;
+use Techork\PaymentService\ConnexPay\ConnexPayClient;
+use Techork\PaymentService\ConnexPay\ConnexPaySettings;
+use Techork\PaymentService\ConnexPay\CreateCard;
+use Techork\PaymentService\ConnexPay\CreatePaymentMethod;
+use Techork\PaymentService\ConnexPay\PartialCapture;
+use Techork\PaymentService\ConnexPay\Purchase;
+use Techork\PaymentService\ConnexPay\Refund;
+use Techork\PaymentService\ConnexPay\VoidTransaction;
+use Techork\PaymentService\Gateway\Command\CancelCommand;
+use Techork\PaymentService\Gateway\Command\CaptureCommand;
+use Techork\PaymentService\Gateway\Command\PlacementCommand;
+use Techork\PaymentService\Gateway\Command\RefundCommand;
+use Techork\PaymentService\Gateway\Command\VaultCommand;
+use Techork\PaymentService\Gateway\Contract\CustomerRepository;
 use Techork\PaymentService\Gateway\Contract\GatewayCredential;
 use Techork\PaymentService\Gateway\Contract\GatewayInstrumentRepository;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
+use Techork\PaymentService\Gateway\ValueObject\GatewayInfrastructure;
 
 /**
  * Live integration tests against the ConnexPay SANDBOX
@@ -68,9 +74,13 @@ function connexpaySandboxClient(): ConnexPayClient
     );
 }
 
-function connexpaySandboxDeviceGuid(): string
+function connexpaySandboxSettings(string $merchantName = ''): ConnexPaySettings
 {
-    return (string) getenv('CONNEXPAY_SANDBOX_DEVICE_GUID');
+    return new ConnexPaySettings(
+        deviceGuid: (string) getenv('CONNEXPAY_SANDBOX_DEVICE_GUID'),
+        merchantName: $merchantName,
+        environment: 'sandbox',
+    );
 }
 
 function connexpaySandboxCredential(): GatewayCredential
@@ -116,6 +126,24 @@ function connexpaySandboxDecrypter(): DecryptInterface
     };
 }
 
+/**
+ * The wiring an operation needs beyond its settings and its command. `$reference` stands in for
+ * the instrument repository: the sandbox has no local store, so a stored-instrument scenario
+ * says outright which guid it means.
+ */
+function connexpaySandboxInfrastructure(?string $reference = null): GatewayInfrastructure
+{
+    $instruments = Mockery::mock(GatewayInstrumentRepository::class);
+    $instruments->shouldReceive('find')->andReturn($reference);
+
+    return new GatewayInfrastructure(
+        connexpaySandboxCredential(),
+        connexpaySandboxDecrypter(),
+        $instruments,
+        Mockery::mock(CustomerRepository::class, ['findByInstrument' => null]),
+    );
+}
+
 function connexpaySandboxCard(): CreditCard
 {
     return new CreditCard(
@@ -144,22 +172,21 @@ function connexpaySandboxBilling(string $city = 'New York'): BillingAddress
  */
 function connexpaySandboxSale(int $amountMinor): array
 {
-    $request = new PurchaseRequest(new OmnipayClient, new HttpRequest);
-    $request->initialize([
-        'money' => new Money($amountMinor, new Currency('USD')),
-        'instrument' => connexpaySandboxCard(),
-        'gateway' => connexpaySandboxCredential(),
-        'decrypter' => connexpaySandboxDecrypter(),
-        'billingAddress' => connexpaySandboxBilling(),
-        'deviceGuid' => connexpaySandboxDeviceGuid(),
-        'connexPayClient' => connexpaySandboxClient(),
-    ]);
+    $result = new Purchase(
+        connexpaySandboxSettings(),
+        new PlacementCommand(
+            gatewayId: GatewayId::generate(),
+            instrument: connexpaySandboxCard(),
+            amount: new Money($amountMinor, new Currency('USD')),
+            billingAddress: connexpaySandboxBilling(),
+        ),
+        connexpaySandboxInfrastructure(),
+        connexpaySandboxClient(),
+    )->charge();
 
-    $response = $request->send();
+    expect($result->success)->toBeTrue($result->message ?? 'sale failed');
 
-    expect($response->isSuccessful())->toBeTrue($response->getMessage() ?? 'sale failed');
-
-    return [(string) $response->getTransactionReference(), $response->getTransactionMetadata()];
+    return [(string) $result->reference, $result->metadata];
 }
 
 /**
@@ -170,50 +197,49 @@ function connexpaySandboxSale(int $amountMinor): array
  */
 function connexpaySandboxRetry(callable $sendAttempt): object
 {
-    $response = $sendAttempt();
+    $result = $sendAttempt();
 
-    for ($i = 0; $i < 10 && ! $response->isSuccessful() && str_contains((string) $response->getMessage(), 'not processed'); $i++) {
+    for ($i = 0; $i < 10 && ! $result->success && str_contains((string) $result->message, 'not processed'); $i++) {
         sleep(6);
-        $response = $sendAttempt();
+        $result = $sendAttempt();
     }
 
-    return $response;
+    return $result;
 }
 
 function connexpaySandboxAuth(int $amountMinor): string
 {
-    $request = new AuthorizeRequest(new OmnipayClient, new HttpRequest);
-    $request->initialize([
-        'money' => new Money($amountMinor, new Currency('USD')),
-        'instrument' => connexpaySandboxCard(),
-        'gateway' => connexpaySandboxCredential(),
-        'decrypter' => connexpaySandboxDecrypter(),
-        'billingAddress' => connexpaySandboxBilling(),
-        'deviceGuid' => connexpaySandboxDeviceGuid(),
-        'connexPayClient' => connexpaySandboxClient(),
-    ]);
+    $result = new Authorize(
+        connexpaySandboxSettings(),
+        new PlacementCommand(
+            gatewayId: GatewayId::generate(),
+            instrument: connexpaySandboxCard(),
+            amount: new Money($amountMinor, new Currency('USD')),
+            billingAddress: connexpaySandboxBilling(),
+        ),
+        connexpaySandboxInfrastructure(),
+        connexpaySandboxClient(),
+    )->authorize();
 
-    $response = $request->send();
+    expect($result->success)->toBeTrue($result->message ?? 'authonly failed');
 
-    expect($response->isSuccessful())->toBeTrue($response->getMessage() ?? 'authonly failed');
-
-    return (string) $response->getTransactionReference();
+    return (string) $result->reference;
 }
 
 it('verifies a card whose billing city carries accents', function () {
-    $request = new CreateCardRequest(new OmnipayClient, new HttpRequest);
-    $request->initialize([
-        'instrument' => connexpaySandboxCard(),
-        'decrypter' => connexpaySandboxDecrypter(),
-        'billingAddress' => connexpaySandboxBilling(city: 'München'),
-        'deviceGuid' => connexpaySandboxDeviceGuid(),
-        'connexPayClient' => connexpaySandboxClient(),
-    ]);
+    $result = new CreateCard(
+        connexpaySandboxSettings(),
+        new VaultCommand(
+            gatewayId: GatewayId::generate(),
+            instrument: connexpaySandboxCard(),
+            billingAddress: connexpaySandboxBilling(city: 'München'),
+        ),
+        connexpaySandboxInfrastructure(),
+        connexpaySandboxClient(),
+    )->tokenize();
 
-    $response = $request->send();
-
-    expect($response->isSuccessful())->toBeTrue($response->getMessage() ?? 'verify failed')
-        ->and($response->getTransactionReference())->not->toBeEmpty();
+    expect($result->success)->toBeTrue($result->message ?? 'verify failed')
+        ->and($result->reference)->not->toBeEmpty();
 })->skip(! connexpaySandboxConfigured(), CONNEXPAY_SANDBOX_SKIP);
 
 it('charges a sale and surfaces the incoming transaction code', function () {
@@ -227,110 +253,100 @@ it('charges a sale and surfaces the incoming transaction code', function () {
 it('refunds an unsettled sale via the void fallback', function () {
     [$saleGuid] = connexpaySandboxSale(507);
 
-    $request = new RefundRequest(new OmnipayClient, new HttpRequest);
-    $request->initialize([
-        'money' => new Money(507, new Currency('USD')),
-        'transactionReference' => $saleGuid,
-        'deviceGuid' => connexpaySandboxDeviceGuid(),
-        'connexPayClient' => connexpaySandboxClient(),
-    ]);
+    $result = new Refund(
+        connexpaySandboxSettings(),
+        new RefundCommand(
+            gatewayId: GatewayId::generate(),
+            transactionReference: $saleGuid,
+            amount: new Money(507, new Currency('USD')),
+        ),
+        connexpaySandboxClient(),
+    )->refund();
 
-    $response = $request->send();
-
-    expect($response->isSuccessful())->toBeTrue($response->getMessage() ?? 'refund failed');
+    expect($result->success)->toBeTrue($result->message ?? 'refund failed');
 })->skip(! connexpaySandboxConfigured(), CONNEXPAY_SANDBOX_SKIP);
 
 it('captures a held auth and reports the sale guid with its incoming transaction code', function () {
     $authGuid = connexpaySandboxAuth(511);
 
-    $response = connexpaySandboxRetry(function () use ($authGuid) {
-        $request = new CaptureRequest(new OmnipayClient, new HttpRequest);
-        $request->initialize([
-            'transactionReference' => $authGuid,
-            'deviceGuid' => connexpaySandboxDeviceGuid(),
-            'connexPayClient' => connexpaySandboxClient(),
-        ]);
+    $result = connexpaySandboxRetry(fn () => new Capture(
+        connexpaySandboxSettings(),
+        new CaptureCommand(
+            gatewayId: GatewayId::generate(),
+            transactionReference: $authGuid,
+            amount: new Money(511, new Currency('USD')),
+        ),
+        connexpaySandboxClient(),
+    )->capture());
 
-        return $request->send();
-    });
-
-    expect($response->isSuccessful())->toBeTrue($response->getMessage() ?? 'capture failed')
-        ->and($response->getTransactionReference())->not->toBeEmpty()
-        ->and($response->getTransactionReference())->not->toBe($authGuid)
-        ->and($response->getTransactionMetadata())->toHaveKey('incoming_transaction_code');
+    expect($result->success)->toBeTrue($result->message ?? 'capture failed')
+        ->and($result->reference)->not->toBeEmpty()
+        ->and($result->reference)->not->toBe($authGuid)
+        ->and($result->metadata)->toHaveKey('incoming_transaction_code');
 })->skip(! connexpaySandboxConfigured(), CONNEXPAY_SANDBOX_SKIP);
 
 it('partially captures a held auth by voiding and reselling the smaller amount', function () {
     $authGuid = connexpaySandboxAuth(531);
 
-    $response = connexpaySandboxRetry(function () use ($authGuid) {
-        $request = new PartialCaptureRequest(new OmnipayClient, new HttpRequest);
-        $request->initialize([
-            'transactionReference' => $authGuid,
-            'money' => new Money(303, new Currency('USD')),
-            'instrument' => connexpaySandboxCard(),
-            'gateway' => connexpaySandboxCredential(),
-            'decrypter' => connexpaySandboxDecrypter(),
-            'billingAddress' => connexpaySandboxBilling(),
-            'deviceGuid' => connexpaySandboxDeviceGuid(),
-            'connexPayClient' => connexpaySandboxClient(),
-        ]);
+    $result = connexpaySandboxRetry(fn () => new PartialCapture(
+        connexpaySandboxSettings(),
+        new CaptureCommand(
+            gatewayId: GatewayId::generate(),
+            transactionReference: $authGuid,
+            amount: new Money(303, new Currency('USD')),
+            authorizedAmount: new Money(531, new Currency('USD')),
+            instrument: connexpaySandboxCard(),
+        ),
+        connexpaySandboxInfrastructure(),
+        connexpaySandboxClient(),
+    )->capture());
 
-        return $request->send();
-    });
-
-    expect($response->isSuccessful())->toBeTrue($response->getMessage() ?? 'partial capture failed')
-        ->and($response->getTransactionReference())->not->toBeEmpty()
-        ->and($response->getTransactionReference())->not->toBe($authGuid);
+    expect($result->success)->toBeTrue($result->message ?? 'partial capture failed')
+        ->and($result->reference)->not->toBeEmpty()
+        ->and($result->reference)->not->toBe($authGuid);
 })->skip(! connexpaySandboxConfigured(), CONNEXPAY_SANDBOX_SKIP);
 
 it('registers a token as a payment method via verify and returns the customer guid', function () {
     // Tokenize a raw card first — its guid plays the stored-token role.
-    $createCard = new CreateCardRequest(new OmnipayClient, new HttpRequest);
-    $createCard->initialize([
-        'instrument' => connexpaySandboxCard(),
-        'decrypter' => connexpaySandboxDecrypter(),
-        'billingAddress' => connexpaySandboxBilling(),
-        'deviceGuid' => connexpaySandboxDeviceGuid(),
-        'connexPayClient' => connexpaySandboxClient(),
-    ]);
-    $tokenized = $createCard->send();
-    expect($tokenized->isSuccessful())->toBeTrue($tokenized->getMessage() ?? 'tokenize failed');
+    $tokenized = new CreateCard(
+        connexpaySandboxSettings(),
+        new VaultCommand(
+            gatewayId: GatewayId::generate(),
+            instrument: connexpaySandboxCard(),
+            billingAddress: connexpaySandboxBilling(),
+        ),
+        connexpaySandboxInfrastructure(),
+        connexpaySandboxClient(),
+    )->tokenize();
 
-    $resolver = Mockery::mock(GatewayInstrumentRepository::class);
-    $resolver->shouldReceive('find')->andReturn($tokenized->getTransactionReference());
+    expect($tokenized->success)->toBeTrue($tokenized->message ?? 'tokenize failed');
 
-    $request = new CreatePaymentMethodRequest(new OmnipayClient, new HttpRequest);
-    $request->initialize([
-        'instrument' => new Token(TokenId::generate(), connexpaySandboxCard(), ExpiresAt::fromDateTime(new DateTimeImmutable('+1 hour'))),
-        'gateway' => connexpaySandboxCredential(),
-        'decrypter' => connexpaySandboxDecrypter(),
-        'referenceResolver' => $resolver,
-        'billingAddress' => connexpaySandboxBilling(),
-        'deviceGuid' => connexpaySandboxDeviceGuid(),
-        'connexPayClient' => connexpaySandboxClient(),
-    ]);
+    $result = new CreatePaymentMethod(
+        connexpaySandboxSettings(),
+        new VaultCommand(
+            gatewayId: GatewayId::generate(),
+            instrument: new Token(TokenId::generate(), connexpaySandboxCard(), ExpiresAt::fromDateTime(new DateTimeImmutable('+1 hour'))),
+            billingAddress: connexpaySandboxBilling(),
+        ),
+        connexpaySandboxInfrastructure($tokenized->reference),
+        connexpaySandboxClient(),
+    )->register();
 
-    $response = $request->send();
-
-    expect($response->isSuccessful())->toBeTrue($response->getMessage() ?? 'verify failed')
-        ->and($response->getTransactionReference())->not->toBeEmpty()
-        ->and($response->getCustomerReference())->not->toBeEmpty();
+    expect($result->success)->toBeTrue($result->message ?? 'verify failed')
+        ->and($result->reference)->not->toBeEmpty()
+        ->and($result->customerReference)->not->toBeEmpty();
 })->skip(! connexpaySandboxConfigured(), CONNEXPAY_SANDBOX_SKIP);
 
 it('voids a held auth', function () {
     $authGuid = connexpaySandboxAuth(513);
 
-    $request = new VoidRequest(new OmnipayClient, new HttpRequest);
-    $request->initialize([
-        'transactionReference' => $authGuid,
-        'deviceGuid' => connexpaySandboxDeviceGuid(),
-        'connexPayClient' => connexpaySandboxClient(),
-    ]);
+    $result = new VoidTransaction(
+        connexpaySandboxSettings(),
+        new CancelCommand(GatewayId::generate(), $authGuid),
+        connexpaySandboxClient(),
+    )->cancel();
 
-    $response = $request->send();
-
-    expect($response->isSuccessful())->toBeTrue($response->getMessage() ?? 'void failed');
+    expect($result->success)->toBeTrue($result->message ?? 'void failed');
 })->skip(! connexpaySandboxConfigured(), CONNEXPAY_SANDBOX_SKIP);
 
 /**
@@ -347,29 +363,27 @@ it('voids a held auth', function () {
 it('creates a hosted payment page and returns a redirect challenge', function () {
     $paymentIntentId = '01991234-0000-7000-8000-'.substr(bin2hex(random_bytes(6)), 0, 12);
 
-    $request = new PurchaseRequest(new OmnipayClient, new HttpRequest);
-    $request->initialize([
-        'money' => new Money(1099, new Currency('USD')),
-        'instrument' => new HostedPayment(
-            successUrl: 'https://foundation-tests.example/paid',
-            cancelUrl: 'https://foundation-tests.example/cancelled',
+    $result = new Purchase(
+        connexpaySandboxSettings(merchantName: 'Foundation Tests'),
+        new PlacementCommand(
+            gatewayId: GatewayId::generate(),
+            instrument: new HostedPayment(
+                successUrl: 'https://foundation-tests.example/paid',
+                cancelUrl: 'https://foundation-tests.example/cancelled',
+            ),
+            amount: new Money(1099, new Currency('USD')),
+            clientUniqueId: $paymentIntentId,
+            billingAddress: connexpaySandboxBilling(),
         ),
-        'gateway' => connexpaySandboxCredential(),
-        'billingAddress' => connexpaySandboxBilling(),
-        'merchantName' => 'Foundation Tests',
-        'clientUniqueId' => $paymentIntentId,
-        'deviceGuid' => connexpaySandboxDeviceGuid(),
-        'connexPayClient' => connexpaySandboxClient(),
-    ]);
+        connexpaySandboxInfrastructure(),
+        connexpaySandboxClient(),
+    )->charge();
 
-    $response = $request->send();
-    $challenge = $response->getChallenge();
-
-    expect($challenge)->toBeInstanceOf(RedirectChallenge::class, $response->getMessage() ?? 'hosted page request failed')
-        ->and($challenge->url)->toContain('/HostedPaymentPage/')
+    expect($result->challenge)->toBeInstanceOf(RedirectChallenge::class, $result->message ?? 'hosted page request failed')
+        ->and($result->challenge->url)->toContain('/HostedPaymentPage/')
         // The reference the sale webhook will have to correlate on, since the
         // response carries no sale guid.
-        ->and($challenge->transactionId)->toBe($paymentIntentId)
-        ->and($response->getTransactionReference())->toBe($paymentIntentId)
-        ->and($response->isSuccessful())->toBeFalse();
+        ->and($result->challenge->transactionId)->toBe($paymentIntentId)
+        ->and($result->reference)->toBe($paymentIntentId)
+        ->and($result->success)->toBeFalse();
 })->skip(! connexpaySandboxConfigured(), CONNEXPAY_SANDBOX_SKIP);

@@ -4,12 +4,25 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Revolut;
 
-use Omnipay\Common\AbstractGateway;
-use Omnipay\Common\Message\AbstractRequest;
 use Override;
 use Techork\PaymentService\Gateway\Contract\CustomerRepository;
 use Techork\PaymentService\Gateway\Contract\Gateway;
 use Techork\PaymentService\Revolut\Exception\UnsupportedOperationException;
+use Techork\PaymentService\Gateway\Command\CaptureCommand;
+use Techork\PaymentService\Gateway\Concern\HoldsInfrastructure;
+use Techork\PaymentService\Gateway\ValueObject\GatewayInfrastructure;
+use Techork\PaymentService\Gateway\Contract\GatewayResult;
+use Techork\PaymentService\Gateway\Command\CancelCommand;
+use Techork\PaymentService\Gateway\Command\RefundCommand;
+use Techork\PaymentService\Gateway\Command\PlacementCommand;
+use Techork\PaymentService\Gateway\Command\RebillingCommand;
+use Techork\PaymentService\Gateway\Contract\AuthorizationResult;
+use Techork\PaymentService\Gateway\Command\VaultCommand;
+use Techork\PaymentService\Gateway\Contract\RegistrationResult;
+use Techork\PaymentService\Gateway\Command\IssueCardCommand;
+use Techork\PaymentService\Gateway\Command\TerminateCardCommand;
+use Techork\PaymentService\Gateway\Command\UpdateCardCommand;
+use Techork\PaymentService\Gateway\Contract\VirtualCardResult;
 
 /**
  * Revolut Business is an issuing-only gateway — it deploys virtual cards
@@ -41,8 +54,31 @@ use Techork\PaymentService\Revolut\Exception\UnsupportedOperationException;
  *  - `fetchSensitiveDetails`: whether issuance follows up with
  *    `GET /cards/{id}/sensitive-details` to surface PAN + CVV (default true).
  */
-final class RevolutGateway extends AbstractGateway implements Gateway
+final class RevolutGateway implements Gateway
 {
+    use HoldsInfrastructure;
+
+    private string $clientId = '';
+
+    private string $privateKey = '';
+
+    private string $refreshToken = '';
+
+    private string $issuer = '';
+
+    private ?string $baseUrl = null;
+
+    /** @var ?list<string> */
+    private ?array $accountIds = null;
+
+    private ?string $product = null;
+
+    private string $spendLimitPeriod = 'single';
+
+    private ?int $validityDays = null;
+
+    private bool $fetchSensitiveDetails = true;
+
     private RevolutHttpClientInterface $client;
 
     #[Override]
@@ -51,7 +87,6 @@ final class RevolutGateway extends AbstractGateway implements Gateway
         return 'revolut';
     }
 
-    #[Override]
     public function setCustomerRepository(CustomerRepository $repository): void
     {
         // These cards are auto-issued with no holder at all (Revolut wants a
@@ -60,71 +95,29 @@ final class RevolutGateway extends AbstractGateway implements Gateway
         // repository is intentionally ignored.
     }
 
-    #[Override]
-    public function getDefaultParameters(): array
-    {
-        return [
-            'clientId' => '',
-            'privateKey' => '',
-            'refreshToken' => '',
-            'issuer' => '',
-            'baseUrl' => null,
-            'accountIds' => null,
-            'product' => null,
-            'spendLimitPeriod' => 'single',
-            'validityDays' => null,
-            'fetchSensitiveDetails' => true,
-        ];
-    }
-
     public function getClientId(): string
     {
-        return $this->getParameter('clientId') ?? '';
-    }
-
-    public function setClientId(string $value): static
-    {
-        return $this->setParameter('clientId', $value);
+        return $this->clientId;
     }
 
     public function getPrivateKey(): string
     {
-        return $this->getParameter('privateKey') ?? '';
-    }
-
-    public function setPrivateKey(string $value): static
-    {
-        return $this->setParameter('privateKey', $value);
+        return $this->privateKey;
     }
 
     public function getRefreshToken(): string
     {
-        return $this->getParameter('refreshToken') ?? '';
-    }
-
-    public function setRefreshToken(string $value): static
-    {
-        return $this->setParameter('refreshToken', $value);
+        return $this->refreshToken;
     }
 
     public function getIssuer(): string
     {
-        return $this->getParameter('issuer') ?? '';
-    }
-
-    public function setIssuer(string $value): static
-    {
-        return $this->setParameter('issuer', $value);
+        return $this->issuer;
     }
 
     public function getBaseUrl(): ?string
     {
-        return $this->getParameter('baseUrl');
-    }
-
-    public function setBaseUrl(?string $value): static
-    {
-        return $this->setParameter('baseUrl', $value);
+        return $this->baseUrl;
     }
 
     /**
@@ -132,88 +125,75 @@ final class RevolutGateway extends AbstractGateway implements Gateway
      */
     public function getAccountIds(): ?array
     {
-        return $this->getParameter('accountIds');
-    }
-
-    /**
-     * Accepts a list of account UUIDs. Tolerates a bare string too, so a
-     * gateway whose credentials still hold a single string initialises without
-     * a TypeError.
-     *
-     * @param  list<string>|string|null  $value
-     */
-    public function setAccountIds(array|string|null $value): static
-    {
-        if (is_string($value)) {
-            $value = $value === '' ? [] : [$value];
-        }
-
-        return $this->setParameter('accountIds', $value);
+        return $this->accountIds;
     }
 
     public function getProduct(): ?string
     {
-        return $this->getParameter('product');
-    }
-
-    public function setProduct(?string $value): static
-    {
-        return $this->setParameter('product', $value);
+        return $this->product;
     }
 
     public function getSpendLimitPeriod(): string
     {
-        return $this->getParameter('spendLimitPeriod') ?? 'single';
-    }
-
-    public function setSpendLimitPeriod(string $value): static
-    {
-        return $this->setParameter('spendLimitPeriod', $value);
+        return $this->spendLimitPeriod;
     }
 
     public function getValidityDays(): ?int
     {
-        $days = $this->getParameter('validityDays');
-
-        return $days === null ? null : (int) $days;
-    }
-
-    public function setValidityDays(?int $value): static
-    {
-        return $this->setParameter('validityDays', $value);
+        return $this->validityDays;
     }
 
     public function getFetchSensitiveDetails(): bool
     {
-        $value = $this->getParameter('fetchSensitiveDetails');
-
-        return $value === null || $value;
+        return $this->fetchSensitiveDetails;
     }
 
-    public function setFetchSensitiveDetails(bool $value): static
-    {
-        return $this->setParameter('fetchSensitiveDetails', $value);
-    }
-
+    /**
+     * Settings in, client out, once. `getResolvedBaseUrl()` reads the setting rather than a
+     * property the client already baked, so the two cannot disagree.
+     */
     #[Override]
-    public function initialize(array $parameters = []): static
+    public function configure(GatewayInfrastructure $infrastructure): void
     {
-        // parent::initialize() drives Omnipay's Helper, which translates
-        // snake_case keys (client_id, private_key, account_ids …) into the
-        // matching set*() calls. Reading our own getters afterwards is the
-        // only way to see the same shape regardless of whether creds come
-        // from the gateways table or a unit-test factory.
-        parent::initialize($parameters);
+        $this->infrastructure = $infrastructure;
+        $this->clientId = $infrastructure->stringSetting('clientId');
+        $this->privateKey = $infrastructure->stringSetting('privateKey');
+        $this->refreshToken = $infrastructure->stringSetting('refreshToken');
+        $this->issuer = $infrastructure->stringSetting('issuer');
+        $this->product = $this->nullable($infrastructure->stringSetting('product'));
+        $this->spendLimitPeriod = $infrastructure->stringSetting('spendLimitPeriod', 'single');
+        $this->baseUrl = $this->nullable($infrastructure->stringSetting('baseUrl'));
+
+        // Stored credentials hold either shape: the column was a single string before it was a
+        // list, and a gateway whose row was never migrated has to keep loading.
+        $accountIds = $infrastructure->setting('accountIds');
+        $this->accountIds = match (true) {
+            // Re-keyed and cast, because a credential column is untyped: what comes back is a
+            // list of UUID strings only by convention, and the allow-list filter downstream
+            // matches strings.
+            is_array($accountIds) => array_values(array_map(strval(...), $accountIds)),
+            $accountIds === '' || $accountIds === null => null,
+            default => [(string) $accountIds],
+        };
+
+        $validityDays = $infrastructure->setting('validityDays');
+        $this->validityDays = $validityDays === null ? null : (int) $validityDays;
+
+        // Absent means yes: the card's own details are what a caller asked for a card to get.
+        $this->fetchSensitiveDetails = (bool) ($infrastructure->setting('fetchSensitiveDetails') ?? true);
 
         $this->client = new RevolutClient(
-            clientId: $this->getClientId(),
-            privateKey: $this->getPrivateKey(),
-            refreshToken: $this->getRefreshToken(),
-            issuer: $this->getIssuer(),
+            clientId: $this->clientId,
+            privateKey: $this->privateKey,
+            refreshToken: $this->refreshToken,
+            issuer: $this->issuer,
             baseUrl: $this->getResolvedBaseUrl(),
         );
+    }
 
-        return $this;
+    private function nullable(string $value): ?string
+    {
+        return $value === '' ? null : $value;
     }
 
     /**
@@ -226,88 +206,98 @@ final class RevolutGateway extends AbstractGateway implements Gateway
         return $this->getBaseUrl() ?? RevolutClient::PRODUCTION_BASE_URL;
     }
 
-    public function setHttpClient(RevolutHttpClientInterface $client): static
+    #[Override]
+    public function issueVirtualCard(IssueCardCommand $command): VirtualCardResult
     {
-        $this->client = $client;
-
-        return $this;
+        return new IssueVirtualCard($this->client, $this->cardSettings())->issue($command);
     }
 
     #[Override]
-    public function issueVirtualCard(array $options = []): AbstractRequest
-    {
-        return $this->createRevolutRequest(IssueVirtualCardRequest::class, $options);
-    }
-
-    #[Override]
-    public function retryRefund(array $options = []): AbstractRequest
+    public function retryRefund(RefundCommand $command): GatewayResult
     {
         throw UnsupportedOperationException::operation('retryRefund');
     }
 
     #[Override]
-    public function updateVirtualCard(array $options = []): AbstractRequest
+    public function updateVirtualCard(UpdateCardCommand $command): VirtualCardResult
     {
-        return $this->createRevolutRequest(UpdateVirtualCardRequest::class, $options);
+        return new UpdateVirtualCard($this->client, $this->cardSettings())->update($command);
     }
 
     #[Override]
-    public function terminateVirtualCard(array $options = []): AbstractRequest
+    public function terminateVirtualCard(TerminateCardCommand $command): GatewayResult
     {
-        return $this->createRevolutRequest(TerminateCardRequest::class, $options);
+        return new TerminateCard($this->client)->terminate($command);
     }
 
-    public function purchase(array $options = []): AbstractRequest
+    #[Override]
+    public function charge(PlacementCommand $command): AuthorizationResult
     {
-        throw UnsupportedOperationException::operation('purchase');
+        throw UnsupportedOperationException::operation('charge');
     }
 
-    public function authorize(array $options = []): AbstractRequest
+    #[Override]
+    public function authorize(PlacementCommand $command): AuthorizationResult
     {
         throw UnsupportedOperationException::operation('authorize');
     }
 
-    public function capture(array $options = []): AbstractRequest
+    #[Override]
+    public function capture(CaptureCommand $command): GatewayResult
     {
         throw UnsupportedOperationException::operation('capture');
     }
 
-    public function refund(array $options = []): AbstractRequest
+    #[Override]
+    public function refund(RefundCommand $command): GatewayResult
     {
         throw UnsupportedOperationException::operation('refund');
     }
 
     #[Override]
-    public function void(array $options = []): AbstractRequest
+    public function cancel(CancelCommand $command): GatewayResult
     {
-        throw UnsupportedOperationException::operation('void');
-    }
-
-    public function createCard(array $options = []): AbstractRequest
-    {
-        throw UnsupportedOperationException::operation('createCard');
+        throw UnsupportedOperationException::operation('cancel');
     }
 
     #[Override]
-    public function createPaymentMethod(array $options = []): AbstractRequest
+    public function tokenize(VaultCommand $command): RegistrationResult
     {
-        throw UnsupportedOperationException::operation('createPaymentMethod');
+        throw UnsupportedOperationException::operation('tokenize');
+    }
+
+    #[Override]
+    public function registerPaymentMethod(VaultCommand $command): RegistrationResult
+    {
+        throw UnsupportedOperationException::operation('registerPaymentMethod');
     }
 
     /**
-     * @param  class-string<AbstractRequest>  $class
-     * @param  array<string, mixed>  $parameters
+     * Swaps the HTTP client the configured gateway built. The only seam a test has for reaching
+     * Revolut with a fake, now that construction happens in one pass.
      */
-    private function createRevolutRequest(string $class, array $parameters): AbstractRequest
+    public function setHttpClient(RevolutHttpClientInterface $client): void
     {
-        return parent::createRequest($class, [
-            ...$parameters,
-            'revolutClient' => $this->client,
-            'accountIds' => $parameters['accountIds'] ?? $this->getAccountIds(),
-            'product' => $parameters['product'] ?? $this->getProduct(),
-            'spendLimitPeriod' => $parameters['spendLimitPeriod'] ?? $this->getSpendLimitPeriod(),
-            'validityDays' => $parameters['validityDays'] ?? $this->getValidityDays(),
-            'fetchSensitiveDetails' => $parameters['fetchSensitiveDetails'] ?? $this->getFetchSensitiveDetails(),
-        ]);
+        $this->client = $client;
+    }
+
+    /**
+     * What the deployment contributes to a card, as opposed to what the caller asked for.
+     */
+    private function cardSettings(): CardSettings
+    {
+        return new CardSettings(
+            product: $this->product,
+            accountIds: $this->accountIds,
+            spendLimitPeriod: $this->spendLimitPeriod,
+            validityDays: $this->validityDays,
+            fetchSensitiveDetails: $this->fetchSensitiveDetails,
+        );
+    }
+
+    #[Override]
+    public function authorizeRebilling(RebillingCommand $command): AuthorizationResult
+    {
+        throw UnsupportedOperationException::operation('authorizeRebilling');
     }
 }

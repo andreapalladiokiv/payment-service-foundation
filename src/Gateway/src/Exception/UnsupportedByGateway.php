@@ -13,7 +13,7 @@ use Techork\PaymentService\Common\Contract\CodedError;
  * mistake in how the caller selected the gateway; no retry, no alternative
  * instrument and no cardholder action can make it succeed.
  *
- * {@see \Techork\PaymentService\Gateway\PaymentGatewayRouter} rethrows anything
+ * the gateway stack rethrows anything
  * carrying this marker instead of folding it into a failed result. That
  * distinction matters downstream: every other failure the router catches
  * becomes `AuthorizationResult::failed()` →

@@ -4,6 +4,12 @@ declare(strict_types=1);
 
 use Techork\PaymentService\Revolut\RevolutGateway;
 use Techork\PaymentService\Revolut\RevolutHttpClientInterface;
+use Techork\PaymentService\Common\Contract\DecryptInterface;
+use Techork\PaymentService\Gateway\Contract\CustomerRepository;
+use Techork\PaymentService\Gateway\Contract\GatewayCredential;
+use Techork\PaymentService\Gateway\Contract\GatewayInstrumentRepository;
+use Techork\PaymentService\Gateway\ValueObject\GatewayId;
+use Techork\PaymentService\Gateway\ValueObject\GatewayInfrastructure;
 
 /**
  * Builds a RevolutGateway initialised with test credentials. When a fake /
@@ -15,13 +21,19 @@ use Techork\PaymentService\Revolut\RevolutHttpClientInterface;
 function makeRevolutGateway(?RevolutHttpClientInterface $client = null, array $params = []): RevolutGateway
 {
     $gateway = new RevolutGateway;
-    $gateway->initialize([
-        'clientId' => 'client-test',
-        'privateKey' => 'key-test',
-        'refreshToken' => 'refresh-test',
-        'issuer' => 'example.com',
-        ...$params,
-    ]);
+    $gateway->configure(new GatewayInfrastructure(
+        Mockery::mock(GatewayCredential::class, ['getId' => GatewayId::generate()]),
+        Mockery::mock(DecryptInterface::class),
+        Mockery::mock(GatewayInstrumentRepository::class, ['find' => null]),
+        Mockery::mock(CustomerRepository::class, ['findByInstrument' => null]),
+        [
+            'clientId' => 'client-test',
+            'privateKey' => 'key-test',
+            'refreshToken' => 'refresh-test',
+            'issuer' => 'example.com',
+            ...$params,
+        ],
+    ));
 
     if ($client !== null) {
         $gateway->setHttpClient($client);

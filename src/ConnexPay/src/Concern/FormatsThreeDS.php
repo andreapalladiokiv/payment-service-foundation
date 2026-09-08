@@ -4,22 +4,22 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\ConnexPay\Concern;
 
+use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSResult;
 use Techork\PaymentService\Gateway\Exception\IncompleteAuthentication;
 
 /**
  * Maps an authentication result onto ConnexPay's `Card.ThreeDS` block.
  *
- * Separate from {@see ConnexPayRequestParameters} because it is the one member of that
- * trait that cannot stand on its own: it reads `getThreeDS()` from
- * {@see \Techork\PaymentService\Gateway\Concern\InstrumentParameters}. Living in the
- * shared trait, it was inherited by the eleven ConnexPay requests while only five carry an
- * instrument — so six of them exposed a `formatThreeDS()` that would have died on
- * `Call to undefined method` the moment anything called it. Nothing did, which is why it
- * went unnoticed; the split makes the dependency structural instead of a coincidence.
+ * Separate from {@see BuildsConnexPayPayload} because it belongs to fewer operations than that
+ * one does. It used to live in the shared trait and read `getThreeDS()` off Omnipay's parameter
+ * bag, so it was inherited by the eleven ConnexPay requests while only five carried an
+ * instrument — six of them exposed a `formatThreeDS()` that would have died on
+ * `Call to undefined method` the moment anything called it. Nothing did, which is why it went
+ * unnoticed; the split made the dependency structural instead of a coincidence, and taking the
+ * attestation as an argument now makes it impossible to use where there is none to pass.
  *
- * Use it only alongside `InstrumentParameters`, and only on operations that can actually
- * carry an authentication: a capture, void, refund or virtual-card call has no cardholder
- * to authenticate.
+ * Use it only on operations that can actually carry an authentication: a capture, void, refund or
+ * virtual-card call has no cardholder to authenticate.
  */
 trait FormatsThreeDS
 {
@@ -45,21 +45,17 @@ trait FormatsThreeDS
      * demonstrably did not apply. ECI is deliberately NOT required here even
      * though Nuvei requires it — per-provider wire truth belongs in the
      * per-provider mapper.
+     *
+     * @return array<string, mixed>|null
      */
-    protected function formatThreeDS(): ?array
+    protected function formatThreeDS(?ThreeDSResult $threeDS): ?array
     {
-        $threeDS = $this->getThreeDS();
-
         if ($threeDS === null) {
             return null;
         }
 
         if (($threeDS->authenticationValue ?? '') === '') {
-            throw IncompleteAuthentication::missingFields(
-                'connexpay',
-                lcfirst((string) preg_replace('/Request$/', '', basename(str_replace('\\', '/', static::class)))),
-                ['Cavv'],
-            );
+            throw IncompleteAuthentication::missingFields('connexpay', $this->threeDSOperation(), ['Cavv']);
         }
 
         return [
@@ -69,5 +65,15 @@ trait FormatsThreeDS
             'AcsTransactionId' => $threeDS->acsTransactionId,
             'ECI' => $threeDS->eci?->value,
         ];
+    }
+
+    /**
+     * The operation named in the refusal, derived from the class rather than restated at each
+     * call site — the operation classes are named for the operations, so `CreatePaymentMethod`
+     * reports `createPaymentMethod` and there is nothing to keep in step.
+     */
+    private function threeDSOperation(): string
+    {
+        return lcfirst(basename(str_replace('\\', '/', static::class)));
     }
 }

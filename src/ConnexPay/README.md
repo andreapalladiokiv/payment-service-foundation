@@ -2,8 +2,8 @@
 
 `techork/payment-service-connexpay` — full acquiring + virtual-card-issuing
 gateway for [ConnexPay](https://docs.connexpay.com/). `ConnexPayGateway`
-(Omnipay `AbstractGateway`, name `connexpay`) talks to **two separate
-ConnexPay APIs**, each with its own base URL and its own bearer token:
+(name `connexpay`) talks to **two separate ConnexPay APIs**, each with its own
+base URL and its own bearer token:
 
 | Client | API | Sandbox / Production |
 | --- | --- | --- |
@@ -16,8 +16,9 @@ the lifetime of the client instance.
 
 ## Credentials
 
-`ConnexPayGateway::initialize()` accepts (snake_case variants like
-`device_guid` are translated by Omnipay's `Helper`):
+`ConnexPayGateway::configure()` reads the merged credential row into a
+`ConnexPaySettings` (snake_case variants like `device_guid` are accepted, because
+stored rows hold both spellings):
 
 | Credential | Meaning |
 | --- | --- |
@@ -37,7 +38,7 @@ currency is silently rebranded rather than rejected — a `Money` of ¥5,000 (ab
 $32) would be charged as **$5,000** on a USD account, with nothing anywhere to
 reconstruct what was meant.
 
-`formatMoney()` therefore refuses any amount whose currency is not
+`ConnexPaySettings::formatAmount()` therefore refuses any amount whose currency is not
 `accountCurrency`. Verified two ways: the OpenAPI source behind the reference
 (`sales-api.json`, updated 2026-07-16) has no currency property on any of the 28
 acquiring paths, and a sandbox probe
@@ -52,26 +53,31 @@ issuing-only currency would reinstate exactly the mis-billing the guard prevents
 
 ## Operations
 
-| Gateway method | Request class | Endpoint | Notes |
-| --- | --- | --- | --- |
-| `createCard()` | `CreateCardRequest` | `POST /api/v1/verify` | $0 verification; card GUID becomes the transaction reference |
-| `createPaymentMethod()` | `CreatePaymentMethodRequest` | `POST /api/v1/verify` | Re-verifies a stored card GUID together with `Card.Customer` so ConnexPay creates/links the customer and returns fresh AVS/CVV codes |
-| `purchase()` | `PurchaseRequest` | `POST /api/v1/sales` | `TenderType` `Credit` or `Cash` (`ExpectedPayments` 1 vs 5) |
-| `purchase()` (hosted) | `PurchaseRequest` | `POST /api/v1/HostedPaymentPageRequests` | A `HostedPayment` instrument switches to the hosted page and returns a `RedirectChallenge` — see below |
-| `authorize()` | `AuthorizeRequest` | `POST /api/v1/authonlys` | `/authonlys` rejects cash — a `Cash` instrument is transparently routed to `purchase()` |
-| `capture()` | `CaptureRequest` | `POST /api/v1/Captures` | Full amount only; the nested `sale` envelope is unwrapped because the **sale** GUID (not the capture GUID) is what later Returns/Void expect |
-| `capture()` (partial) | `PartialCaptureRequest` | void + `POST /api/v1/sales` | See below |
-| `refund()` | `RefundRequest` | `POST /api/v1/returns` | Unsettled sale (422 `Sale has not been settled`) falls back to `POST /api/v1/void` with the same `SaleGuid` + `Amount` |
-| `retryRefund()` | `ReturnRetryRequest` | `POST /api/v1/returns` | `ReturnRetryCard` payload — redirects a previously **declined** Return onto another card (30-day window) |
-| `void()` | `VoidRequest` | `POST /api/v1/void` | By `AuthOnlyGuid` |
-| `issueVirtualCard()` | `IssueVirtualCardRequest` | `POST /api/v1/IssueCard` | Purchases API; see below |
-| `updateVirtualCard()` | `UpdateVirtualCardRequest` | `PUT /api/v1/IssueCard/{guid}` | Only `AmountLimit` + `PurchaseType`; success = HTTP 200 without `error` body |
-| `terminateVirtualCard()` | `TerminateCardRequest` | `POST /api/v1/TerminateCard/{cardGuid}` | |
+One class per operation. Each takes a `ConnexPaySettings`, the typed command and
+whatever else it needs; `payload()` builds the body without touching the network
+and the action method sends it and returns the typed result.
 
-Transport failures on the API call never throw from `sendData()` — every
-request maps `GuzzleException` into a failed response carrying the message.
-The lazy token grant is the exception: an authentication failure surfaces
-as a `RuntimeException` from the client.
+| Gateway method | Operation | Endpoint | Notes |
+| --- | --- | --- | --- |
+| `tokenize()` | `CreateCard::tokenize()` | `POST /api/v1/verify` | $0 verification; card GUID becomes the transaction reference |
+| `registerPaymentMethod()` | `CreatePaymentMethod::register()` | `POST /api/v1/verify` | Re-verifies a stored card GUID together with `Card.Customer` so ConnexPay creates/links the customer and returns fresh AVS/CVV codes |
+| `charge()` | `Purchase::charge()` | `POST /api/v1/sales` | `TenderType` `Credit` or `Cash` (`ExpectedPayments` 1 vs 5) |
+| `charge()` (hosted) | `Purchase::charge()` | `POST /api/v1/HostedPaymentPageRequests` | A `HostedPayment` instrument switches to the hosted page and returns a `RedirectChallenge` — see below |
+| `authorize()` | `Authorize::authorize()` | `POST /api/v1/authonlys` | `/authonlys` rejects cash — a `Cash` instrument is transparently routed to `charge()` |
+| `authorizeRebilling()` | `Authorize::authorize()` | `POST /api/v1/authonlys` | Same body: the auth-only carries no field for a series position |
+| `capture()` | `Capture::capture()` | `POST /api/v1/Captures` | Full amount only; the nested `sale` envelope is unwrapped because the **sale** GUID (not the capture GUID) is what later Returns/Void expect |
+| `capture()` (partial) | `PartialCapture::capture()` | void + `POST /api/v1/sales` | See below |
+| `refund()` | `Refund::refund()` | `POST /api/v1/returns` | Unsettled sale (422 `Sale has not been settled`) falls back to `POST /api/v1/void` with the same `SaleGuid` + `Amount` |
+| `retryRefund()` | `ReturnRetry::retry()` | `POST /api/v1/returns` | `ReturnRetryCard` payload — redirects a previously **declined** Return onto another card (30-day window) |
+| `cancel()` | `VoidTransaction::cancel()` | `POST /api/v1/void` | By `AuthOnlyGuid` |
+| `issueVirtualCard()` | `IssueVirtualCard::issue()` | `POST /api/v1/IssueCard` | Purchases API; see below |
+| `updateVirtualCard()` | `UpdateVirtualCard::update()` | `PUT /api/v1/IssueCard/{guid}` | Only `AmountLimit` + `PurchaseType`; success = HTTP 200 without `error` body |
+| `terminateVirtualCard()` | `TerminateCard::terminate()` | `POST /api/v1/TerminateCard/{cardGuid}` | |
+
+Transport failures on the API call never throw — every operation maps
+`GuzzleException` into a failed result carrying the message. The lazy token
+grant is the exception: an authentication failure surfaces as a
+`RuntimeException` from the client.
 
 ### Hosted payment page
 
@@ -120,33 +126,41 @@ not a trusted key.
 
 ConnexPay [can only capture the full authorized amount](https://docs.connexpay.com/docs/auth-and-capture).
 For a smaller amount `ConnexPayGateway::capture()` detects
-`money < authorizedAmount` and dispatches `PartialCaptureRequest`, which
-**voids the AuthOnly and runs a fresh sale** with the original instrument
-(required — missing `instrument` throws). A capture above the authorized
-amount throws `InvalidArgumentException`.
+`money < authorizedAmount` and builds `PartialCapture`, which **voids the
+AuthOnly and runs a fresh sale** with the original instrument (required —
+missing `instrument` throws). The sale body is `Purchase::payload()`, composed
+rather than inherited, so the hosted-page branch cannot be reached from a
+capture. A capture above the authorized amount throws
+`InvalidArgumentException`.
 
 ### OrderNumber & IncomingTransactionCode
 
 - The caller's `clientUniqueId` is forwarded as `OrderNumber` on every
   endpoint that accepts it; synthetic `:capture` / `:cancel` idempotency
-  suffixes are stripped (`ConnexPayRequestParameters::withOrderNumber()`).
+  suffixes are stripped (`BuildsConnexPayPayload::withOrderNumber()`).
   `OrderNumber` is the **only** Search/Sales filter ConnexPay honors —
   `SaleGuid` / `Guid` filters are silently ignored by that endpoint.
 - The `IncomingTransactionCode` (the merchant-facing "acquirer id") exists
-  only in the sale/capture response body. `ConnexPayResponse::getTransactionMetadata()`
+  only in the sale/capture response body. `MapsConnexPayOutcome::transactionMetadata()`
   surfaces it as `incoming_transaction_code` so it gets persisted with the
   gateway reference; `issueVirtualCard()` prefers that stored value and only
   falls back to paging `Search/Sales` (capped at 20 pages) when absent.
 
-### Requests & responses
+### Payloads & outcomes
 
-- 3DS: a `ThreeDSResult` parameter is forwarded as `Card.ThreeDS`
-  (`Cavv`, `Version`, `DirectoryServerTransactionID`, `AcsTransactionId`, `ECI`).
-- `ConnexPayResponse` (base for all Sales-API responses): success =
-  `wasProcessed`, reference = `guid`; detects a 3DS challenge
-  (`threeDSecure.authenticationStatus === 'Challenge'`) and exposes it as a
-  `ThreeDSChallenge`; maps scheme AVS/CVV letter codes to normalized
-  `CheckResult`s via `ConnexPaySchemeChecks`.
+- `Concern\BuildsConnexPayPayload` holds the field conventions every body shares:
+  the `OrderNumber` / `SequenceNumber` pair, the two address blocks and the
+  expiry format.
+- 3DS: `Concern\FormatsThreeDS` maps a `ThreeDSResult` onto `Card.ThreeDS`
+  (`Cavv`, `Version`, `DirectoryServerTransactionID`, `AcsTransactionId`, `ECI`)
+  and refuses an attestation with no `Cavv`, which ConnexPay would otherwise
+  accept and process as unauthenticated.
+- `Concern\MapsConnexPayOutcome` reads a Sales-API body once: success =
+  `wasProcessed`, reference = `guid`, message = `processorResponseMessage`
+  falling back to `status`. It recognises a pending 3DS step — HTTP 202 with a
+  `status` of `3DS - Pending …`, a `redirectUrl` and (fingerprint step only) a
+  `redirectUrlRequestPayload` — as a `ThreeDSChallenge`, and maps scheme AVS/CVV
+  letter codes to normalized `CheckResult`s via `ConnexPaySchemeChecks`.
 - ConnexPay rejects non-ASCII `Customer` fields ("München"), so city names
   are transliterated to ASCII (ext-intl, iconv fallback).
 - Virtual card issuance maps the domain `CardSpendCategory` to ConnexPay's

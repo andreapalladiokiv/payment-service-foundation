@@ -19,7 +19,7 @@ use Techork\PaymentService\ConnexPay\ConnexPayClient;
  *
  * If the field turns out to bind and be honoured, that whole emulation is
  * unnecessary and so is the detection. If it does not, the emulation is their own
- * prescribed procedure and the only real gap is that OmnipayCapturePort never passes
+ * prescribed procedure and the only real gap is that CaptureAdapter never passes
  * the arguments that reach it.
  *
  * HOW IT READS. Type mismatch first, because it settles nothing: an Amount sent as a
@@ -127,7 +127,7 @@ function cxpCapAmtCapture(string $authGuid, int $case, array $extra = []): array
  * Reverses a sale.
  *
  * `SaleGuid` + `Amount`, which is the shape
- * {@see \Techork\PaymentService\ConnexPay\RefundRequest::voidUnsettledSale} documents
+ * {@see \Techork\PaymentService\ConnexPay\Refund::voidUnsettledSale} documents
  * /void as accepting. The first version of this probe sent `AuthOnlyGuid` instead and
  * every reversal answered "Transaction not found for the given GUID/ReferenceNumber",
  * while /returns answered "Sale has not been settled" — a captured sale sits between
@@ -241,7 +241,7 @@ it('probes whether /api/v1/Captures binds and honours an Amount', function () {
             ."  authorizedAmount it needs only to detect a partial request.\n");
     } elseif ($captured3 !== null) {
         fwrite(STDERR, '  NOT HONOURED — asked for '.CXP_CAPAMT_PARTIAL.', captured '.json_encode($captured3).". The guide is right, the\n"
-            ."  emulation is their own prescribed procedure, and the only defect is that OmnipayCapturePort\n"
+            ."  emulation is their own prescribed procedure, and the only defect is that CaptureAdapter\n"
             ."  never passes the arguments that would trigger it — so a partial request takes the full hold.\n");
     } else {
         fwrite(STDERR, "  Case 3 produced no amount to read; the question is unanswered.\n");

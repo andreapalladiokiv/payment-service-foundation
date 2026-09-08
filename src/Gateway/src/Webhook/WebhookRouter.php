@@ -6,7 +6,6 @@ namespace Techork\PaymentService\Gateway\Webhook;
 
 use Psr\Http\Message\ServerRequestInterface;
 use Techork\PaymentService\Gateway\Contract\GatewayCredentialRepository;
-use Techork\PaymentService\Gateway\PaymentGatewayRouter;
 use Techork\PaymentService\Gateway\Webhook\Contract\GatewayMatch;
 use Techork\PaymentService\Gateway\Webhook\Contract\HandlerOutcome;
 use Techork\PaymentService\Gateway\Webhook\Contract\InboundWebhook;
@@ -14,7 +13,7 @@ use Techork\PaymentService\Gateway\Webhook\Contract\SignatureVerifier;
 use Techork\PaymentService\Gateway\Webhook\Contract\StoredWebhookCall;
 
 /**
- * Framework-agnostic webhook router. Mirrors {@see PaymentGatewayRouter}
+ * Framework-agnostic webhook router. Mirrors the gateway stack
  * but for inbound traffic:
  *
  *   - identifyGateway: run every candidate credential through the kind-appropriate

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Gateway\Contract;
 
+use Override;
 use Techork\PaymentService\Common\ValueObject\CreditCard\CheckResult;
 
 /**
@@ -72,5 +73,23 @@ final readonly class RegistrationResult extends GatewayResult
         return $this->addressLineCheck !== null
             || $this->postalCodeCheck !== null
             || $this->cvcCheck !== null;
+    }
+
+    /**
+     * Adds what a registration carries beyond an outcome: which customer the provider linked the
+     * instrument to, and the checks it ran on the card while vaulting it.
+     *
+     * @return array<string, mixed>
+     */
+    #[Override]
+    public function toLogContext(): array
+    {
+        return [
+            ...parent::toLogContext(),
+            'customerReference' => $this->customerReference,
+            'addressLineCheck' => $this->addressLineCheck,
+            'postalCodeCheck' => $this->postalCodeCheck,
+            'cvcCheck' => $this->cvcCheck,
+        ];
     }
 }

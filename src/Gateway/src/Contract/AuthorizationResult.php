@@ -110,4 +110,24 @@ final readonly class AuthorizationResult extends GatewayResult
             || $this->postalCodeCheck !== null
             || $this->cvcCheck !== null;
     }
+
+    /**
+     * Adds the signals only an authorization has. A challenge and the AVS / CVC checks are the
+     * whole reason this result is not a bare {@see GatewayResult}, and a log line that omitted
+     * them would describe a payment awaiting a step-up as an ordinary success.
+     *
+     * @return array<string, mixed>
+     */
+    #[Override]
+    public function toLogContext(): array
+    {
+        return [
+            ...parent::toLogContext(),
+            'requiresAction' => $this->isRequiresAction(),
+            'challenge' => $this->challenge,
+            'addressLineCheck' => $this->addressLineCheck,
+            'postalCodeCheck' => $this->postalCodeCheck,
+            'cvcCheck' => $this->cvcCheck,
+        ];
+    }
 }

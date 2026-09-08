@@ -2,29 +2,35 @@
 
 declare(strict_types=1);
 
-use Omnipay\Common\Message\RequestInterface;
-use Techork\PaymentService\ConnexPay\ConnexPayResponse;
+use Techork\PaymentService\Gateway\Contract\AuthorizationResult;
 
 /**
  * The 3DS step ConnexPay reports on a sale or auth-only, pinned against the payloads their own
  * reference publishes rather than against field names we hoped for.
  *
- * This class previously looked for a `threeDSecure` block with `acsUrl`, `cReq` and an
+ * The mapping previously looked for a `threeDSecure` block with `acsUrl`, `cReq` and an
  * `authenticationStatus` of `Challenge`. None of those names appear anywhere in a ConnexPay
  * response. What arrives is HTTP 202 with a `status` of `3DS - Pending Fingerprint` or
  * `3DS - Pending User Challenge`, a `redirectUrl`, and a `redirectUrlRequestPayload` on the first
  * of the two.
  *
  * That was not a dormant branch, which is the reason these tests exist. A 202 body carries no
- * `wasProcessed`, so `isSuccessful()` answers false; with no challenge recognised either, the
- * router had nothing to report but a refusal — so every ConnexPay payment the issuer wanted
+ * `wasProcessed`, so the payment reads as unsuccessful; with no challenge recognised either, the
+ * caller had nothing to report but a refusal — so every ConnexPay payment the issuer wanted
  * authenticated was booked as an acquirer decline.
  *
- * The bodies below are their documented examples, trimmed of the card block.
+ * The bodies below are their documented examples, trimmed of the card block. They are read
+ * through {@see \Techork\PaymentService\ConnexPay\Authorize} because a response is no longer a
+ * thing you can hold on its own: the operation maps what it got, once.
+ *
+ * @param  array<string, mixed>  $body
  */
-function cxpChallengeResponse(array $data): ConnexPayResponse
+function cxpChallengeResult(array $body): AuthorizationResult
 {
-    return new ConnexPayResponse(Mockery::mock(RequestInterface::class), $data);
+    $client = cpHttpClient();
+    $client->shouldReceive('post')->once()->andReturn($body);
+
+    return cpAuthorize(['instrument' => cpCard()], ['client' => $client])->authorize();
 }
 
 /**
@@ -46,7 +52,7 @@ function cxpPendingFingerprint(): array
 it('reads the fingerprint step, url and payload both', function () {
     // The step that comes first and that nothing here used to see at all. The payload is the form
     // body verbatim, `threeDSMethodData=<base64>` — what the browser posts, not the base64 alone.
-    $challenge = cxpChallengeResponse(cxpPendingFingerprint())->getChallenge();
+    $challenge = cxpChallengeResult(cxpPendingFingerprint())->challenge;
 
     expect($challenge)->not->toBeNull()
         ->and($challenge->authenticationId)->toBe('92bcd4df-5576-48be-b4a6-8c142669a8b6')
@@ -62,7 +68,7 @@ it('reads the challenge step, which carries no payload', function () {
     $body['status'] = '3DS - Pending User Challenge';
     unset($body['redirectUrlRequestPayload']);
 
-    $challenge = cxpChallengeResponse($body)->getChallenge();
+    $challenge = cxpChallengeResult($body)->challenge;
 
     expect($challenge)->not->toBeNull()
         ->and($challenge->url)->toBe('https://x3d-sim.credorax.net/acs/3ds-method')
@@ -78,12 +84,12 @@ it('names the authentication by the transaction, which is stable across both ste
     $second['status'] = '3DS - Pending User Challenge';
     unset($second['redirectUrlRequestPayload']);
 
-    expect(cxpChallengeResponse(cxpPendingFingerprint())->getChallenge()?->authenticationId)
-        ->toBe(cxpChallengeResponse($second)->getChallenge()?->authenticationId);
+    expect(cxpChallengeResult(cxpPendingFingerprint())->challenge?->authenticationId)
+        ->toBe(cxpChallengeResult($second)->challenge?->authenticationId);
 });
 
 it('reports no challenge for a transaction that is not waiting on one', function (array $body) {
-    expect(cxpChallengeResponse($body)->getChallenge())->toBeNull();
+    expect(cxpChallengeResult($body)->challenge)->toBeNull();
 })->with([
     'approved' => [['guid' => 'g-1', 'status' => 'Transaction - Approved', 'wasProcessed' => true]],
     'no status at all' => [['guid' => 'g-1', 'wasProcessed' => true]],
@@ -92,11 +98,20 @@ it('reports no challenge for a transaction that is not waiting on one', function
 ]);
 
 it('does not call a pending authentication a success', function () {
-    // The other half of the old failure. A 202 body has no `wasProcessed`, so this answers false —
-    // correct on its own, and a refusal once the challenge went unrecognised. The router asks for
-    // the challenge first, which is what makes the pair work.
-    $response = cxpChallengeResponse(cxpPendingFingerprint());
+    // The other half of the old failure. A 202 body has no `wasProcessed`, so this is not a
+    // success — correct on its own, and a refusal once the challenge went unrecognised. The
+    // mapping asks for the challenge first, which is what makes the pair work.
+    $result = cxpChallengeResult(cxpPendingFingerprint());
 
-    expect($response->isSuccessful())->toBeFalse()
-        ->and($response->getChallenge())->not->toBeNull();
+    expect($result->success)->toBeFalse()
+        ->and($result->isRequiresAction())->toBeTrue();
+});
+
+/**
+ * A step-up opens the intent as surely as an approval does, so the reference has to be recorded
+ * as the opening one — the later confirm lands against this transaction.
+ */
+it('records the pending transaction as the one that opened the intent', function () {
+    expect(cxpChallengeResult(cxpPendingFingerprint())->metadata)
+        ->toHaveKey('opening_transaction_reference', '92bcd4df-5576-48be-b4a6-8c142669a8b6');
 });

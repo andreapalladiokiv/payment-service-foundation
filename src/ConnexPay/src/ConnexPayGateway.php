@@ -5,22 +5,52 @@ declare(strict_types=1);
 namespace Techork\PaymentService\ConnexPay;
 
 use InvalidArgumentException;
-use Omnipay\Common\AbstractGateway;
-use Omnipay\Common\Message\AbstractRequest;
 use Override;
 use RuntimeException;
 use Techork\PaymentService\Common\ValueObject\Cash;
-use Techork\PaymentService\Common\ValueObject\PaymentMethod;
+use Techork\PaymentService\Gateway\Command\CancelCommand;
+use Techork\PaymentService\Gateway\Command\CaptureCommand;
+use Techork\PaymentService\Gateway\Command\IssueCardCommand;
+use Techork\PaymentService\Gateway\Command\PlacementCommand;
+use Techork\PaymentService\Gateway\Command\RebillingCommand;
+use Techork\PaymentService\Gateway\Command\RefundCommand;
+use Techork\PaymentService\Gateway\Command\TerminateCardCommand;
+use Techork\PaymentService\Gateway\Command\UpdateCardCommand;
+use Techork\PaymentService\Gateway\Command\VaultCommand;
+use Techork\PaymentService\Gateway\Concern\HoldsInfrastructure;
+use Techork\PaymentService\Gateway\Contract\AuthorizationResult;
 use Techork\PaymentService\Gateway\Contract\CustomerRepository;
 use Techork\PaymentService\Gateway\Contract\Gateway;
+use Techork\PaymentService\Gateway\Contract\GatewayResult;
+use Techork\PaymentService\Gateway\Contract\RegistrationResult;
+use Techork\PaymentService\Gateway\Contract\VirtualCardResult;
+use Techork\PaymentService\Gateway\ValueObject\GatewayInfrastructure;
 
-final class ConnexPayGateway extends AbstractGateway implements Gateway
+/**
+ * ConnexPay, as two APIs behind one driver: the sales API acquires payments and the Purchases
+ * API issues the virtual cards those payments fund. They have separate hosts and separate
+ * bearer tokens minted from the same username and password, which is why there are two clients
+ * here and why each operation is handed the one it talks to.
+ *
+ * Every role method builds its operation and asks it for the answer, in one expression. There are
+ * no per-operation accessors: they existed only so a test could reach a `payload()` without making
+ * the call, and a test does not need them — {@see ConnexPaySettings} is a public value object, so
+ * anything that wants a payload can build the operation itself. A seam for tests does not belong
+ * in the gateway's public API when the thing it reaches is already reachable.
+ */
+final class ConnexPayGateway implements Gateway
 {
-    private ConnexPayClient $client;
+    use HoldsInfrastructure;
 
-    private ConnexPayPurchasesClient $purchasesClient;
+    private string $username = '';
 
-    private ?CustomerRepository $customerRepository = null;
+    private string $password = '';
+
+    private ConnexPaySettings $settings;
+
+    private ConnexPayHttpClientInterface $client;
+
+    private ConnexPayHttpClientInterface $purchasesClient;
 
     #[Override]
     public function getName(): string
@@ -28,261 +58,270 @@ final class ConnexPayGateway extends AbstractGateway implements Gateway
         return 'connexpay';
     }
 
-    #[Override]
     public function setCustomerRepository(CustomerRepository $repository): void
     {
-        $this->customerRepository = $repository;
-    }
-
-    #[Override]
-    public function getDefaultParameters(): array
-    {
-        return [
-            'username' => '',
-            'password' => '',
-            'deviceGuid' => '',
-            'merchantGuid' => '',
-            'environment' => 'sandbox',
-            'accountCurrency' => '',
-            'merchantName' => '',
-        ];
+        // ConnexPay's customer is created by `/api/v1/verify` and read back out of
+        // `card.customer.guid`, so nothing here has to look one up — the contract method exists
+        // for cross-gateway uniformity and the repository is intentionally ignored.
     }
 
     /**
-     * Display name shown to the buyer on ConnexPay's hosted payment page, from
-     * the `merchant_name` credential. Required by
-     * `POST /api/v1/HostedPaymentPageRequests` and used nowhere else, so it may
-     * stay empty on a merchant that never takes hosted payments — the hosted
-     * path itself refuses loudly rather than sending a blank name.
+     * Settings in, both clients out, once.
      *
-     * This is a storefront name, not the card-statement descriptor: statement
-     * text arrives per-transaction as `statementDescription`.
+     * The clients bake the base URL from the environment, which is why this used to be run twice:
+     * infrastructure defaults were applied after the first `initialize()`, and a client already
+     * built from the tenant's `environment` would otherwise keep talking to it. Merging the
+     * settings before configuring makes the second pass unnecessary and the stale client
+     * impossible.
      */
-    public function getMerchantName(): string
+    #[Override]
+    public function configure(GatewayInfrastructure $infrastructure): void
     {
-        return $this->getParameter('merchantName') ?? '';
+        $this->infrastructure = $infrastructure;
+        $this->username = $infrastructure->stringSetting('username');
+        $this->password = $infrastructure->stringSetting('password');
+
+        $this->settings = new ConnexPaySettings(
+            deviceGuid: $infrastructure->stringSetting('deviceGuid'),
+            merchantGuid: $infrastructure->stringSetting('merchantGuid'),
+            merchantName: $infrastructure->stringSetting('merchantName'),
+            accountCurrency: $infrastructure->stringSetting('accountCurrency'),
+            environment: $infrastructure->stringSetting('environment', 'sandbox'),
+        );
+
+        $this->client = new ConnexPayClient(
+            username: $this->username,
+            password: $this->password,
+            environment: $this->settings->environment,
+        );
+
+        $this->purchasesClient = new ConnexPayPurchasesClient(
+            username: $this->username,
+            password: $this->password,
+            environment: $this->settings->environment,
+        );
     }
 
-    public function setMerchantName(string $value): static
+    /**
+     * What the deployment contributes to a ConnexPay request, as opposed to what the caller asked
+     * for. Public because it is the whole of what an operation needs besides a command and a
+     * client, so anything that wants to build one — a test, a probe — can.
+     */
+    public function settings(): ConnexPaySettings
     {
-        return $this->setParameter('merchantName', $value);
+        return $this->settings;
     }
 
     public function getUsername(): string
     {
-        return $this->getParameter('username') ?? '';
-    }
-
-    public function setUsername(string $value): static
-    {
-        return $this->setParameter('username', $value);
+        return $this->username;
     }
 
     public function getPassword(): string
     {
-        return $this->getParameter('password') ?? '';
-    }
-
-    public function setPassword(string $value): static
-    {
-        return $this->setParameter('password', $value);
+        return $this->password;
     }
 
     public function getDeviceGuid(): string
     {
-        return $this->getParameter('deviceGuid') ?? '';
-    }
-
-    public function setDeviceGuid(string $value): static
-    {
-        return $this->setParameter('deviceGuid', $value);
+        return $this->settings->deviceGuid;
     }
 
     public function getMerchantGuid(): string
     {
-        return $this->getParameter('merchantGuid') ?? '';
+        return $this->settings->merchantGuid;
     }
 
-    public function setMerchantGuid(string $value): static
+    public function getMerchantName(): string
     {
-        return $this->setParameter('merchantGuid', $value);
+        return $this->settings->merchantName;
     }
 
     /**
-     * Currency this merchant account is provisioned in (ConnexPay's "Accounting
-     * Currency"), from the `account_currency` credential; empty means USD.
-     * Requests inherit it through createRequest's parameter merge and refuse an
-     * amount in any other currency, since the API sends no currency field.
+     * The configured account currency, empty meaning USD — the gateway's own reading, which is
+     * deliberately NOT {@see ConnexPaySettings::acquiringCurrency()}. That one upper-cases, trims
+     * and refuses a currency ConnexPay cannot acquire in, because it guards an amount about to be
+     * billed. This one only reports what the credential says, which is what it has always
+     * reported and all any caller asks it for.
      */
     public function getAccountCurrency(): string
     {
-        return $this->getParameter('accountCurrency') ?: 'USD';
-    }
-
-    public function setAccountCurrency(string $value): static
-    {
-        return $this->setParameter('accountCurrency', $value);
+        return $this->settings->accountCurrency ?: 'USD';
     }
 
     public function getEnvironment(): string
     {
-        return $this->getParameter('environment') ?? 'sandbox';
-    }
-
-    public function setEnvironment(string $value): static
-    {
-        return $this->setParameter('environment', $value);
-    }
-
-    #[Override]
-    public function initialize(array $parameters = []): static
-    {
-        // parent::initialize() drives Omnipay's Helper, which translates
-        // snake_case keys (device_guid, merchant_guid) into set*() calls.
-        // Reading our own getters afterwards is the only way to see the
-        // same shape regardless of whether creds come from the gateways
-        // table or a unit-test factory.
-        parent::initialize($parameters);
-
-        $this->client = new ConnexPayClient(
-            username: $this->getUsername(),
-            password: $this->getPassword(),
-            environment: $this->getEnvironment(),
-        );
-
-        $this->purchasesClient = new ConnexPayPurchasesClient(
-            username: $this->getUsername(),
-            password: $this->getPassword(),
-            environment: $this->getEnvironment(),
-        );
-
-        return $this;
-    }
-
-    public function createCard(array $options = []): AbstractRequest
-    {
-        return $this->createRequest(CreateCardRequest::class, $options);
-    }
-
-    #[Override]
-    public function createPaymentMethod(array $options = []): AbstractRequest
-    {
-        return $this->createRequest(CreatePaymentMethodRequest::class, $options);
-    }
-
-    public function purchase(array $options = []): AbstractRequest
-    {
-        return $this->createRequest(PurchaseRequest::class, $options);
-    }
-
-    public function authorize(array $options = []): AbstractRequest
-    {
-        // ConnexPay's /authonlys endpoint doesn't accept cash; auths against a
-        // cash tender must go through /sales instead. Match the legacy
-        // acquirer's behavior of transparently routing Cash to charge.
-        if (($options['instrument'] ?? null) instanceof Cash) {
-            return $this->purchase($options);
-        }
-
-        return $this->createRequest(AuthorizeRequest::class, $options);
+        return $this->settings->environment;
     }
 
     /**
-     * ConnexPay can only capture the full authorized amount
-     * (https://docs.connexpay.com/docs/auth-and-capture). For a smaller
-     * amount the documented procedure — and what the legacy integration
-     * did — is void the AuthOnly and run a fresh sale with the original
-     * instrument, which {@see PartialCaptureRequest} implements. Requires
-     * `authorizedAmount` + `instrument` in the parameters; without them a
-     * partial request can't be detected and the full hold would be
-     * captured silently.
+     * Swaps the clients the configured gateway built — the sales API first, the Purchases API
+     * second when it differs. The only seam a test has for reaching ConnexPay with a fake, now
+     * that construction happens in one pass.
      */
-    public function capture(array $options = []): AbstractRequest
+    public function setHttpClient(ConnexPayHttpClientInterface $client, ?ConnexPayHttpClientInterface $purchasesClient = null): void
     {
-        $money = $options['money'] ?? null;
-        $authorized = $options['authorizedAmount'] ?? null;
+        $this->client = $client;
+        $this->purchasesClient = $purchasesClient ?? $client;
+    }
 
-        if ($money !== null && $authorized !== null && $money->greaterThan($authorized)) {
+    #[Override]
+    public function tokenize(VaultCommand $command): RegistrationResult
+    {
+        return new CreateCard($this->settings, $command, $this->infrastructure(), $this->client)->tokenize();
+    }
+
+    #[Override]
+    public function registerPaymentMethod(VaultCommand $command): RegistrationResult
+    {
+        return new CreatePaymentMethod($this->settings, $command, $this->infrastructure(), $this->client)->register();
+    }
+
+    #[Override]
+    public function charge(PlacementCommand $command): AuthorizationResult
+    {
+        return new Purchase($this->settings, $command, $this->infrastructure(), $this->client)->charge();
+    }
+
+    /**
+     * ConnexPay's /authonlys has no cash tender, so an auth against a cash payment has to run as a
+     * sale instead — transparently, the way the legacy acquirer did it.
+     */
+    #[Override]
+    public function authorize(PlacementCommand $command): AuthorizationResult
+    {
+        return $command->instrument instanceof Cash
+            ? $this->charge($command)
+            : new Authorize($this->settings, $command, $this->infrastructure(), $this->client)->authorize();
+    }
+
+    /**
+     * The same provider call as {@see authorize()}, with the series position added — which is why
+     * the two share an operation class and differ only in what the command puts in it. It is still
+     * a separate operation, because whether a payment belongs to a series is the caller's to state
+     * and no field of an ordinary authorization implies it.
+     *
+     * No Cash detour here, unlike {@see authorize()}: a cash tender has no stored credential to
+     * put in a series, so routing one to /sales would open a chain nothing could continue.
+     */
+    #[Override]
+    public function authorizeRebilling(RebillingCommand $command): AuthorizationResult
+    {
+        return new Authorize($this->settings, $command, $this->infrastructure(), $this->client)->authorize();
+    }
+
+    /**
+     * ConnexPay has no native partial capture: taking less than was authorized means voiding the
+     * authorization and running a fresh sale, which needs the original instrument. Choosing
+     * between the two is this provider's business and stays here — every other gateway ignores
+     * both `authorizedAmount` and `instrument` on a capture, and this is the only driver that
+     * answers one role with two different provider calls.
+     */
+    #[Override]
+    public function capture(CaptureCommand $command): GatewayResult
+    {
+        $money = $command->amount;
+        $authorized = $command->authorizedAmount;
+
+        if ($authorized !== null && $money->greaterThan($authorized)) {
             throw new InvalidArgumentException('Capture amount exceeds the authorized amount.');
         }
 
-        if ($money !== null && $authorized !== null && $money->lessThan($authorized)) {
-            $instrument = $options['instrument'] ?? null;
+        if ($authorized !== null && $money->lessThan($authorized)) {
+            // Refused before anything is built, so a capture that cannot be run at all is rejected
+            // while the authorization is still intact.
+            $command->instrument !== null || throw new InvalidArgumentException(
+                'ConnexPay cannot capture a partial amount without the original instrument '
+                .'(full-auth void + fresh sale is required).',
+            );
 
-            if ($instrument === null) {
-                throw new InvalidArgumentException(
-                    'ConnexPay cannot capture a partial amount without the original instrument '
-                    .'(full-auth void + fresh sale is required).',
-                );
-            }
-
-            if ($instrument instanceof PaymentMethod && ! isset($options['billingAddress'])) {
-                $options['billingAddress'] = $instrument->billingAddress;
-            }
-
-            return $this->createRequest(PartialCaptureRequest::class, $options);
+            return new PartialCapture($this->settings, $command, $this->infrastructure(), $this->client)->capture();
         }
 
-        return $this->createRequest(CaptureRequest::class, $options);
-    }
-
-    public function refund(array $options = []): AbstractRequest
-    {
-        return $this->createRequest(RefundRequest::class, $options);
+        return new Capture($this->settings, $command, $this->client)->capture();
     }
 
     #[Override]
-    public function retryRefund(array $options = []): AbstractRequest
+    public function refund(RefundCommand $command): GatewayResult
     {
-        return $this->createRequest(ReturnRetryRequest::class, $options);
+        return new Refund($this->settings, $command, $this->client)->refund();
     }
 
     #[Override]
-    public function void(array $options = []): AbstractRequest
+    public function retryRefund(RefundCommand $command): GatewayResult
     {
-        return $this->createRequest(VoidRequest::class, $options);
+        return new ReturnRetry($this->settings, $command, $this->infrastructure(), $this->client)->retry();
     }
 
     #[Override]
-    public function issueVirtualCard(array $options = []): AbstractRequest
+    public function cancel(CancelCommand $command): GatewayResult
     {
-        // Prefer the code persisted with the sale / capture response
-        // (passed down by the router from gateway_references.metadata) —
-        // Search/Sales is the fallback, not the source of truth.
-        $incomingTransactionCode = $options['incomingTransactionCode'] ?? null;
+        return new VoidTransaction($this->settings, $command, $this->client)->cancel();
+    }
+
+    #[Override]
+    public function issueVirtualCard(IssueCardCommand $command): VirtualCardResult
+    {
+        // Prefer the code the caller carried in — persisted with the sale or capture response —
+        // over asking Search/Sales, which is the fallback rather than the source of truth. It is
+        // resolved here rather than inside the operation because it comes off the OTHER API.
+        $incomingTransactionCode = $command->incomingTransactionCode;
 
         if ($incomingTransactionCode === null || $incomingTransactionCode === '') {
-            $transactionReference = $options['transactionReference'] ?? null;
-            $incomingTransactionCode = $transactionReference !== null
-                ? $this->resolveIncomingTransactionCode($transactionReference, $options['clientUniqueId'] ?? null)
-                : null;
+            $incomingTransactionCode = $this->resolveIncomingTransactionCode(
+                $command->transactionReference,
+                $command->clientUniqueId,
+            );
         }
 
-        return parent::createRequest(IssueVirtualCardRequest::class, [
-            ...$options,
-            'connexPayClient' => $this->purchasesClient,
-            'merchantGuid' => $this->getMerchantGuid(),
-            'incomingTransactionCode' => $incomingTransactionCode,
-            'cardBrand' => $options['cardBrand'] ?? null,
-        ]);
+        return new IssueVirtualCard(
+            $this->cardSettings(),
+            $command,
+            $this->purchasesClient,
+            $incomingTransactionCode,
+        )->issue();
     }
 
     #[Override]
-    public function updateVirtualCard(array $options = []): AbstractRequest
+    public function updateVirtualCard(UpdateCardCommand $command): VirtualCardResult
     {
-        return parent::createRequest(UpdateVirtualCardRequest::class, [
-            ...$options,
-            'connexPayClient' => $this->purchasesClient,
-        ]);
+        return new UpdateVirtualCard($this->cardSettings(), $command, $this->purchasesClient)->update();
     }
 
     #[Override]
-    public function terminateVirtualCard(array $options = []): AbstractRequest
+    public function terminateVirtualCard(TerminateCardCommand $command): GatewayResult
     {
-        return parent::createRequest(TerminateCardRequest::class, [
-            ...$options,
-            'connexPayClient' => $this->purchasesClient,
-        ]);
+        return new TerminateCard($command, $this->purchasesClient)->terminate();
+    }
+
+    /**
+     * The settings the Purchases API operations get, with the account currency BLANKED — which
+     * resolves to USD, so a card limit in any other currency is refused.
+     *
+     * That is a preserved defect, not a decision. Before the conversion the two card-issuing
+     * methods reached their requests through Omnipay's `AbstractGateway::createRequest()`
+     * directly, skipping this driver's own override — and the override was the only thing that
+     * put `accountCurrency` into the request's parameter bag, because `configure()` reads the
+     * credential into a typed property and never calls `setParameter()`. So the guard on the
+     * Purchases API has always compared against USD whatever the merchant is provisioned in.
+     * Verified by running the pre-conversion code: a GBP account issuing a GBP card limit threw
+     * "provisioned in USD but the amount is GBP".
+     *
+     * It is left alone because the conversion is not the place to change which amounts a merchant
+     * can issue a card for. Handing these operations {@see settings()} instead is the one-line
+     * fix, and it wants its own change with its own reasoning: acquiring is limited to four
+     * currencies and issuing supports roughly thirty, so the acquiring guard is arguably the
+     * wrong check here in either direction.
+     */
+    private function cardSettings(): ConnexPaySettings
+    {
+        return new ConnexPaySettings(
+            deviceGuid: $this->settings->deviceGuid,
+            merchantGuid: $this->settings->merchantGuid,
+            merchantName: $this->settings->merchantName,
+            accountCurrency: '',
+            environment: $this->settings->environment,
+        );
     }
 
     /**
@@ -292,10 +331,13 @@ final class ConnexPayGateway extends AbstractGateway implements Gateway
      * usable narrowing filter we have is `OrderNumber` (sent on the original
      * sale as the clientUniqueId), so filter by it when available and always
      * match the row's `guid` against `$saleGuid` client-side while paging.
+     *
+     * It lives on the gateway rather than in {@see IssueVirtualCard} because it talks to the
+     * OTHER API — the sale is on the sales host, the card is issued on the Purchases one.
      */
     private function resolveIncomingTransactionCode(string $saleGuid, ?string $orderNumber = null): string
     {
-        $filters = ['MerchantGuid' => $this->getMerchantGuid()];
+        $filters = ['MerchantGuid' => $this->settings->merchantGuid];
 
         if ($orderNumber !== null && $orderNumber !== '') {
             $filters['OrderNumber'] = preg_replace('/:(?:capture|cancel)$/', '', $orderNumber);
@@ -321,16 +363,5 @@ final class ConnexPayGateway extends AbstractGateway implements Gateway
         } while ($page <= $pageTotal && $page <= $maxPages);
 
         throw new RuntimeException("Could not resolve IncomingTransactionCode for sale GUID: {$saleGuid}");
-    }
-
-    #[Override]
-    protected function createRequest($class, array $options): AbstractRequest
-    {
-        return parent::createRequest($class, [
-            ...$options,
-            'connexPayClient' => $this->client,
-            'deviceGuid' => $this->getDeviceGuid(),
-            'customerRepository' => $this->customerRepository,
-        ]);
     }
 }

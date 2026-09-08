@@ -4,53 +4,30 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Gateway\Contract;
 
-use Omnipay\Common\GatewayInterface;
-use Omnipay\Common\Message\RequestInterface;
+use Techork\PaymentService\Gateway\Role\AcquiringGateway;
+use Techork\PaymentService\Gateway\Role\CardIssuer;
+use Techork\PaymentService\Gateway\ValueObject\GatewayInfrastructure;
 
 /**
- * All payment gateways must implement this interface.
- * Extends Omnipay's GatewayInterface with our domain-specific capabilities.
+ * A payment provider, as this codebase talks to one.
+ *
+ * Two methods of its own; everything else it can do arrives through the two composites, and each
+ * of those is a union of roles a caller depends on one at a time. Nothing here takes a parameter
+ * array, returns a request for someone else to send, or extends anything.
+ *
+ * What it used to be: an extension of Omnipay's `GatewayInterface`, which declared no operations
+ * at all, so every verb reached its provider by duck typing and a missing one surfaced as a
+ * merchant-facing decline. The verbs are typed now, and so is the configuration that used to
+ * arrive as a bag.
  */
-interface Gateway extends GatewayInterface
+interface Gateway extends AcquiringGateway, CardIssuer
 {
-    public function setCustomerRepository(CustomerRepository $repository): void;
+    public function getName(): string;
 
     /**
-     * Omnipay keeps this on `AbstractGateway` rather than on `GatewayInterface`, which this
-     * contract extends — so callers that legitimately need it had no declared way to reach
-     * it. {@see \Techork\PaymentService\Laravel\LaravelGatewayFactory} applies the
-     * infrastructure defaults from `services.{gateway}` through it. Deliberately untyped,
-     * matching the implementation it names; adding types here would be incompatible with it.
-     *
-     * @param  string  $key
-     * @param  mixed  $value
-     * @return $this
+     * Called once, by {@see \Techork\PaymentService\Gateway\GatewayFactory}, before the gateway is
+     * used. A driver reads the settings it needs into typed properties here and builds whatever
+     * clients it talks to; there is no second call to invalidate what the first one derived.
      */
-    public function setParameter($key, $value);
-
-    public function createPaymentMethod(array $options = []): RequestInterface;
-
-    public function void(array $options = []): RequestInterface;
-
-    public function issueVirtualCard(array $options = []): RequestInterface;
-
-    public function terminateVirtualCard(array $options = []): RequestInterface;
-
-    /**
-     * Step 2 of a refund: send the money to a different card after the original one
-     * declined it.
-     *
-     * In the contract because {@see \Techork\PaymentService\Gateway\PaymentGatewayRouter}
-     * calls it on whatever gateway it holds, and only three of five providers had it.
-     * The router's catch turned the resulting `Call to undefined method` into a failed
-     * result, so the merchant was handed a PHP error string as the reason a refund did not
-     * go through. Declared here, a provider without the primitive has to refuse the way it
-     * refuses everything else it cannot do.
-     */
-    public function retryRefund(array $options = []): RequestInterface;
-
-    /**
-     * Adjust a live virtual card. Declared for the same reason as {@see self::retryRefund()}.
-     */
-    public function updateVirtualCard(array $options = []): RequestInterface;
+    public function configure(GatewayInfrastructure $infrastructure): void;
 }

@@ -6,36 +6,156 @@ use Money\Currency;
 use Money\Money;
 use Techork\PaymentService\Gateway\Exception\UnsupportedByGateway;
 use Techork\PaymentService\Revolut\Exception\UnsupportedOperationException;
-use Techork\PaymentService\Revolut\IssueVirtualCardRequest;
-use Techork\PaymentService\Revolut\TerminateCardRequest;
-use Techork\PaymentService\Revolut\UpdateVirtualCardRequest;
+use Techork\PaymentService\Gateway\Command\CaptureCommand;
+use Techork\PaymentService\Gateway\ValueObject\GatewayId;
+use Techork\PaymentService\Gateway\Command\CancelCommand;
+use Techork\PaymentService\Gateway\Command\RefundCommand;
+use Techork\PaymentService\Common\Contract\PaymentInstrument;
+use Techork\PaymentService\Gateway\Command\PlacementCommand;
+use Techork\PaymentService\Common\Contract\DecryptInterface;
+use Techork\PaymentService\Gateway\Command\IssueCardCommand;
+use Techork\PaymentService\Gateway\Command\TerminateCardCommand;
+use Techork\PaymentService\Gateway\Command\UpdateCardCommand;
+use Techork\PaymentService\Gateway\Command\VaultCommand;
+use Techork\PaymentService\Gateway\Contract\GatewayCredential;
+use Techork\PaymentService\Gateway\Contract\GatewayInstrumentRepository;
+use Techork\PaymentService\Gateway\ValueObject\CardSpendCategory;
+use Techork\PaymentService\Gateway\ValueObject\GatewayInfrastructure;
+use Techork\PaymentService\Gateway\Contract\CustomerRepository;
+use Techork\PaymentService\Revolut\RevolutHttpClientInterface;
+
+/**
+ * Capture takes a typed command now, so the datasets below cannot call it bare. The helper keeps
+ * the refusal sets intact — what they pin is the refusal, not the signature — and shrinks as the
+ * remaining operations move onto roles of their own.
+ */
+function revolutInvoke(Techork\PaymentService\Revolut\RevolutGateway $gateway, string $operation): mixed
+{
+    return match ($operation) {
+        'capture' => $gateway->capture(new CaptureCommand(
+            gatewayId: GatewayId::generate(),
+            transactionReference: 'ref',
+            amount: new Money(100, new Currency('USD')),
+        )),
+        'cancel' => $gateway->cancel(new CancelCommand(GatewayId::generate(), 'ref')),
+        'charge', 'authorize' => $gateway->{$operation}(new PlacementCommand(
+            gatewayId: GatewayId::generate(),
+            instrument: Mockery::mock(PaymentInstrument::class),
+            amount: new Money(100, new Currency('USD')),
+        )),
+        'refund', 'retryRefund' => $gateway->{$operation}(new RefundCommand(
+            gatewayId: GatewayId::generate(),
+            transactionReference: 'ref',
+            amount: new Money(100, new Currency('USD')),
+        )),
+        'tokenize', 'registerPaymentMethod' => $gateway->{$operation}(new VaultCommand(
+            gatewayId: GatewayId::generate(),
+            instrument: Mockery::mock(PaymentInstrument::class),
+        )),
+        'issueVirtualCard' => $gateway->issueVirtualCard(new IssueCardCommand(
+            gatewayId: GatewayId::generate(),
+            transactionReference: 'sale-guid',
+            amountLimit: new Money(100, new Currency('USD')),
+            spendCategory: CardSpendCategory::TravelAir,
+        )),
+        'updateVirtualCard' => $gateway->updateVirtualCard(new UpdateCardCommand(
+            GatewayId::generate(),
+            'card-guid',
+            new Money(100, new Currency('USD')),
+            CardSpendCategory::TravelAir,
+        )),
+        'terminateVirtualCard' => $gateway->terminateVirtualCard(
+            new TerminateCardCommand(GatewayId::generate(), 'card-guid'),
+        ),
+        default => $gateway->{$operation}(),
+    };
+}
+
+/**
+ * The body the gateway actually sent. There used to be an `issuing()` accessor handing back the
+ * operation so a test could call `payload()` on it without issuing anything; the gateway issues,
+ * so the transport is the seam. That is also the more honest reading here, because what these
+ * tests are about is the gateway's own configuration — `accountIds`, `product`, `validityDays` —
+ * reaching the card, which only the round trip through `configure()` and the operation shows.
+ *
+ * @param  array<string, mixed>  $params  gateway configuration
+ * @param  array<string, mixed>  $options
+ * @return array<string, mixed>
+ */
+function revolutCardPayload(array $params, string $operation, array $options = []): array
+{
+    $client = new class implements RevolutHttpClientInterface
+    {
+        /** @var array<string, mixed> */
+        public array $body = [];
+
+        public function post(string $path, array $data = []): array
+        {
+            $this->body = $data;
+
+            return ['id' => 'card-guid', 'state' => 'active'];
+        }
+
+        public function patch(string $path, array $data): array
+        {
+            $this->body = $data;
+
+            return ['id' => 'card-guid', 'state' => 'active'];
+        }
+
+        public function get(string $path): array
+        {
+            return [];
+        }
+
+        public function delete(string $path): array
+        {
+            return [];
+        }
+    };
+
+    $gateway = makeRevolutGateway($client, $params);
+
+    $operation === 'issue'
+        ? $gateway->issueVirtualCard(new IssueCardCommand(
+            gatewayId: GatewayId::generate(),
+            transactionReference: $options['transactionReference'] ?? 'sale-guid',
+            amountLimit: $options['money'] ?? new Money(1000, new Currency('USD')),
+            spendCategory: $options['spendCategory'] ?? CardSpendCategory::TravelAir,
+            clientUniqueId: $options['clientUniqueId'] ?? null,
+        ))
+        : $gateway->updateVirtualCard(new UpdateCardCommand(
+            GatewayId::generate(),
+            $options['cardGuid'] ?? 'card-guid',
+            $options['money'] ?? new Money(1000, new Currency('USD')),
+            $options['spendCategory'] ?? CardSpendCategory::TravelAir,
+        ));
+
+    return $client->body;
+}
 
 it('has name revolut', function () {
     expect(makeRevolutGateway()->getName())->toBe('revolut');
 });
 
-it('creates an issue virtual card request', function () {
-    expect(makeRevolutGateway()->issueVirtualCard())->toBeInstanceOf(IssueVirtualCardRequest::class);
-});
-
-it('creates an update virtual card request', function () {
-    expect(makeRevolutGateway()->updateVirtualCard())->toBeInstanceOf(UpdateVirtualCardRequest::class);
-});
-
-it('creates a terminate card request', function () {
-    expect(makeRevolutGateway()->terminateVirtualCard())->toBeInstanceOf(TerminateCardRequest::class);
-});
+/*
+ * Three tests asserting that the gateway returns an `IssueVirtualCardRequest`, an
+ * `UpdateVirtualCardRequest` and a `TerminateCardRequest` lived here. Those classes are gone: an
+ * operation is not a request object waiting to be sent, so what is worth pinning is the payload it
+ * builds and the result it maps, both of which have their own files. What the gateway hands back
+ * is checked by the type system.
+ */
 
 it('throws on every acquiring / tokenization operation', function (string $operation) {
-    makeRevolutGateway()->{$operation}();
+    revolutInvoke(makeRevolutGateway(), $operation);
 })->throws(UnsupportedOperationException::class)->with([
-    'purchase',
+    'charge',
     'authorize',
     'capture',
     'refund',
-    'void',
-    'createCard',
-    'createPaymentMethod',
+    'cancel',
+    'tokenize',
+    'registerPaymentMethod',
 ]);
 
 // The class alone is not the guarantee. Without the marker interface the router
@@ -49,7 +169,7 @@ it('refuses acquiring operations as a wiring error, not as an acquirer decline',
 
 it('throws something the router will rethrow rather than swallow', function (string $operation) {
     try {
-        makeRevolutGateway()->{$operation}();
+        revolutInvoke(makeRevolutGateway(), $operation);
     } catch (Throwable $e) {
         expect($e)->toBeInstanceOf(UnsupportedByGateway::class);
 
@@ -58,13 +178,13 @@ it('throws something the router will rethrow rather than swallow', function (str
 
     $this->fail("Revolut::{$operation}() did not throw at all.");
 })->with([
-    'purchase',
+    'charge',
     'authorize',
     'capture',
     'refund',
-    'void',
-    'createCard',
-    'createPaymentMethod',
+    'cancel',
+    'tokenize',
+    'registerPaymentMethod',
 ]);
 
 it('always resolves to the production host (Revolut has no card sandbox)', function () {
@@ -79,41 +199,39 @@ it('lets an explicit base URL override the production default', function () {
 it('injects gateway-level card configuration into issued cards', function () {
     $account = '11111111-1111-1111-1111-111111111111';
 
-    $request = makeRevolutGateway(params: [
+    $data = revolutCardPayload([
         'accountIds' => [$account],
         'product' => 'prod_gw',
         'spendLimitPeriod' => 'month',
         'validityDays' => 14,
         'fetchSensitiveDetails' => false,
-    ])->issueVirtualCard([
+    ], 'issue', [
         'money' => new Money(5000, new Currency('GBP')),
         'clientUniqueId' => 'req-1',
     ]);
 
-    $data = $request->getData();
-
     expect($data['accounts'])->toBe([$account])
         ->and($data['product'])->toBe(['code' => 'prod_gw'])
         ->and($data['spending_limits'])->toBe(['month' => ['amount' => 50.00, 'currency' => 'GBP']])
-        ->and($data['spending_period']['end_date_action'])->toBe('terminate')
-        ->and($request->getFetchSensitiveDetails())->toBeFalse();
+        ->and($data['spending_period']['end_date_action'])->toBe('terminate');
+
+    // `fetchSensitiveDetails` shapes what the request does after the card exists, not the body it
+    // sends, so it is asserted where that behaviour lives — IssueVirtualCardRequestTest.
 });
 
 it('tolerates a legacy single-string account id', function () {
     $account = '11111111-1111-1111-1111-111111111111';
 
-    $request = makeRevolutGateway(params: ['accountIds' => $account])->issueVirtualCard([
+    $data = revolutCardPayload(['accountIds' => $account], 'issue', [
         'money' => new Money(5000, new Currency('GBP')),
     ]);
 
-    expect($request->getData()['accounts'])->toBe([$account]);
+    expect($data['accounts'])->toBe([$account]);
 });
 
 it('drops non-uuid account ids from the allow-list', function () {
     $account = '11111111-1111-1111-1111-111111111111';
 
-    expect(makeRevolutGateway(params: ['accountIds' => ['not-a-uuid', $account]])
-        ->issueVirtualCard(['money' => new Money(5000, new Currency('GBP'))])->getData()['accounts'])->toBe([$account])
-        ->and(makeRevolutGateway(params: ['accountIds' => ['not-a-uuid']])
-            ->issueVirtualCard(['money' => new Money(5000, new Currency('GBP'))])->getData())->not->toHaveKey('accounts');
+    expect(revolutCardPayload(['accountIds' => ['not-a-uuid', $account]], 'issue', ['money' => new Money(5000, new Currency('GBP'))])['accounts'])->toBe([$account])
+        ->and(revolutCardPayload(['accountIds' => ['not-a-uuid']], 'issue', ['money' => new Money(5000, new Currency('GBP'))]))->not->toHaveKey('accounts');
 });
