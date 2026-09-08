@@ -7,6 +7,7 @@ namespace Techork\PaymentService\Gateway\Command;
 use Techork\PaymentService\Common\Contract\CustomerIdentifier;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
+use Techork\PaymentService\Common\ValueObject\CustomerIdentity;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 
 /**
@@ -30,6 +31,18 @@ final readonly class VaultCommand
      * `userPaymentOptionId` without a `userTokenId`. `tokenize()` genuinely has no customer —
      * a token is one use and then gone, which is the same reason the aggregate will not hold
      * one — so the field stays nullable rather than being split across two commands.
+     * @param  ?CustomerIdentity  $customerIdentity  WHO the customer is, for the provider that
+     *   creates its customer object here rather than on a call of its own.
+     *
+     * ConnexPay is that provider and the only one: every endpoint it has that can make a customer
+     * takes a card, so registering the payment method IS registering the customer, and the request
+     * has to be told who they are. It was building one out of `billingAddress` — so the person
+     * ConnexPay recorded was whoever the card happened to be billed to, and the name and email a
+     * merchant actually recorded never reached it.
+     *
+     * Both fields, not one: ConnexPay's `Card.Customer` is four person fields AND six AVS fields,
+     * so an identity substituted for the address would have registered the right person and
+     * silently ended address verification.
      */
     public function __construct(
         public GatewayId $gatewayId,
@@ -37,6 +50,7 @@ final readonly class VaultCommand
         public ?BillingAddress $billingAddress = null,
         public ?string $clientUniqueId = null,
         public ?CustomerIdentifier $customerId = null,
+        public ?CustomerIdentity $customerIdentity = null,
     ) {}
 
 
@@ -51,6 +65,7 @@ final readonly class VaultCommand
             'billingAddress' => $this->billingAddress?->toArray(),
             'clientUniqueId' => $this->clientUniqueId,
             'customerId' => $this->customerId?->toString(),
+            'customerIdentity' => $this->customerIdentity?->toArray(),
         ];
     }
 }

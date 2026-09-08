@@ -34,6 +34,24 @@ use Techork\PaymentService\Gateway\ValueObject\GatewayInfrastructure;
  * ConnexPay a card it has never seen, this one hands back one it already holds so the customer
  * gets attached to it.
  *
+ * **This is where a ConnexPay customer is born, and it is the only place.** ConnexPay publishes no
+ * endpoint that creates one from an identity alone — every one of them takes a card — which is why
+ * {@see \Techork\PaymentService\Gateway\Role\RegistersCustomers} is refused for this gateway
+ * and this registration does that job instead. The guid comes back as
+ * `RegistrationResult::$customerReference` and pairs with the `customerId` the caller passed on
+ * the same command, so the caller holds both halves and can record them in
+ * `GatewayCustomerRepository`. Until it does, that map answers null for this customer, and null is
+ * an ordinary answer here rather than a failure.
+ *
+ * **What that made of `billingAddress` until now.** `Card.Customer` was built from the address
+ * alone, so the customer ConnexPay created was whoever the card happened to be billed to, and the
+ * name, email and phone a merchant actually recorded never reached it. That is the
+ * address-derived provider customer this whole change exists to end — removed for Nuvei and Stripe
+ * first, and surviving here longest because the write-up had declared there was no customer object
+ * on this gateway to look at. `customerIdentity` names the person now and the address keeps naming
+ * the address; see {@see \Techork\PaymentService\ConnexPay\Concern\BuildsConnexPayPayload::formatCustomer()}
+ * for why both are needed rather than one replacing the other.
+ *
  * @implements PaymentInstrumentVisitor<array>
  */
 final class CreatePaymentMethod implements PaymentInstrumentVisitor
@@ -66,8 +84,13 @@ final class CreatePaymentMethod implements PaymentInstrumentVisitor
         $card = $this->command->instrument->accept($this);
 
         $billingAddress = $this->command->billingAddress;
-        if ($billingAddress !== null) {
-            $card['Customer'] = $this->formatCustomer($billingAddress);
+        $identity = $this->command->customerIdentity;
+
+        // Either one is enough to be worth sending: an identity with no address still tells
+        // ConnexPay who this customer is, and an address with no identity is the AVS payload plus
+        // the fallback person. Only both absent leaves nothing to say.
+        if ($billingAddress !== null || $identity !== null) {
+            $card['Customer'] = $this->formatCustomer($billingAddress, $identity);
         }
 
         // A registration that was authenticated must carry the result through,

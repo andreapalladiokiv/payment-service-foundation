@@ -40,13 +40,13 @@ final class Capture
      */
     public function payload(): array
     {
-        return $this->withIdentifiers([
+        return $this->withCustomerId($this->withIdentifiers([
             'DeviceGuid' => $this->settings->deviceGuid,
             'AuthOnlyGuid' => $this->command->transactionReference,
             'ConnexPayTransaction' => [
                 'ExpectedPayments' => 1,
             ],
-        ], $this->command->clientUniqueId);
+        ], $this->command->clientUniqueId), $this->command->customerId);
     }
 
     public function capture(): GatewayResult

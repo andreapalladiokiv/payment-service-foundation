@@ -39,6 +39,7 @@ use Techork\PaymentService\Gateway\Contract\GatewayCredential;
 use Techork\PaymentService\Gateway\Contract\GatewayInstrumentRepository;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 use Techork\PaymentService\Gateway\ValueObject\GatewayInfrastructure;
+use Techork\PaymentService\Common\Contract\CustomerIdentifier;
 
 /*
  * The three shapes every ConnexPay operation is built from, kept apart because they are three
@@ -191,24 +192,26 @@ function cpPlacement(array $overrides = []): PlacementCommand
         statementDescription: $overrides['statementDescription'] ?? null,
         description: $overrides['description'] ?? null,
         initiation: $overrides['initiation'] ?? PaymentInitiation::CardholderInitiated,
+        customerId: $overrides['customerId'] ?? null,
     );
 }
 
-function cpCaptureCommand(?string $clientUniqueId = null): CaptureCommand
+function cpCaptureCommand(?string $clientUniqueId = null, ?CustomerIdentifier $customerId = null): CaptureCommand
 {
     return new CaptureCommand(
         gatewayId: GatewayId::generate(),
         transactionReference: 'auth-guid-abc',
         amount: new Money(5000, new Currency('USD')),
         clientUniqueId: $clientUniqueId,
+        customerId: $customerId,
     );
 }
 
-function cpCapture(?string $clientUniqueId = null, ?ConnexPayHttpClientInterface $client = null): Capture
+function cpCapture(?string $clientUniqueId = null, ?ConnexPayHttpClientInterface $client = null, ?CustomerIdentifier $customerId = null): Capture
 {
     return new Capture(
         cpSettings(['deviceGuid' => 'device-123']),
-        cpCaptureCommand($clientUniqueId),
+        cpCaptureCommand($clientUniqueId, $customerId),
         $client ?? cpHttpClient(),
     );
 }
@@ -248,5 +251,7 @@ function cpVault(array $overrides = []): VaultCommand
         instrument: $overrides['instrument'] ?? Mockery::mock(PaymentInstrument::class),
         billingAddress: $overrides['billingAddress'] ?? null,
         clientUniqueId: $overrides['clientUniqueId'] ?? null,
+        customerId: $overrides['customerId'] ?? null,
+        customerIdentity: $overrides['customerIdentity'] ?? null,
     );
 }

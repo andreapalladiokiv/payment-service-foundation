@@ -77,7 +77,10 @@ final class Authorize implements PaymentInstrumentVisitor
             $data['RiskData'] = $this->formatRiskData($billingAddress);
         }
 
-        return $this->withIdentifiers($data, $this->command->clientUniqueId);
+        return $this->withCustomerId(
+            $this->withIdentifiers($data, $this->command->clientUniqueId),
+            $this->command->customerId,
+        );
     }
 
     public function authorize(): AuthorizationResult
