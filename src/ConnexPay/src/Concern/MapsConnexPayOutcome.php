@@ -72,10 +72,8 @@ trait MapsConnexPayOutcome
                 return AuthorizationResult::failed(GatewayResult::UNNAMED_SUCCESS);
             }
 
-            return self::withCardChecks(
-                AuthorizationResult::requiresAction($reference, $challenge),
-                $response,
-            )->withMetadata(self::openingMetadata($response, $reference));
+            return self::withCardChecks(AuthorizationResult::requiresAction($reference, $challenge), $response)
+                ->withMetadata(self::openingMetadata($response, $reference));
         }
 
         if (! self::wasProcessed($response)) {
@@ -86,10 +84,8 @@ trait MapsConnexPayOutcome
             return AuthorizationResult::failed(GatewayResult::UNNAMED_SUCCESS);
         }
 
-        return self::withCardChecks(
-            AuthorizationResult::succeeded($reference),
-            $response,
-        )->withMetadata(self::openingMetadata($response, $reference));
+        return self::withCardChecks(AuthorizationResult::succeeded($reference), $response)
+            ->withMetadata(self::openingMetadata($response, $reference));
     }
 
     /**
@@ -165,13 +161,9 @@ trait MapsConnexPayOutcome
      */
     protected static function transactionMetadata(array $response): array
     {
-        $code = $response['connexPayTransaction']['incomingTransCode']
-            ?? $response['ConnexPayTransaction']['IncomingTransCode']
-            ?? null;
+        $code = $response['connexPayTransaction']['incomingTransCode'] ?? $response['ConnexPayTransaction']['IncomingTransCode'] ?? null;
 
-        return $code === null || $code === ''
-            ? []
-            : ['incoming_transaction_code' => (string) $code];
+        return $code === null || $code === '' ? [] : ['incoming_transaction_code' => (string) $code];
     }
 
     /**
@@ -235,11 +227,7 @@ trait MapsConnexPayOutcome
 
         $payload = $response['redirectUrlRequestPayload'] ?? null;
 
-        return new ThreeDSChallenge(
-            authenticationId: $guid,
-            url: $url,
-            payload: is_string($payload) && $payload !== '' ? $payload : null,
-        );
+        return new ThreeDSChallenge($guid, $url, is_string($payload) && $payload !== '' ? $payload : null);
     }
 
     /**
@@ -256,9 +244,7 @@ trait MapsConnexPayOutcome
         $avs = $response['addressVerificationCode'] ?? $response['AddressVerificationCode'] ?? null;
         $cvv = $response['cvvVerificationCode'] ?? $response['CvvVerificationCode'] ?? null;
 
-        [$line, $postal] = $avs === null || $avs === ''
-            ? [null, null]
-            : ConnexPaySchemeChecks::avsToLineAndPostal((string) $avs);
+        [$line, $postal] = $avs === null || $avs === '' ? [null, null] : ConnexPaySchemeChecks::avsToLineAndPostal((string) $avs);
 
         return [
             $line,

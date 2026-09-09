@@ -39,7 +39,6 @@ use Techork\PaymentService\Domain\PaymentIntent\Port\CaptureOutcome;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CaptureRequest;
 use Techork\PaymentService\Domain\PaymentIntent\Port\Request\CreateRequest;
 use Techork\PaymentService\Domain\PaymentIntent\ValueObject\PaymentIntentId;
-use DateTimeImmutable;
 use Techork\PaymentService\Domain\Subscription\Command\ActivateSubscriptionCommand;
 use Techork\PaymentService\Domain\Subscription\Port\Request\SubscriptionCaptureRequest;
 use Techork\PaymentService\Domain\Subscription\Port\SubscriptionCapturePort;

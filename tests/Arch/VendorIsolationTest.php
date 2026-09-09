@@ -13,8 +13,8 @@ declare(strict_types=1);
 |
 | Namespaces here must be spelled as composer PSR-4 prefixes, because that is
 | how Pest resolves a dependency to a set of files. A shorter spelling — say
-| `Omnipay` where the prefix is `Omnipay\Common` — resolves to nothing and
-| passes for free. The last test in this file guards against that.
+| `Nuvei` where the prefix is `Nuvei\Api` — resolves to nothing and passes for
+| free. The last test in this file guards against that.
 */
 
 $packages = [
@@ -43,13 +43,6 @@ $confined = [
         'vendor' => ['EventSauce\EventSourcing', 'EventSauce\ObjectHydrator', 'EventSauce\Clock'],
     ],
 
-    // Omnipay is the gateway layer's request/response shape. Keeping it out
-    // of the core is what makes dropping it a gateway-layer change.
-    'omnipay stays in the gateway layer' => [
-        'owners' => ['Gateway', 'ConnexPay', 'Nuvei', 'Paynet', 'Revolut', 'Stripe', 'Laravel'],
-        'vendor' => ['Omnipay\Common'],
-    ],
-
     // Each provider SDK belongs to the one adapter that speaks that provider.
     'the Stripe SDK stays in the Stripe adapter' => [
         'owners' => ['Stripe'],
@@ -67,7 +60,7 @@ $confined = [
 */
 $transport = [
     'GuzzleHttp', 'GuzzleHttp\Psr7',
-    'Psr\Http\Message', 'Psr\Http\Client', 'Http\Client', 'Http\Discovery',
+    'Psr\Http\Message', 'Psr\Http\Client',
     'Symfony\Contracts\HttpClient', 'Symfony\Component\HttpFoundation',
 ];
 
@@ -146,7 +139,7 @@ arch('every guarded namespace resolves to files on disk', function () use ($conf
         $resolves = array_filter($prefixes, static fn (string $prefix): bool => str_starts_with($target, $prefix));
 
         expect($resolves)->not->toBeEmpty(
-            "'{$target}' matches no composer PSR-4 prefix, so every assertion naming it passes vacuously",
+            "'$target' matches no composer PSR-4 prefix, so every assertion naming it passes vacuously",
         );
     }
 });
