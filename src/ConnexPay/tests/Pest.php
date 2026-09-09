@@ -18,7 +18,6 @@ use Techork\PaymentService\Common\ValueObject\CreditCard\Number;
 use Techork\PaymentService\Common\ValueObject\Email;
 use Techork\PaymentService\Common\ValueObject\ExpiresAt;
 use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
-use Techork\PaymentService\Common\ValueObject\AttachedPaymentMethod;
 use Techork\PaymentService\Common\ValueObject\PaymentMethod;
 use Techork\PaymentService\Common\ValueObject\PaymentMethodId;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ECICode;
@@ -193,15 +192,17 @@ function cpStoredPaymentMethod(): PaymentMethod
 }
 
 /**
- * The same stored card with a customer attached — the only form a gateway will take a payment
- * on.
+ * The same stored card with a customer attached — the state a payment operation requires.
  *
- * A bare `PaymentMethod` is refused by every payment operation now, so the two fixtures are
- * both needed: this one for the payments, the bare one for the tests that assert the refusal.
+ * Both fixtures are needed: this one for the payments, cpStoredPaymentMethod() for the tests that
+ * assert the refusal. Attached is a state rather than a type, so the difference between
+ * them is one constructor argument.
  */
-function cpAttachedPaymentMethod(): AttachedPaymentMethod
+function cpAttachedPaymentMethod(): PaymentMethod
 {
-    return new AttachedPaymentMethod(connexPaySuiteCustomer(), cpStoredPaymentMethod());
+    $bare = cpStoredPaymentMethod();
+
+    return new PaymentMethod($bare->id, $bare->instrument, connexPaySuiteCustomer());
 }
 
 /**

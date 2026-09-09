@@ -14,6 +14,7 @@ use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSResult;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSStatus;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSVersion;
 use Techork\PaymentService\ConnexPay\Purchase;
+use Techork\PaymentService\Gateway\Exception\UnsupportedInstrument;
 
 /**
  * @param  array<string, mixed>  $command
@@ -258,4 +259,18 @@ it('reports a transport failure as a failed authorization', function () {
     expect($result->success)->toBeFalse()
         ->and($result->reference)->toBeNull()
         ->and($result->message)->toBe('Connection refused');
+});
+// ─────────────────────────────────────────────────────────
+//  A stored card charged to nobody
+//
+//  Attached is a STATE of a payment method rather than a second type, so "payable" is no longer
+//  something a signature carries — each payment mapper checks it. That is the trade the shape
+//  made, and this is its price: the refusal is asserted at every operation that makes it, because
+//  a check one mapper forgets is a card charged to whoever it happened to be billed to, which is
+//  the behaviour the customer split exists to end.
+// ─────────────────────────────────────────────────────────
+
+it('refuses to charge a stored card nobody has claimed', function () {
+    expect(fn () => cpPurchase(['instrument' => cpStoredPaymentMethod()])->payload())
+        ->toThrow(UnsupportedInstrument::class, 'names no customer on the "charge" operation');
 });

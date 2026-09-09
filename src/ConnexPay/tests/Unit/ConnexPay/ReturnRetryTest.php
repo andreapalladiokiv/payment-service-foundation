@@ -10,6 +10,7 @@ use Techork\PaymentService\ConnexPay\ConnexPayHttpClientInterface;
 use Techork\PaymentService\ConnexPay\ReturnRetry;
 use Techork\PaymentService\Gateway\Command\RefundCommand;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
+use Techork\PaymentService\Gateway\Exception\UnsupportedInstrument;
 
 /**
  * @param  array<string, mixed>  $wiring
@@ -81,4 +82,18 @@ it('returns a failed result on a transport error', function () {
     $client->shouldReceive('post')->once()->andThrow(new TransferException('Network error'));
 
     expect(cpReturnRetry(cpCard(), wiring: ['client' => $client])->retry()->message)->toBe('Network error');
+});
+// ─────────────────────────────────────────────────────────
+//  A stored card charged to nobody
+//
+//  Attached is a STATE of a payment method rather than a second type, so "payable" is no longer
+//  something a signature carries — each payment mapper checks it. That is the trade the shape
+//  made, and this is its price: the refusal is asserted at every operation that makes it, because
+//  a check one mapper forgets is a card charged to whoever it happened to be billed to, which is
+//  the behaviour the customer split exists to end.
+// ─────────────────────────────────────────────────────────
+
+it('refuses to retry a refund onto a stored card nobody has claimed', function () {
+    expect(fn () => cpReturnRetry(cpStoredPaymentMethod())->payload())
+        ->toThrow(UnsupportedInstrument::class, 'names no customer on the "retryRefund" operation');
 });

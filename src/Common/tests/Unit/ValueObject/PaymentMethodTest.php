@@ -3,7 +3,6 @@
 declare(strict_types=1);
 
 use Techork\PaymentService\Common\Contract\PaymentInstrumentVisitor;
-use Techork\PaymentService\Common\ValueObject\AttachedPaymentMethod;
 use Techork\PaymentService\Common\ValueObject\CardBrand;
 use Techork\PaymentService\Common\ValueObject\Cash;
 use Techork\PaymentService\Common\ValueObject\CreditCard;
@@ -15,6 +14,10 @@ use Techork\PaymentService\Common\ValueObject\HostedPayment;
 use Techork\PaymentService\Common\ValueObject\PaymentMethod;
 use Techork\PaymentService\Common\ValueObject\PaymentMethodId;
 use Techork\PaymentService\Common\ValueObject\Token;
+use Techork\PaymentService\Common\ValueObject\BillingAddress;
+use Techork\PaymentService\Common\ValueObject\Customer;
+use Techork\PaymentService\Common\ValueObject\CustomerId;
+use Techork\PaymentService\Common\ValueObject\CustomerIdentity;
 
 function makeTestPmCard(): CreditCard
 {
@@ -29,6 +32,15 @@ function makeTestPmCard(): CreditCard
 function makeTestPaymentMethod(): PaymentMethod
 {
     return new PaymentMethod(PaymentMethodId::generate(), makeTestPmCard());
+}
+
+function makeTestPmCustomer(?CustomerId $id = null): Customer
+{
+    return new Customer(
+        $id ?? CustomerId::fromString('01920000-0000-7000-8000-00000000cafe'),
+        new CustomerIdentity('Ada', 'Lovelace'),
+        BillingAddress::unknown(),
+    );
 }
 
 // ──────────────────────────────────────────────
@@ -47,21 +59,74 @@ it('exposes id and instrument, and nothing about a person', function () {
 });
 
 /**
- * The two fields this type no longer has, pinned as absent.
+ * The field this type no longer has, pinned as absent.
  *
  * A `BillingAddress` was a property here, and that address carried the payer's name, email and
  * phone — so a payment method WAS a person, one uncorrectable copy per stored card, which is how
- * every provider mapper came to read the payer off whatever card it was charging. Whose card this
- * is now lives on an {@see AttachedPaymentMethod}, and where they are billed lives on the
- * customer inside it.
+ * every provider mapper came to read the payer off whatever card it was charging. Both halves are
+ * `$customer`'s now: {@see CustomerIdentity} says who, {@see BillingAddress} says where, and
+ * neither is reachable except through somebody who was deliberately named.
  */
-it('carries neither an address nor a customer', function () {
+it('carries no address of its own', function () {
     $pm = makeTestPaymentMethod();
 
     expect(property_exists($pm, 'billingAddress'))->toBeFalse()
-        ->and(property_exists($pm, 'customer'))->toBeFalse()
-        ->and($pm->toPayload())->not->toHaveKey('billing_address')
-        ->and($pm->toPayload())->not->toHaveKey('customer');
+        ->and($pm->toPayload())->not->toHaveKey('billing_address');
+});
+
+/**
+ * Unattached is the state a payment method is minted in, and it is ordinary.
+ *
+ * Tokenising a card knows nothing about who will own it; claiming it is a separate operation. So
+ * `null` here is not a half-built object, and `isAttached()` is the question the payment mappers
+ * ask before refusing — see {@see \Techork\PaymentService\Gateway\Exception\UnsupportedInstrument::needsAttachedCustomer()}.
+ */
+it('is unattached until somebody claims it', function () {
+    $unclaimed = makeTestPaymentMethod();
+
+    expect($unclaimed->customer)->toBeNull()
+        ->and($unclaimed->isAttached())->toBeFalse()
+        ->and($unclaimed->toPayload()['customer'])->toBeNull();
+
+    $claimed = new PaymentMethod($unclaimed->id, $unclaimed->instrument, makeTestPmCustomer());
+
+    expect($claimed->isAttached())->toBeTrue()
+        ->and($claimed->toPayload()['customer'])->toBe(makeTestPmCustomer()->toArray());
+});
+
+/**
+ * Claiming a card does not change which card it is, which is the property the gateway-reference
+ * key depends on: one credential, one id, one `type()`, whether anybody has claimed it or not.
+ *
+ * It is asserted because the pairing that preceded this state broke exactly here — two types for
+ * one credential gave a row two possible keys, and attaching a card moved it.
+ */
+it('keeps its identity when it is claimed', function () {
+    $unclaimed = makeTestPaymentMethod();
+    $claimed = new PaymentMethod($unclaimed->id, $unclaimed->instrument, makeTestPmCustomer());
+
+    expect($claimed->id->toString())->toBe($unclaimed->id->toString())
+        ->and($claimed::type())->toBe($unclaimed::type());
+});
+
+/**
+ * Ownership, class-checked as well as value-checked: a customer id and a payment method id
+ * standing on the same UUID are not the same thing. An unclaimed card belongs to nobody, so the
+ * answer is false rather than an error — asking is legitimate and "no" is the truth.
+ */
+it('says which customer claimed it', function () {
+    $mine = CustomerId::fromString('01920000-0000-7000-8000-00000000cafe');
+    $theirs = CustomerId::fromString('01920000-0000-7000-8000-00000000beef');
+
+    $claimed = new PaymentMethod(
+        PaymentMethodId::generate(),
+        makeTestPmCard(),
+        makeTestPmCustomer($mine),
+    );
+
+    expect($claimed->belongsTo($mine))->toBeTrue()
+        ->and($claimed->belongsTo($theirs))->toBeFalse()
+        ->and(makeTestPaymentMethod()->belongsTo($mine))->toBeFalse();
 });
 
 it('is valid when instrument is valid', function () {
@@ -90,8 +155,6 @@ it('accepts visitor', function () {
         { return 'token'; }
         public function visitPaymentMethod(PaymentMethod $paymentMethod): string
         { return 'pm'; }
-        public function visitAttachedPaymentMethod(AttachedPaymentMethod $attached): string
-        { return 'attached'; }
         public function visitHostedPayment(HostedPayment $hosted): string
         { return 'hosted'; }
     };
@@ -112,6 +175,7 @@ it('serializes to payload', function () {
         'id' => $pm->id->toString(),
         'type' => 'payment_method',
         'card' => $pm->instrument->toPayload(),
+        'customer' => null,
     ]);
 });
 

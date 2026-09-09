@@ -12,23 +12,35 @@ use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\Contract\PaymentInstrumentVisitor;
 
 /**
- * A stored instrument and an id of ours for it. Nothing else.
+ * A stored instrument, an id of ours for it, and — once somebody has claimed it — the customer it
+ * belongs to.
  *
- * **Deliberately not a customer, and no longer an address either.** It held a
- * {@see BillingAddress}, and that address held the payer's name, email and phone — so a payment
- * method was a person, an uncorrectable copy of one per card, which is exactly how every provider
- * mapper came to read the payer off whatever card was being charged. Both halves live on
- * {@see Customer} now, and a payment method paired with one is an {@see AttachedPaymentMethod}.
+ * **Attached is a STATE of a payment method, not a second type.** `$customer` is null until the
+ * card is claimed and non-null afterwards; {@see isAttached()} is that question asked by name.
+ * There was an `AttachedPaymentMethod` pairing for a while, and one type with two states is the
+ * better shape for a reason that showed up as a defect rather than as a preference: two types for
+ * one credential meant two of everything downstream, and the first thing to get it wrong was the
+ * gateway-reference key, which read the row's type off the wrapper and its id off the card inside.
+ * One class has one `type()`, so a reference is keyed on the credential by construction — see
+ * {@see \Techork\PaymentService\Laravel\Repository\EloquentGatewayInstrumentRepository}.
  *
- * **This is therefore not payable.** A gateway asked to charge a bare payment method refuses it:
- * a stored card exists to be charged again to somebody, and there is no honest way to name that
- * somebody from the instrument alone — the old answer was the address it carried, which is the
- * behaviour being removed. Payment operations take an `AttachedPaymentMethod`; this type is what
- * a vaulting operation produces and what an attachment is built from.
+ * **Creating one does not attach it.** A payment method is minted by tokenising a card, which
+ * knows nothing about who will own it; claiming it is a separate operation, and until it happens
+ * `$customer` is null. That is an ordinary, expected state — not a half-built object.
  *
- * **The stored payload shape changed with it**: `billing_address` is gone. Rows written before
- * that still carry the key and {@see fromPayload()} ignores it, because an address on a payment
- * method has nowhere left to go — reading it would silently reintroduce the copy.
+ * **Payment operations refuse the unattached state.** A stored card is charged to somebody, the
+ * somebody is not derivable from the card, and the old answer was the address the payment method
+ * carried — it held the payer's name, email and phone, one uncorrectable copy per card, so a card
+ * was charged to whoever it happened to be billed to. The gateways now decline with
+ * {@see \Techork\PaymentService\Gateway\Exception\UnsupportedInstrument::needsAttachedCustomer()}.
+ *
+ * Worth being plain about what that costs: while the pairing was a type, "payable" was a
+ * guarantee a signature could carry, and now it is a runtime check every payment mapper has to
+ * make. The check is one `null` comparison in each `visitPaymentMethod()` and each one is tested,
+ * which is the price of the state living where it belongs.
+ *
+ * The address inside the customer is an address and only that. `$billingAddress` used to be a
+ * field here, and it carried the payer — those four fields are {@see CustomerIdentity}'s.
  */
 final readonly class PaymentMethod implements PaymentInstrument
 {
@@ -37,6 +49,7 @@ final readonly class PaymentMethod implements PaymentInstrument
     public function __construct(
         public PaymentMethodId $id,
         public PaymentInstrument $instrument,
+        public ?Customer $customer = null,
     ) {}
 
     #[Override]
@@ -51,6 +64,39 @@ final readonly class PaymentMethod implements PaymentInstrument
         return $visitor->visitPaymentMethod($this);
     }
 
+    /**
+     * Whether anybody has claimed this card.
+     *
+     * The one question the payment mappers ask, named rather than written out as
+     * `$paymentMethod->customer !== null` at each of them — a bare null check reads as "might be
+     * missing" where this reads as the state it is.
+     */
+    public function isAttached(): bool
+    {
+        return $this->customer !== null;
+    }
+
+    /**
+     * Whether this card is claimed by that customer specifically.
+     *
+     * Through {@see CustomerId::equals()}, which checks the class as well as the value: a customer
+     * id and a payment method id standing on the same UUID are not the same thing, and a
+     * comparison that could not tell them apart is how a card gets attributed to the wrong record.
+     * An unattached card belongs to nobody, so the answer is false rather than an error — asking
+     * is legitimate, and "no" is the truth.
+     */
+    public function belongsTo(CustomerId $customerId): bool
+    {
+        return $this->customer !== null && $this->customer->id->equals($customerId);
+    }
+
+    /**
+     * The instrument's own validity, and nothing about the customer.
+     *
+     * Every part of a {@see Customer} is required, so there is nothing about the payer that could
+     * make a card invalid — and being unattached is not invalidity either. Whether a card may be
+     * CHARGED is a separate question the gateways answer, because the reason is theirs.
+     */
     #[Override]
     public function isValid(): bool
     {
@@ -66,6 +112,7 @@ final readonly class PaymentMethod implements PaymentInstrument
             'id' => $this->id->toString(),
             'type' => self::TYPE,
             $instrumentPayload['type'] => $instrumentPayload,
+            'customer' => $this->customer?->toArray(),
         ];
     }
 
@@ -79,15 +126,17 @@ final readonly class PaymentMethod implements PaymentInstrument
         return new self(
             PaymentMethodId::fromString($payload['id']),
             PaymentInstrumentFactory::fromPayload(self::findInstrumentPayload($payload)),
+            // Absent reads as unattached, which is what a row written before the customer existed
+            // means: nobody had claimed the card, because there was nowhere to record it. A
+            // `billing_address` such a row may also carry is ignored — it held the payer, and
+            // reading it would put the uncorrectable copy back.
+            isset($payload['customer']) ? Customer::fromArray($payload['customer']) : null,
         );
     }
 
     private static function findInstrumentPayload(array $payload): array
     {
         foreach ($payload as $key => $value) {
-            // `billing_address` is named among the keys that are not the instrument because rows
-            // written before it was removed still hold one, and it is shaped enough like an
-            // instrument payload to be mistaken for one.
             if (is_array($value) && isset($value['type']) && ! in_array($key, ['type', 'id', 'billing_address', 'customer'], true)) {
                 return $value;
             }

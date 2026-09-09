@@ -22,7 +22,6 @@ final class PaymentInstrumentFactory
             Cash::type() => Cash::fromPayload($payload),
             Token::type() => Token::fromPayload($payload),
             PaymentMethod::type() => PaymentMethod::fromPayload($payload),
-            AttachedPaymentMethod::type() => AttachedPaymentMethod::fromPayload($payload),
             HostedPayment::type() => HostedPayment::fromPayload($payload),
             default => throw new InvalidArgumentException("Unknown instrument type: {$payload['type']}"),
         };

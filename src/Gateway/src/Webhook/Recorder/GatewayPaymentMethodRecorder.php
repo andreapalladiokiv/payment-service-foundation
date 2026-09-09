@@ -20,9 +20,9 @@ use Techork\PaymentService\Gateway\ValueObject\GatewayId;
  * {@see \Techork\PaymentService\Common\ValueObject\BillingAddress} no longer holds a person.
  * The identity is passed rather than dropped because this is the only place it appears: the
  * webhook is telling us who the provider thinks owns this card. What to do with that is the
- * host's — a `PaymentMethod` deliberately holds no customer, so pairing the two is an
- * {@see \Techork\PaymentService\Common\ValueObject\AttachedPaymentMethod} and an act of the
- * application's own identity resolution, not something a webhook can decide.
+ * host's — attaching a card to a customer is an act of its own identity resolution, not something
+ * a webhook can decide, so what arrives here are the makings of a
+ * {@see \Techork\PaymentService\Common\ValueObject\Customer} rather than one.
  */
 interface GatewayPaymentMethodRecorder
 {

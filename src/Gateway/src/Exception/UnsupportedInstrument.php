@@ -43,15 +43,17 @@ final class UnsupportedInstrument extends InvalidArgumentException implements Un
      * to whoever it happened to be billed to, one uncorrectable copy per card, and nothing said
      * so.
      *
-     * An {@see \Techork\PaymentService\Common\ValueObject\AttachedPaymentMethod} is the
-     * instrument these operations take. It is an `UnsupportedByGateway` so the failure boundary
-     * rethrows it: a caller must not be able to read its own wiring mistake as an issuer's no.
+     * Attached is a state rather than a type — see
+     * {@see \Techork\PaymentService\Common\ValueObject\PaymentMethod::isAttached()} — so this
+     * is what each payment mapper raises after checking it, not a branch a signature can rule out.
+     * It is an `UnsupportedByGateway` so the failure boundary rethrows it: a caller must not be
+     * able to read its own wiring mistake as an issuer's no.
      */
     public static function needsAttachedCustomer(string $gatewayName, string $operation, PaymentInstrument $instrument): self
     {
         return self::coded(ErrorCode::UnsupportedByGateway, sprintf(
             'Gateway "%s" cannot take a payment on a "%s" that names no customer on the "%s" '
-            .'operation. Attach it to a customer first and pass an "attached_payment_method".',
+            .'operation. Attach it to a customer first.',
             $gatewayName,
             $instrument::type(),
             $operation,
