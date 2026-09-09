@@ -14,7 +14,7 @@ use Money\MoneyFormatter;
 /**
  * Maps a {@see FraudScreeningRequest} onto the JSON body Forter's `/orders`
  * endpoint expects (mirrors the legacy backoffice mapper). Only the PCI-safe
- * card summary (BIN + last four) and billing / connection data cross the wire
+ * card summary (BIN + last four) and customer / connection data cross the wire
  * — never the PAN or CVV.
  *
  * The amount is emitted under `amountUSD` as a decimal string; the caller is
@@ -39,14 +39,15 @@ final class ForterRequestMapper
     public function toOrderPayload(FraudScreeningRequest $request): array
     {
         $amount = ['amountUSD' => $this->formatAmount($request->amountMinorUnits, $request->currencyCode)];
-        $billing = $request->billing;
+        $identity = $request->customer->identity;
+        $billing = $request->customer->billingAddress;
         $card = $request->card;
 
         $payment = [
             'billingDetails' => [
                 'personalDetails' => [
-                    'firstName' => $billing->firstName,
-                    'lastName' => $billing->lastName,
+                    'firstName' => $identity->firstName,
+                    'lastName' => $identity->lastName,
                     'gender' => self::DEFAULT_GENDER,
                 ],
                 'address' => array_filter([
@@ -69,8 +70,8 @@ final class ForterRequestMapper
             ],
         ];
 
-        if ($billing->phone !== null) {
-            $payment['billingDetails']['phone'] = [['phone' => (string) $billing->phone]];
+        if ($identity->phone !== null) {
+            $payment['billingDetails']['phone'] = [['phone' => (string) $identity->phone]];
         }
 
         return [
@@ -96,9 +97,9 @@ final class ForterRequestMapper
             ]],
             'payment' => [$payment],
             'accountOwner' => array_filter([
-                'firstName' => $billing->firstName,
-                'lastName' => $billing->lastName,
-                'email' => $billing->email !== null ? (string) $billing->email : null,
+                'firstName' => $identity->firstName,
+                'lastName' => $identity->lastName,
+                'email' => $identity->email !== null ? (string) $identity->email : null,
             ], static fn ($value): bool => $value !== null),
         ];
     }

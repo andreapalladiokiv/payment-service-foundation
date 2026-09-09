@@ -4,9 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\ConnexPay\Concern;
 
-use Techork\PaymentService\Common\Contract\CustomerIdentifier;
-use Techork\PaymentService\Common\ValueObject\BillingAddress;
-use Techork\PaymentService\Common\ValueObject\CustomerIdentity;
+use Techork\PaymentService\Common\ValueObject\Customer;
 use Transliterator;
 
 /**
@@ -109,14 +107,17 @@ trait BuildsConnexPayPayload
     /**
      * @return array<string, mixed>
      */
-    protected function formatRiskData(BillingAddress $address): array
+    protected function formatRiskData(Customer $customer): array
     {
+        $identity = $customer->identity;
+        $address = $customer->billingAddress;
+
         return [
-            'Name' => $address->firstName.' '.$address->lastName,
-            'BillingPhoneNumber' => $address->phone ? (string) $address->phone : null,
+            'Name' => $identity->firstName.' '.$identity->lastName,
+            'BillingPhoneNumber' => $identity->phone ? (string) $identity->phone : null,
             'BillingState' => $address->state ? (string) $address->state : null,
             'BillingCountryCode' => (string) $address->country,
-            'Email' => $address->email ? (string) $address->email : null,
+            'Email' => $identity->email ? (string) $identity->email : null,
             'BillingAddress1' => $address->line,
             'BillingAddress2' => $address->lineExtra,
             'BillingPostalCode' => $address->postalCode,
@@ -151,10 +152,10 @@ trait BuildsConnexPayPayload
      * @param array<string, mixed> $data
      * @return array<string, mixed>
      */
-    protected function withCustomerId(array $data, ?CustomerIdentifier $customerId): array
+    protected function withCustomerId(array $data, ?Customer $customer): array
     {
-        if ($customerId !== null) {
-            $data['CustomerID'] = substr((string) preg_replace('/[^A-Za-z0-9._\/-]/', '', $customerId->toString()), 0, 100);
+        if ($customer !== null) {
+            $data['CustomerID'] = substr((string) preg_replace('/[^A-Za-z0-9._\/-]/', '', $customer->id->toString()), 0, 100);
         }
 
         return $data;
@@ -166,16 +167,17 @@ trait BuildsConnexPayPayload
      * The four person fields — name, phone, email — say who the customer is, and ConnexPay creates
      * or links a customer object from them, returning its guid as `card.customer.guid`. The six
      * address fields are the AVS payload: they are what makes `addressVerificationCode` come back
-     * at all. That split is why an identity does not REPLACE the address here. Handing over a
-     * {@see CustomerIdentity} in place of the address would have registered the right person and
-     * silently ended address verification, since a `CustomerIdentity` holds no address by design.
+     * at all. That split is why the identity does not REPLACE the address here: substituting one
+     * for the other would register the right person and silently end address verification, since
+     * a {@see \Techork\PaymentService\Common\ValueObject\CustomerIdentity} holds no address by
+     * design.
      *
-     * So the identity supplies the person and the address supplies the address, and the mapping is
-     * exact: `CustomerIdentity`'s four fields are precisely the four this block has that an
-     * address should never have decided. Absent an identity the address answers for both, which is
-     * the state every ConnexPay customer was created in before — an address-derived provider
-     * customer, whoever the card happened to be billed to. It stays reachable as a last resort,
-     * not as the only path.
+     * A {@see Customer} carries both halves, and the mapping is exact: its identity's four fields
+     * are precisely the four this block has that an address should never have decided. It used to
+     * take the two separately with the address answering for both when no identity was passed,
+     * which was not a last resort but the normal case — every ConnexPay customer was created from
+     * whoever the card happened to be billed to. One argument that has both makes that fallback
+     * unnecessary rather than merely unlikely.
      *
      * Names are transliterated for the same reason the city always was: ConnexPay rejects
      * non-ASCII on this block, and a customer's own name is far likelier to carry an accent than
@@ -183,25 +185,23 @@ trait BuildsConnexPayPayload
      *
      * @return array<string, mixed>
      */
-    protected function formatCustomer(?BillingAddress $address, ?CustomerIdentity $identity = null): array
+    protected function formatCustomer(Customer $customer): array
     {
-        $firstName = $identity?->firstName ?: $address?->firstName;
-        $lastName = $identity?->lastName ?: $address?->lastName;
-        $phone = $identity?->phone ?? $address?->phone;
-        $email = $identity?->email ?? $address?->email;
-        $state = $address?->state;
+        $identity = $customer->identity;
+        $address = $customer->billingAddress;
+        $state = $address->state;
 
         return [
-            'FirstName' => $firstName === null ? null : self::transliterate($firstName),
-            'LastName' => $lastName === null ? null : self::transliterate($lastName),
-            'Phone' => $phone ? (string) $phone : null,
-            'City' => $address === null ? null : self::transliterate($address->city),
+            'FirstName' => self::transliterate($identity->firstName),
+            'LastName' => self::transliterate($identity->lastName),
+            'Phone' => $identity->phone ? (string) $identity->phone : null,
+            'City' => self::transliterate($address->city),
             'State' => $state === null ? null : (string) $state,
-            'Country' => $address === null ? null : (string) $address->country,
-            'Email' => $email ? (string) $email : null,
-            'Address1' => $address?->line,
-            'Address2' => $address?->lineExtra,
-            'Zip' => $address?->postalCode,
+            'Country' => (string) $address->country,
+            'Email' => $identity->email ? (string) $identity->email : null,
+            'Address1' => $address->line,
+            'Address2' => $address->lineExtra,
+            'Zip' => $address->postalCode,
         ];
     }
 

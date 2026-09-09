@@ -13,22 +13,27 @@ use Techork\PaymentService\Common\ValueObject\ConnectionContext;
 use Techork\PaymentService\Common\ValueObject\IpAddress;
 use Techork\PaymentService\Forter\FraudScreeningRequest;
 use Techork\PaymentService\Forter\ForterHttpClientInterface;
+use Techork\PaymentService\Common\ValueObject\CustomerId;
+use Techork\PaymentService\Common\ValueObject\Customer;
+use Techork\PaymentService\Common\ValueObject\CustomerIdentity;
+use Techork\PaymentService\Common\ValueObject\PhoneNumber;
 
 /**
  * A FraudScreeningRequest with sensible defaults for Forter tests.
+ *
+ * `$withOptionalBilling` now decides whether the *identity* carries an email rather than whether
+ * the address does. The parameter keeps its name because what it controls is unchanged from a
+ * caller's point of view — whether Forter's `accountOwner.email` is populated — and where that
+ * value lives is the whole subject of the split.
  */
 function makeForterScreeningRequest(int $amountMinorUnits = 12345, string $currency = 'USD', bool $withOptionalBilling = true): FraudScreeningRequest
 {
     return new FraudScreeningRequest(
         reference: 'fraud-ref-1',
         card: new CardSummary('411111', '1111', CardBrand::Visa, Expiration::fromMonthAndYear(6, 2030), new Holder('John Doe')),
-        billing: new BillingAddress(
+        customer: forterSuiteCustomer(
             firstName: 'John',
             lastName: 'Doe',
-            line: '1 Main St',
-            city: 'New York',
-            country: new Country('US'),
-            postalCode: '10001',
             email: $withOptionalBilling ? new Email('john@example.com') : null,
         ),
         amountMinorUnits: $amountMinorUnits,
@@ -58,4 +63,33 @@ function fakeForterClient(array $response = [], ?Throwable $throws = null): Fort
             return $this->response;
         }
     };
+}
+
+/**
+ * The payer these tests hand to a command, complete, because a {@see Customer} has no partial
+ * form — an id, a person and an address or nothing at all.
+ *
+ * That completeness is the change worth knowing about here. The id, the identity and the address
+ * used to be three optional arguments a caller could supply any subset of, which is how a
+ * provider-side customer came to be built out of whatever billing address rode along with the
+ * payment. A test that wants to say "no payer" passes null, not a fragment.
+ */
+function forterSuiteCustomer(
+    ?CustomerId $id = null,
+    string $firstName = 'Ada',
+    string $lastName = 'Lovelace',
+    ?Email $email = null,
+    ?PhoneNumber $phone = null,
+    ?BillingAddress $address = null,
+): Customer {
+    return new Customer(
+        id: $id ?? CustomerId::fromString('01920000-0000-7000-8000-00000000cafe'),
+        identity: new CustomerIdentity($firstName, $lastName, $email, $phone),
+        billingAddress: $address ?? new BillingAddress(
+            line: '1 Main St',
+            city: 'New York',
+            country: new Country('US'),
+            postalCode: '10001',
+        ),
+    );
 }

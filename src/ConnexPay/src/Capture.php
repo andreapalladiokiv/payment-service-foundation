@@ -46,7 +46,7 @@ final class Capture
             'ConnexPayTransaction' => [
                 'ExpectedPayments' => 1,
             ],
-        ], $this->command->clientUniqueId), $this->command->customerId);
+        ], $this->command->clientUniqueId), $this->command->customer);
     }
 
     public function capture(): GatewayResult

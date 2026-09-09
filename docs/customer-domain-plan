@@ -1,5 +1,61 @@
 # Implementation Plan: `Customer`
 
+> ## STATUS: Part I's aggregate was built and then removed (2026-09-09)
+>
+> **The customer is no longer event-sourced in this repository.** `Domain\Customer` — the
+> aggregate, its events, its commands, its repository interface and the Laravel repository that
+> implemented it — is deleted. Read everything below about F0, F1, F2a, F2c and F7 as history:
+> it records why the aggregate was built and what it was for, not what is here.
+>
+> ### What survives, and where
+>
+> | The plan called it | It is now |
+> | --- | --- |
+> | `Common\ValueObject\CustomerIdentity` | unchanged, minus `fromBillingAddress()` |
+> | `Domain\Customer\ValueObject\CustomerId` | `Common\ValueObject\CustomerId` — the eventsauce constraint that forced it into `Domain` went with the aggregate |
+> | `Common\Contract\CustomerIdentifier` | **deleted.** It existed because the only `CustomerId` lived in `Domain`, so an interface was the one way `Gateway` and the providers could name a customer's id without loading a domain type. With the id in `Common` it was a second name for one thing — plus an event-stream normalizer whose only job was to turn an uninstantiable interface back into the class. §0.2's reasoning was sound and its premise is gone. |
+> | `Domain\Customer\ValueObject\AttachedPaymentMethod` | `Common\ValueObject\AttachedPaymentMethod`, and it is a `PaymentInstrument` |
+> | F2b's gateway reference map | unchanged (`GatewayCustomerRepository`) |
+> | F2d, F3, F4, F5, F6 | done and standing |
+> | F8's "remove the address copy" | **done, and further than planned** |
+>
+> ### What was added that the plan did not have
+>
+> `Common\ValueObject\Customer` — the id, the identity and the address as one value, every part
+> required. It is what crosses every boundary that used to take some subset of the three, and it
+> is what closed the hole F5 and F6 each closed locally: an optional identity beside an optional
+> address is an invitation to build a payer out of whichever one arrived.
+>
+> The consequences worth knowing before reading the plan's provider sections:
+>
+> - **`BillingAddress` is an address.** Its `firstName`, `lastName`, `email` and `phone` are gone;
+>   they were `CustomerIdentity`'s all along. §0.1's item 4 was the whole story.
+> - **`PaymentMethod` carries neither an address nor a customer**, and is not payable. Payment
+>   operations take an `AttachedPaymentMethod` and refuse a bare one with
+>   `UnsupportedInstrument::needsAttachedCustomer()`.
+> - **The payment intent records a `Customer`** where it recorded a `BillingAddress`. Part II's
+>   A0 no longer needs to pass a customer at every gateway call site: the payment carries one.
+> - **A1 (identity resolution) is now the only thing standing between this and a working
+>   customer.** It was always the application's; with no aggregate here it is also the only place
+>   a `CustomerId` is minted. An application keyed on something other than a UUID of ours maps to
+>   a `CustomerId` at its own edge — the interface that used to let it pass its own type across is
+>   gone, and what prevents a gateway call inventing a payer is that `Customer` has no partial
+>   form, not a type nobody could construct.
+>
+> ### Migrations this created
+>
+> Stored shapes changed and nothing reads the old ones, deliberately — a silent fallback would
+> make an unnamed payer look like a named one forever:
+>
+> - payment-intent events and snapshots: `billing_address` → `customer`
+>   (`PaymentIntentImported::fromPayload()` refuses a row without it, by name)
+> - `PaymentMethod` payloads: `billing_address` dropped (ignored on read, not migrated)
+> - Nuvei customers keyed by email still need A3.
+>
+> The firewall's fact vocabulary is deliberately NOT migrated: `payment_method.billing_address.
+> first_name` and friends keep their paths and now read from the customer's identity, because
+> stored rules match on those strings.
+
 Written to be executed by an agent. Tasks are ordered by dependency. Every claim about the
 current code carries a `file:line` — **verified against this repository on 2026-08-20**, not
 recalled. Provider facts are in the reference at the end, with the source of each stated;

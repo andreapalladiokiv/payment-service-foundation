@@ -31,7 +31,9 @@ final readonly class RequestFactSupplier implements FactSupplier
     public function facts(): array
     {
         $request = $this->request;
-        $billing = $request->billing;
+        $customer = $request->customer;
+        $identity = $customer->identity;
+        $billing = $customer->billingAddress;
         $connection = $request->connection;
 
         return [
@@ -44,15 +46,21 @@ final readonly class RequestFactSupplier implements FactSupplier
                     'expiry_year' => (int) $request->card->expiration->format('Y'),
                     'is_expired' => $request->card->expiration->expired(),
                 ],
+                // The key stays `billing_address` although four of its eight fields now come
+                // off the customer's identity rather than their address. It is published
+                // vocabulary: rules already written and stored match on these paths, and
+                // renaming them is a migration of somebody's rule set, not a refactor. What the
+                // rename would buy is accuracy in a name; what it costs is every rule that
+                // mentions a payer silently ceasing to match.
                 'billing_address' => [
-                    'first_name' => $billing->firstName,
-                    'last_name' => $billing->lastName,
+                    'first_name' => $identity->firstName,
+                    'last_name' => $identity->lastName,
                     'country' => (string) $billing->country,
                     'city' => $billing->city,
                     'postal_code' => $billing->postalCode,
                     'state' => $billing->state !== null ? (string) $billing->state : null,
-                    'email' => $billing->email !== null ? (string) $billing->email : null,
-                    'phone' => $billing->phone !== null ? (string) $billing->phone : null,
+                    'email' => $identity->email !== null ? (string) $identity->email : null,
+                    'phone' => $identity->phone !== null ? (string) $identity->phone : null,
                 ],
                 'connection' => [
                     'ip' => $connection !== null ? (string) $connection->ipAddress : null,

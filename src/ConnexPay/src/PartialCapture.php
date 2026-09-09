@@ -8,7 +8,6 @@ use GuzzleHttp\Exception\GuzzleException;
 use InvalidArgumentException;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\ValueObject\HostedPayment;
-use Techork\PaymentService\Common\ValueObject\PaymentMethod;
 use Techork\PaymentService\ConnexPay\Concern\MapsConnexPayOutcome;
 use Techork\PaymentService\Gateway\Command\CaptureCommand;
 use Techork\PaymentService\Gateway\Command\PlacementCommand;
@@ -103,10 +102,12 @@ final class PartialCapture
                 instrument: $instrument,
                 amount: $this->command->amount,
                 clientUniqueId: $this->command->clientUniqueId,
-                // The stored payment method is the only instrument that carries an address of
-                // its own; a raw card arriving here has none to forward, and ConnexPay's RiskData
-                // is optional on a sale.
-                billingAddress: $instrument instanceof PaymentMethod ? $instrument->billingAddress : null,
+                // Forwarded from the capture rather than dug out of the instrument. It used to
+                // read the address off a stored `PaymentMethod`, which was the only instrument
+                // carrying one — so a raw card reached the replacement sale with no RiskData, and
+                // the payer on it was whoever the card was billed to rather than whoever the
+                // capture named. ConnexPay's RiskData is optional on a sale, so null still works.
+                customer: $this->command->customer,
             ),
             $this->infrastructure,
             $this->client,

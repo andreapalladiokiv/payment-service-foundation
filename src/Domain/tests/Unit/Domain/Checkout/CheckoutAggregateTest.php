@@ -47,9 +47,8 @@ use Techork\PaymentService\Domain\Subscription\SubscriptionAggregate;
 use Money\Currency;
 use Money\Money;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
-use Techork\PaymentService\Common\ValueObject\BillingAddress;
+use Techork\PaymentService\Common\ValueObject\Customer;
 use Techork\PaymentService\Common\ValueObject\CardBrand;
-use Techork\PaymentService\Common\ValueObject\Country;
 use Techork\PaymentService\Common\ValueObject\CreditCard;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Cvc;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Expiration;
@@ -214,7 +213,7 @@ function makeAuthorizedPiAggregate(): PaymentIntentAggregate
         public function amount(): Money { return makeCheckoutAmount(); }
         public function instrument(): PaymentInstrument { static $i = null; return $i ??= new Token(TokenId::fromString('01961f5a-0000-7000-8000-000000000001'), new CreditCard(new Number('424242', '4242', CardBrand::Visa), Expiration::fromMonthAndYear(12, 2030), new Holder('Test'), new Cvc), ExpiresAt::fromDateTime(new DateTimeImmutable('+1 hour'))); }
         public function captureMethod(): CaptureMethod { return CaptureMethod::Automatic; }
-        public function billingAddress(): BillingAddress { return new BillingAddress(firstName: 'Test', lastName: 'User', line: '1 St', city: 'NYC', country: new Country('US'), postalCode: '10001'); }
+        public function customer(): Customer { return makeCustomer(); }
         public function merchantDescriptor(): MerchantDescriptor { return new MerchantDescriptor('CHECKOUT TEST'); }
         public function description(): string { return ''; }
         public function metadata(): array { return []; }
@@ -437,7 +436,7 @@ it('throws CheckoutNotPayable when payment intent amount does not match checkout
         public function instrument(): PaymentInstrument { static $i = null; return $i ??= new Token(TokenId::fromString('01961f5a-0000-7000-8000-000000000001'), new CreditCard(new Number('424242', '4242', CardBrand::Visa), Expiration::fromMonthAndYear(12, 2030), new Holder('Test'), new Cvc), ExpiresAt::fromDateTime(new DateTimeImmutable('+1 hour'))); }
         // Authorized, so the amount is what this test trips on and not the state.
         public function captureMethod(): CaptureMethod { return CaptureMethod::Automatic; }
-        public function billingAddress(): BillingAddress { return new BillingAddress(firstName: 'Test', lastName: 'User', line: '1 St', city: 'NYC', country: new Country('US'), postalCode: '10001'); }
+        public function customer(): Customer { return makeCustomer(); }
         public function merchantDescriptor(): MerchantDescriptor { return new MerchantDescriptor('CHECKOUT TEST'); }
         public function description(): string { return ''; }
         public function metadata(): array { return []; }
@@ -476,7 +475,7 @@ it('throws CheckoutNotPayable when the payment intent was already charged inline
         public function amount(): Money { return makeCheckoutAmount(); }
         public function instrument(): PaymentInstrument { static $i = null; return $i ??= new Token(TokenId::fromString('01961f5a-0000-7000-8000-000000000001'), new CreditCard(new Number('424242', '4242', CardBrand::Visa), Expiration::fromMonthAndYear(12, 2030), new Holder('Test'), new Cvc), ExpiresAt::fromDateTime(new DateTimeImmutable('+1 hour'))); }
         public function captureMethod(): CaptureMethod { return CaptureMethod::Immediate; }
-        public function billingAddress(): BillingAddress { return new BillingAddress(firstName: 'Test', lastName: 'User', line: '1 St', city: 'NYC', country: new Country('US'), postalCode: '10001'); }
+        public function customer(): Customer { return makeCustomer(); }
         public function merchantDescriptor(): MerchantDescriptor { return new MerchantDescriptor('CHECKOUT TEST'); }
         public function description(): string { return ''; }
         public function metadata(): array { return []; }

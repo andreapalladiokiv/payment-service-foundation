@@ -55,7 +55,7 @@ it('includes the device token as forterTokenCookie when present, omits it otherw
     $request = new FraudScreeningRequest(
         reference: 'ref-3',
         card: new CardSummary('411111', '1111', CardBrand::Visa, Expiration::fromMonthAndYear(1, 2031), new Holder('A B')),
-        billing: new BillingAddress('A', 'B', '1 Main St', 'Town', new Country('US'), '10001'),
+        customer: forterSuiteCustomer(address: new BillingAddress('1 Main St', 'Town', new Country('US'), '10001')),
         amountMinorUnits: 1000,
         currencyCode: 'USD',
         connection: new ConnectionContext(new IpAddress('203.0.113.7'), 'UA', deviceToken: 'forter-device-xyz'),
@@ -68,7 +68,7 @@ it('omits optional billing fields that are absent', function () {
     $request = new FraudScreeningRequest(
         reference: 'ref-2',
         card: new CardSummary('511111', '2222', CardBrand::Mastercard, Expiration::fromMonthAndYear(1, 2031), new Holder('A B')),
-        billing: new BillingAddress('A', 'B', '2 Side St', 'Town', new Country('GB'), 'EC1A 1BB'),
+        customer: forterSuiteCustomer(address: new BillingAddress('2 Side St', 'Town', new Country('GB'), 'EC1A 1BB')),
         amountMinorUnits: 1000,
         currencyCode: 'GBP',
         connection: new ConnectionContext(new IpAddress('198.51.100.9'), 'UA'),

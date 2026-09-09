@@ -12,6 +12,8 @@ use Techork\PaymentService\ConnexPay\PartialCapture;
 use Techork\PaymentService\Gateway\Command\CaptureCommand;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 use Techork\PaymentService\Gateway\ValueObject\GatewayInfrastructure;
+use Techork\PaymentService\Common\ValueObject\BillingAddress;
+use Techork\PaymentService\Common\ValueObject\Country;
 
 function partialCaptureCommand(int $amount, ?int $authorized = null, ?PaymentInstrument $instrument = null): CaptureCommand
 {
@@ -21,6 +23,10 @@ function partialCaptureCommand(int $amount, ?int $authorized = null, ?PaymentIns
         amount: new Money($amount, new Currency('USD')),
         authorizedAmount: $authorized === null ? null : new Money($authorized, new Currency('USD')),
         instrument: $instrument,
+        // The replacement sale's RiskData is built from this, where it used to be dug out of the
+        // stored payment method's own address. That address was the only one any instrument
+        // carried, so a raw card reached the fresh sale with no RiskData at all.
+        customer: connexPaySuiteCustomer(address: new BillingAddress('1 St', 'NYC', new Country('US'), '10001')),
     );
 }
 
@@ -46,7 +52,7 @@ function cpPartialCapture(ConnexPayHttpClientInterface $client, ?string $referen
 {
     return new PartialCapture(
         cpSettings(),
-        partialCaptureCommand(3000, 5000, cpStoredPaymentMethod()),
+        partialCaptureCommand(3000, 5000, cpAttachedPaymentMethod()),
         cpInfrastructure(['instruments' => cpInstruments($reference)]),
         $client,
     );
@@ -67,7 +73,7 @@ it('routes an equal-amount capture to the plain capture endpoint', function () {
 
     $gateway = partialCaptureGateway($client);
 
-    expect($gateway->capture(partialCaptureCommand(5000, 5000, cpStoredPaymentMethod()))->reference)
+    expect($gateway->capture(partialCaptureCommand(5000, 5000, cpAttachedPaymentMethod()))->reference)
         ->toBe('sale-guid');
 });
 
@@ -81,7 +87,7 @@ it('routes a smaller-amount capture to the void-then-resell pair', function () {
 
     $gateway = partialCaptureGateway($client);
 
-    expect($gateway->capture(partialCaptureCommand(3000, 5000, cpStoredPaymentMethod()))->reference)
+    expect($gateway->capture(partialCaptureCommand(3000, 5000, cpAttachedPaymentMethod()))->reference)
         ->toBe('new-sale-guid');
 });
 
@@ -111,8 +117,9 @@ it('reuses the purchase payload builder for the replacement sale', function () {
     expect($payload['Amount'])->toBe(30.00)
         ->and($payload['TenderType'])->toBe('Credit')
         ->and($payload['Card']['Guid'])->toBe('pm-guid-1')
-        // The stored payment method's own address becomes the sale's RiskData, exactly as the
-        // gateway used to copy it onto the request options.
+        // The capture's customer becomes the sale's RiskData. It used to be the stored payment
+        // method's own address, which is why a raw card being captured partially produced a sale
+        // with none.
         ->and($payload['RiskData']['BillingAddress1'])->toBe('1 St');
 });
 

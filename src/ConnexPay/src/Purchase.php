@@ -15,6 +15,7 @@ use Techork\PaymentService\Common\ValueObject\Cash;
 use Techork\PaymentService\Common\ValueObject\Challenge\RedirectChallenge;
 use Techork\PaymentService\Common\ValueObject\CreditCard;
 use Techork\PaymentService\Common\ValueObject\HostedPayment;
+use Techork\PaymentService\Common\ValueObject\AttachedPaymentMethod;
 use Techork\PaymentService\Common\ValueObject\PaymentMethod;
 use Techork\PaymentService\Common\ValueObject\Token;
 use Techork\PaymentService\ConnexPay\Concern\BuildsConnexPayPayload;
@@ -23,6 +24,7 @@ use Techork\PaymentService\ConnexPay\Concern\MapsConnexPayOutcome;
 use Techork\PaymentService\Gateway\Command\PlacementCommand;
 use Techork\PaymentService\Gateway\Contract\AuthorizationResult;
 use Techork\PaymentService\Gateway\ValueObject\GatewayInfrastructure;
+use Techork\PaymentService\Gateway\Exception\UnsupportedInstrument;
 
 /**
  * Takes a payment outright — `POST /api/v1/sales`.
@@ -103,14 +105,14 @@ final class Purchase implements PaymentInstrumentVisitor
             $data['Card']['ThreeDS'] = $threeDS;
         }
 
-        $billingAddress = $this->command->billingAddress;
-        if ($billingAddress !== null && isset($data['Card'])) {
-            $data['RiskData'] = $this->formatRiskData($billingAddress);
+        $customer = $this->command->customer;
+        if ($customer !== null && isset($data['Card'])) {
+            $data['RiskData'] = $this->formatRiskData($customer);
         }
 
         return $this->withCustomerId(
             $this->withIdentifiers($data, $this->command->clientUniqueId),
-            $this->command->customerId,
+            $customer,
         );
     }
 
@@ -169,9 +171,9 @@ final class Purchase implements PaymentInstrumentVisitor
             'ConnexPayTransaction' => ['ExpectedPayments' => self::EXPECTED_PAYMENTS_CASH],
         ];
 
-        $billingAddress = $this->command->billingAddress;
-        if ($billingAddress !== null) {
-            $data['Customer'] = $this->formatCustomer($billingAddress);
+        $customer = $this->command->customer;
+        if ($customer !== null) {
+            $data['Customer'] = $this->formatCustomer($customer);
         }
 
         return $data;
@@ -187,13 +189,27 @@ final class Purchase implements PaymentInstrumentVisitor
     }
 
     /**
+     * Refused: a stored card is charged to somebody, and a bare payment method names nobody.
+     *
+     * What this used to do is now {@see visitAttachedPaymentMethod()}, unchanged apart from
+     * reaching the instrument through the customer that holds it. The refusal is the change:
+     * the payer used to come off the address the payment method carried, so a card was charged
+     * to whoever it happened to be billed to.
+     */
+    #[Override]
+    public function visitPaymentMethod(PaymentMethod $paymentMethod): never
+    {
+        throw UnsupportedInstrument::needsAttachedCustomer('connexpay', 'charge', $paymentMethod);
+    }
+
+    /**
      * @return array<string, mixed>
      */
     #[Override]
-    public function visitPaymentMethod(PaymentMethod $paymentMethod): array
+    public function visitAttachedPaymentMethod(AttachedPaymentMethod $attached): array
     {
         return $this->storedCard(
-            $this->storedReference($paymentMethod, "payment method {$paymentMethod->id->toString()}"),
+            $this->storedReference($attached->paymentMethod, "payment method {$attached->paymentMethod->id->toString()}"),
         );
     }
 
@@ -221,9 +237,9 @@ final class Purchase implements PaymentInstrumentVisitor
             'ConnexPay hosted payments require a `merchant_name` credential — it is the display name on the hosted page and the API rejects the request without it.',
         );
 
-        $billingAddress = $this->command->billingAddress;
-        $billingAddress !== null || throw new RuntimeException(
-            'ConnexPay hosted payments require a billing address: the API mandates Sale.RiskData for Credit, GooglePay and ApplePay tenders.',
+        $customer = $this->command->customer;
+        $customer !== null || throw new RuntimeException(
+            'ConnexPay hosted payments require a customer: the API mandates Sale.RiskData for Credit, GooglePay and ApplePay tenders, and that block names the payer as well as their address.',
         );
 
         // Same OrderNumber convention as every other ConnexPay call, and the
@@ -232,7 +248,7 @@ final class Purchase implements PaymentInstrumentVisitor
         $sale = $this->withOrderNumber([
             'Amount' => (float) $this->settings->formatAmount($this->command->amount),
             'DeviceGuid' => $this->settings->deviceGuid,
-            'RiskData' => $this->formatRiskData($billingAddress),
+            'RiskData' => $this->formatRiskData($customer),
             // Note the lower-case `p`, unlike `ConnexPayTransaction` on
             // /api/v1/sales above. This is the spelling the endpoint's own
             // validation error names and the one verified to work.

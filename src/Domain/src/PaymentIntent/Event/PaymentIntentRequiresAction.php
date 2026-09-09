@@ -10,7 +10,7 @@ use Money\Money;
 use Override;
 use Techork\PaymentService\Common\Contract\Challenge;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
-use Techork\PaymentService\Common\ValueObject\BillingAddress;
+use Techork\PaymentService\Common\ValueObject\Customer;
 use Techork\PaymentService\Common\ValueObject\MerchantDescriptor;
 use Techork\PaymentService\Common\ValueObject\PaymentInstrumentFactory;
 use Techork\PaymentService\Domain\PaymentIntent\CaptureMethod;
@@ -23,7 +23,7 @@ final readonly class PaymentIntentRequiresAction implements SerializablePayload
         public Money $amount,
         public PaymentInstrument $instrument,
         public CaptureMethod $captureMethod,
-        public BillingAddress $billingAddress,
+        public Customer $customer,
         /** @var array<string, mixed> */
         public array $metadata,
         public MerchantDescriptor $merchantDescriptor,
@@ -52,7 +52,7 @@ final readonly class PaymentIntentRequiresAction implements SerializablePayload
             'currency' => $this->amount->getCurrency()->getCode(),
             'instrument' => $this->instrument->toPayload(),
             'capture_method' => $this->captureMethod->value,
-            'billing_address' => $this->billingAddress->toArray(),
+            'customer' => $this->customer->toArray(),
             'metadata' => $this->metadata,
             'merchant_descriptor' => (string) $this->merchantDescriptor,
             'description' => $this->description,
@@ -68,7 +68,7 @@ final readonly class PaymentIntentRequiresAction implements SerializablePayload
             new Money($payload['amount'], new Currency($payload['currency'])),
             PaymentInstrumentFactory::fromPayload($payload['instrument']),
             CaptureMethod::from($payload['capture_method']),
-            BillingAddress::fromArray($payload['billing_address']),
+            Customer::fromArray($payload['customer']),
             $payload['metadata'] ?? [],
             new MerchantDescriptor($payload['merchant_descriptor']),
             $payload['description'],

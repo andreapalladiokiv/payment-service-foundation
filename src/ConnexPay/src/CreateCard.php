@@ -11,6 +11,7 @@ use Techork\PaymentService\Common\Contract\PaymentInstrumentVisitor;
 use Techork\PaymentService\Common\ValueObject\Cash;
 use Techork\PaymentService\Common\ValueObject\CreditCard;
 use Techork\PaymentService\Common\ValueObject\HostedPayment;
+use Techork\PaymentService\Common\ValueObject\AttachedPaymentMethod;
 use Techork\PaymentService\Common\ValueObject\PaymentMethod;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSResult;
 use Techork\PaymentService\Common\ValueObject\Token;
@@ -107,9 +108,9 @@ final class CreateCard implements PaymentInstrumentVisitor
             $data['Card']['Cvv2'] = $cvv;
         }
 
-        $billingAddress = $this->command->billingAddress;
-        if ($billingAddress !== null) {
-            $data['Card']['Customer'] = $this->formatCustomer($billingAddress);
+        $customer = $this->command->customer;
+        if ($customer !== null) {
+            $data['Card']['Customer'] = $this->formatCustomer($customer);
         }
 
         // Tokenization also goes through /verify, so an authentication result
@@ -136,6 +137,17 @@ final class CreateCard implements PaymentInstrumentVisitor
 
     #[Override]
     public function visitPaymentMethod(PaymentMethod $paymentMethod): never
+    {
+        throw new RuntimeException('PaymentMethod does not support tokenization.');
+    }
+
+    /**
+     * An attached one is refused for the same reason as a bare one: this operation is what
+     * PRODUCES a stored instrument, so being handed one is a caller's mistake either way, and
+     * having a customer attached does not make a stored card re-storable.
+     */
+    #[Override]
+    public function visitAttachedPaymentMethod(AttachedPaymentMethod $attached): never
     {
         throw new RuntimeException('PaymentMethod does not support tokenization.');
     }

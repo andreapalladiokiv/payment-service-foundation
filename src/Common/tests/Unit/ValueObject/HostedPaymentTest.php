@@ -6,6 +6,7 @@ use Techork\PaymentService\Common\Contract\PaymentInstrumentVisitor;
 use Techork\PaymentService\Common\ValueObject\Cash;
 use Techork\PaymentService\Common\ValueObject\CreditCard;
 use Techork\PaymentService\Common\ValueObject\HostedPayment;
+use Techork\PaymentService\Common\ValueObject\AttachedPaymentMethod;
 use Techork\PaymentService\Common\ValueObject\PaymentMethod;
 use Techork\PaymentService\Common\ValueObject\Token;
 
@@ -87,6 +88,8 @@ it('dispatches to visitHostedPayment on visitor', function () {
         { return 'token'; }
         public function visitPaymentMethod(PaymentMethod $paymentMethod): string
         { return 'pm'; }
+        public function visitAttachedPaymentMethod(AttachedPaymentMethod $attached): string
+        { return 'attached'; }
         public function visitHostedPayment(HostedPayment $hosted): string
         { return 'hosted:'.$hosted->successUrl; }
     };

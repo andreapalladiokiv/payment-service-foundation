@@ -80,7 +80,7 @@ final readonly class LoggingGateway implements AcquiringGateway
         // Keyed on our customer id rather than on a `clientUniqueId`, which this operation has
         // none of: registering a customer is not a payment, so there is no per-attempt id to
         // correlate on and the customer is the only thing the two log lines share.
-        return $this->aroundRegistration('registerCustomer', $command->toLogContext(), $command->customerId->toString(),
+        return $this->aroundRegistration('registerCustomer', $command->toLogContext(), $command->customer->id->toString(),
             fn (): RegistrationResult => $this->inner->registerCustomer($command));
     }
 

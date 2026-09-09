@@ -27,7 +27,7 @@ it('lets a fraud-screening provider be implemented and return a verdict', functi
     $request = new FraudScreeningRequest(
         reference: 'ref-1',
         card: new CardSummary('411111', '1111', CardBrand::Visa, Expiration::fromMonthAndYear(1, 2031), new Holder('A B')),
-        billing: new BillingAddress('A', 'B', '1 Main St', 'Town', new Country('US'), '10001'),
+        customer: forterSuiteCustomer(address: new BillingAddress('1 Main St', 'Town', new Country('US'), '10001')),
         amountMinorUnits: 12345,
         currencyCode: 'USD',
         connection: new ConnectionContext(new IpAddress('203.0.113.7'), 'Mozilla/5.0'),

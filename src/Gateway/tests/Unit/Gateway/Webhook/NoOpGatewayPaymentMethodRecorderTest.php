@@ -6,6 +6,7 @@ use Techork\PaymentService\Common\Contract\EncryptInterface;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
 use Techork\PaymentService\Common\ValueObject\Country;
 use Techork\PaymentService\Common\ValueObject\CreditCard;
+use Techork\PaymentService\Common\ValueObject\CustomerIdentity;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Cvc;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Expiration;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Holder;
@@ -33,7 +34,9 @@ it('skips every payment method record', function () {
             new Holder('Test'),
             Cvc::fromCvc('123', $enc),
         ),
-        billingAddress: new BillingAddress('Test', 'User', '1 St', 'NYC', new Country('US'), '10001'),
+        billingAddress: new BillingAddress('1 St', 'NYC', new Country('US'), '10001'),
+        // The person the provider's billing block names, which no longer travels on the address.
+        identity: new CustomerIdentity('Test', 'User'),
     );
 
     expect($outcome)->toBe(RecorderOutcome::Skipped);

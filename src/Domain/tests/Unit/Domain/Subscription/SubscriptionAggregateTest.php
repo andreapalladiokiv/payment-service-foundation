@@ -44,9 +44,8 @@ use Techork\PaymentService\Domain\Subscription\ValueObject\SubscriptionPlan;
 use Money\Currency;
 use Money\Money;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
-use Techork\PaymentService\Common\ValueObject\BillingAddress;
+use Techork\PaymentService\Common\ValueObject\Customer;
 use Techork\PaymentService\Common\ValueObject\CardBrand;
-use Techork\PaymentService\Common\ValueObject\Country;
 use Techork\PaymentService\Common\ValueObject\CreditCard;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Cvc;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Expiration;
@@ -147,14 +146,10 @@ function makeAuthorizedPiForSubscription(?Money $amount = null): PaymentIntentAg
                     new Holder('Test'),
                     new Cvc,
                 ),
-                new BillingAddress(firstName: 'Test', lastName: 'User', line: '1 St', city: 'NYC', country: new Country('US'), postalCode: '10001'),
             );
         }
         public function captureMethod(): CaptureMethod { return CaptureMethod::Automatic; }
-        public function billingAddress(): BillingAddress
-        {
-            return new BillingAddress(firstName: 'Test', lastName: 'User', line: '1 St', city: 'NYC', country: new Country('US'), postalCode: '10001');
-        }
+        public function customer(): Customer { return makeCustomer(); }
         public function merchantDescriptor(): MerchantDescriptor { return new MerchantDescriptor('SUBSCRIPTION'); }
         public function description(): string { return ''; }
         public function metadata(): array { return []; }
@@ -470,14 +465,10 @@ it('throws SubscriptionNotActivatable when the payment intent was already charge
                     new Holder('Test'),
                     new Cvc,
                 ),
-                new BillingAddress(firstName: 'Test', lastName: 'User', line: '1 St', city: 'NYC', country: new Country('US'), postalCode: '10001'),
             );
         }
         public function captureMethod(): CaptureMethod { return CaptureMethod::Immediate; }
-        public function billingAddress(): BillingAddress
-        {
-            return new BillingAddress(firstName: 'Test', lastName: 'User', line: '1 St', city: 'NYC', country: new Country('US'), postalCode: '10001');
-        }
+        public function customer(): Customer { return makeCustomer(); }
         public function merchantDescriptor(): MerchantDescriptor { return new MerchantDescriptor('SUBSCRIPTION'); }
         public function description(): string { return ''; }
         public function metadata(): array { return []; }

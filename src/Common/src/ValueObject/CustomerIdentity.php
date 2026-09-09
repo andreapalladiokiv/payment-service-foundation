@@ -9,12 +9,13 @@ use Techork\PaymentService\Common\ShreddingStubs;
 
 /**
  * WHO a customer is, as a payment provider needs to be told — their name, email and phone. Its
- * neighbour {@see \Techork\PaymentService\Common\Contract\CustomerIdentifier} is the other
- * half: WHICH customer this is. This one can be corrected, erased or absent; that one cannot.
+ * neighbour {@see CustomerId} is the other half: WHICH customer this is. This one can be
+ * corrected, erased or absent; that one cannot.
+ * {@see Customer} is the pair of them plus the address, and it is what actually crosses a
+ * boundary — this type is rarely handled alone.
  *
- * In `Common` rather than in the customer's own package because provider packages read it
- * directly to build a provider-side customer, the way they already read {@see BillingAddress}
- * in `formatRiskData()`. It is data, not an aggregate id.
+ * In `Common` because provider packages read it directly to build a provider-side customer, the
+ * way they already read {@see BillingAddress} in `formatRiskData()`. It is data, not an id.
  *
  * **The email is not the identity.** It is a field here and nothing more: two customers may
  * share one, and changing it changes nothing about which customer this is. That is worth
@@ -47,31 +48,6 @@ final readonly class CustomerIdentity
     public static function forgotten(): self
     {
         return new self(ShreddingStubs::NAME, ShreddingStubs::NAME);
-    }
-
-    /**
-     * The identity a payment method's own billing address carries.
-     *
-     * Every field a {@see CustomerIdentity} has is already on a {@see BillingAddress}, because
-     * until now the address *was* where the payer's name and email were kept — one copy per
-     * card. That is what makes backfilling a customer onto an existing payment method possible
-     * at all: a payment method nobody has ever named a customer for still knows who paid with
-     * it. The backfill itself is the host's (A2 in `docs/customer-domain-plan`); this is the
-     * reading it needs, here rather than there because both types are.
-     *
-     * Not a general-purpose conversion. It is the honest reading of an address as an identity
-     * and nothing more, so a stubbed address yields a stubbed identity rather than being
-     * refused — `ShreddingStubs::NAME` is a name here for the same reason it is one in
-     * {@see forgotten()}.
-     */
-    public static function fromBillingAddress(BillingAddress $address): self
-    {
-        return new self(
-            firstName: $address->firstName,
-            lastName: $address->lastName,
-            email: $address->email,
-            phone: $address->phone,
-        );
     }
 
     public function toArray(): array

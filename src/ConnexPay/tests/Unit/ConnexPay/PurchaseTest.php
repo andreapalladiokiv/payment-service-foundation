@@ -5,27 +5,14 @@ declare(strict_types=1);
 use GuzzleHttp\Exception\TransferException;
 use Money\Currency;
 use Money\Money;
-use Techork\PaymentService\Common\ValueObject\BillingAddress;
-use Techork\PaymentService\Common\ValueObject\CardBrand;
+use Techork\PaymentService\Common\ValueObject\Customer;
 use Techork\PaymentService\Common\ValueObject\Cash;
-use Techork\PaymentService\Common\ValueObject\Country;
-use Techork\PaymentService\Common\ValueObject\CreditCard;
-use Techork\PaymentService\Common\ValueObject\CreditCard\Cvc;
-use Techork\PaymentService\Common\ValueObject\CreditCard\Expiration;
-use Techork\PaymentService\Common\ValueObject\CreditCard\Holder;
-use Techork\PaymentService\Common\ValueObject\CreditCard\Number;
 use Techork\PaymentService\Common\ValueObject\CreditCard\CheckResult;
 use Techork\PaymentService\Common\ValueObject\Email;
-use Techork\PaymentService\Common\ValueObject\ExpiresAt;
-use Techork\PaymentService\Common\ValueObject\PaymentMethod;
-use Techork\PaymentService\Common\ValueObject\PaymentMethodId;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ECICode;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSResult;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSStatus;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSVersion;
-use Techork\PaymentService\Common\ValueObject\Token;
-use Techork\PaymentService\Common\ValueObject\TokenId;
-use Techork\PaymentService\ConnexPay\ConnexPayHttpClientInterface;
 use Techork\PaymentService\ConnexPay\Purchase;
 
 /**
@@ -76,7 +63,7 @@ it('builds purchase data for token with Guid', function () {
 
 it('builds purchase data for payment method with Guid', function () {
     $data = cpPurchase(
-        ['money' => new Money(3000, new Currency('USD')), 'instrument' => cpStoredPaymentMethod()],
+        ['money' => new Money(3000, new Currency('USD')), 'instrument' => cpAttachedPaymentMethod()],
         ['reference' => 'pm-guid-xyz'],
     )->payload();
 
@@ -93,15 +80,15 @@ it('builds purchase data for cash with Cash tender, ExpectedPayments=5 and Custo
     $data = cpPurchase([
         'money' => new Money(7500, new Currency('USD')),
         'instrument' => new Cash,
-        'billingAddress' => cpBilling(city: 'LA'),
+        'customer' => cpPayer(city: 'LA'),
     ])->payload();
 
     expect($data)->not->toHaveKey('Card')
         ->and($data)->not->toHaveKey('RiskData')
         ->and($data['TenderType'])->toBe('Cash')
         ->and($data['ConnexPayTransaction'])->toBe(['ExpectedPayments' => 5])
-        ->and($data['Customer']['FirstName'])->toBe('Test')
-        ->and($data['Customer']['LastName'])->toBe('User')
+        ->and($data['Customer']['FirstName'])->toBe('Ada')
+        ->and($data['Customer']['LastName'])->toBe('Lovelace')
         ->and($data['Customer']['Address1'])->toBe('456 Oak')
         ->and($data['Customer']['Email'])->toBe('buyer@test.com')
         ->and($data['Amount'])->toBe(75.00);
@@ -111,7 +98,7 @@ it('transliterates the Customer city to ASCII (ConnexPay rejects accents)', func
     $data = cpPurchase([
         'money' => new Money(7500, new Currency('USD')),
         'instrument' => new Cash,
-        'billingAddress' => cpBilling(city: 'München'),
+        'customer' => cpPayer(city: 'München'),
     ])->payload();
 
     expect($data['Customer']['City'])->toBe('Munchen');
@@ -127,11 +114,11 @@ it('includes billing address as top-level RiskData', function () {
     $data = cpPurchase([
         'money' => new Money(2000, new Currency('USD')),
         'instrument' => cpCard(cvv: null, holder: 'Test'),
-        'billingAddress' => cpBilling(city: 'LA'),
+        'customer' => cpPayer(city: 'LA'),
     ])->payload();
 
     expect($data['Card'])->not->toHaveKey('Customer')
-        ->and($data['RiskData']['Name'])->toBe('Test User')
+        ->and($data['RiskData']['Name'])->toBe('Ada Lovelace')
         ->and($data['RiskData']['BillingAddress1'])->toBe('456 Oak')
         ->and($data['RiskData']['BillingPostalCode'])->toBe('90001')
         ->and($data['RiskData']['BillingCountryCode'])->toBe('US')

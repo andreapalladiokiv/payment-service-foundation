@@ -18,6 +18,7 @@ use Techork\PaymentService\Common\ValueObject\CreditCard\Number;
 use Techork\PaymentService\Common\ValueObject\Email;
 use Techork\PaymentService\Common\ValueObject\ExpiresAt;
 use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
+use Techork\PaymentService\Common\ValueObject\AttachedPaymentMethod;
 use Techork\PaymentService\Common\ValueObject\PaymentMethod;
 use Techork\PaymentService\Common\ValueObject\PaymentMethodId;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ECICode;
@@ -39,7 +40,10 @@ use Techork\PaymentService\Gateway\Contract\GatewayCredential;
 use Techork\PaymentService\Gateway\Contract\GatewayInstrumentRepository;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 use Techork\PaymentService\Gateway\ValueObject\GatewayInfrastructure;
-use Techork\PaymentService\Common\Contract\CustomerIdentifier;
+use Techork\PaymentService\Common\ValueObject\CustomerId;
+use Techork\PaymentService\Common\ValueObject\Customer;
+use Techork\PaymentService\Common\ValueObject\CustomerIdentity;
+use Techork\PaymentService\Common\ValueObject\PhoneNumber;
 
 /*
  * The three shapes every ConnexPay operation is built from, kept apart because they are three
@@ -146,16 +150,28 @@ function cpCard(string $number = '4012000098765439', ?string $cvv = '999', strin
     );
 }
 
-function cpBilling(string $city = 'NYC', ?string $email = 'buyer@test.com'): BillingAddress
+function cpBilling(string $city = 'NYC'): BillingAddress
 {
     return new BillingAddress(
-        firstName: 'Test',
-        lastName: 'User',
         line: '456 Oak',
         city: $city,
         country: new Country('US'),
         postalCode: '90001',
+    );
+}
+
+/**
+ * The payer these tests bill, address and person together.
+ *
+ * `cpBilling()` used to take the email, because the address held it. It is the identity's now, so
+ * a test that cares about `Customer.Email` — and several do, ConnexPay puts it in the same block
+ * as the AVS fields — asks for a payer rather than an address.
+ */
+function cpPayer(string $city = 'NYC', ?string $email = 'buyer@test.com'): Customer
+{
+    return connexPaySuiteCustomer(
         email: $email === null ? null : new Email($email),
+        address: cpBilling($city),
     );
 }
 
@@ -173,8 +189,19 @@ function cpStoredPaymentMethod(): PaymentMethod
     return new PaymentMethod(
         PaymentMethodId::generate(),
         new CreditCard(new Number('401200', '5439', CardBrand::Visa), Expiration::fromMonthAndYear(12, 2030), new Holder('T'), new Cvc),
-        new BillingAddress('Test', 'User', '1 St', 'NYC', new Country('US'), '10001'),
     );
+}
+
+/**
+ * The same stored card with a customer attached — the only form a gateway will take a payment
+ * on.
+ *
+ * A bare `PaymentMethod` is refused by every payment operation now, so the two fixtures are
+ * both needed: this one for the payments, the bare one for the tests that assert the refusal.
+ */
+function cpAttachedPaymentMethod(): AttachedPaymentMethod
+{
+    return new AttachedPaymentMethod(connexPaySuiteCustomer(), cpStoredPaymentMethod());
 }
 
 /**
@@ -187,27 +214,65 @@ function cpPlacement(array $overrides = []): PlacementCommand
         instrument: $overrides['instrument'] ?? Mockery::mock(PaymentInstrument::class),
         amount: $overrides['money'] ?? new Money(1000, new Currency('USD')),
         clientUniqueId: $overrides['clientUniqueId'] ?? null,
-        billingAddress: $overrides['billingAddress'] ?? null,
         threeDS: $overrides['threeDS'] ?? null,
         statementDescription: $overrides['statementDescription'] ?? null,
         description: $overrides['description'] ?? null,
         initiation: $overrides['initiation'] ?? PaymentInitiation::CardholderInitiated,
-        customerId: $overrides['customerId'] ?? null,
+        customer: cpCustomerFromOverrides($overrides),
     );
 }
 
-function cpCaptureCommand(?string $clientUniqueId = null, ?CustomerIdentifier $customerId = null): CaptureCommand
+/**
+ * The one customer a command now takes, assembled from the override keys these tests have always
+ * used.
+ *
+ * `billingAddress`, `customerId` and `customerIdentity` were three separate command fields and
+ * are one; the keys stay because what each test is *saying* has not changed — "billed here",
+ * "for this customer", "who is this person" — and rewriting sixty call sites to say it a new way
+ * would bury the change that matters in the change that does not.
+ *
+ * Naming any one of them now yields a whole customer, which is the design: an address with nobody
+ * attached to it is not expressible any more, so a test that gives an address gives a payer. A
+ * test that means "no payer at all" names none of the three and gets null.
+ *
+ * @param  array<string, mixed>  $overrides
+ */
+function cpCustomerFromOverrides(array $overrides): ?Customer
+{
+    if (array_key_exists('customer', $overrides)) {
+        return $overrides['customer'];
+    }
+
+    $named = ['billingAddress', 'customerId', 'customerIdentity'];
+    if (! array_filter($named, static fn (string $k): bool => ($overrides[$k] ?? null) !== null)) {
+        return null;
+    }
+
+    /** @var ?CustomerIdentity $identity */
+    $identity = $overrides['customerIdentity'] ?? null;
+
+    return connexPaySuiteCustomer(
+        id: $overrides['customerId'] ?? null,
+        firstName: $identity->firstName ?? 'Test',
+        lastName: $identity->lastName ?? 'User',
+        email: $identity->email ?? null,
+        phone: $identity->phone ?? null,
+        address: $overrides['billingAddress'] ?? null,
+    );
+}
+
+function cpCaptureCommand(?string $clientUniqueId = null, ?CustomerId $customerId = null): CaptureCommand
 {
     return new CaptureCommand(
         gatewayId: GatewayId::generate(),
         transactionReference: 'auth-guid-abc',
         amount: new Money(5000, new Currency('USD')),
         clientUniqueId: $clientUniqueId,
-        customerId: $customerId,
+        customer: $customerId === null ? null : connexPaySuiteCustomer(id: $customerId),
     );
 }
 
-function cpCapture(?string $clientUniqueId = null, ?ConnexPayHttpClientInterface $client = null, ?CustomerIdentifier $customerId = null): Capture
+function cpCapture(?string $clientUniqueId = null, ?ConnexPayHttpClientInterface $client = null, ?CustomerId $customerId = null): Capture
 {
     return new Capture(
         cpSettings(['deviceGuid' => 'device-123']),
@@ -249,9 +314,36 @@ function cpVault(array $overrides = []): VaultCommand
     return new VaultCommand(
         gatewayId: $overrides['gatewayId'] ?? GatewayId::generate(),
         instrument: $overrides['instrument'] ?? Mockery::mock(PaymentInstrument::class),
-        billingAddress: $overrides['billingAddress'] ?? null,
         clientUniqueId: $overrides['clientUniqueId'] ?? null,
-        customerId: $overrides['customerId'] ?? null,
-        customerIdentity: $overrides['customerIdentity'] ?? null,
+        customer: cpCustomerFromOverrides($overrides),
+    );
+}
+
+/**
+ * The payer these tests hand to a command, complete, because a {@see Customer} has no partial
+ * form — an id, a person and an address or nothing at all.
+ *
+ * That completeness is the change worth knowing about here. The id, the identity and the address
+ * used to be three optional arguments a caller could supply any subset of, which is how a
+ * provider-side customer came to be built out of whatever billing address rode along with the
+ * payment. A test that wants to say "no payer" passes null, not a fragment.
+ */
+function connexPaySuiteCustomer(
+    ?CustomerId $id = null,
+    string $firstName = 'Ada',
+    string $lastName = 'Lovelace',
+    ?Email $email = null,
+    ?PhoneNumber $phone = null,
+    ?BillingAddress $address = null,
+): Customer {
+    return new Customer(
+        id: $id ?? CustomerId::fromString('01920000-0000-7000-8000-00000000cafe'),
+        identity: new CustomerIdentity($firstName, $lastName, $email, $phone),
+        billingAddress: $address ?? new BillingAddress(
+            line: '1 Main St',
+            city: 'New York',
+            country: new Country('US'),
+            postalCode: '10001',
+        ),
     );
 }

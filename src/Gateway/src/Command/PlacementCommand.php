@@ -5,9 +5,8 @@ declare(strict_types=1);
 namespace Techork\PaymentService\Gateway\Command;
 
 use Money\Money;
-use Techork\PaymentService\Common\Contract\CustomerIdentifier;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
-use Techork\PaymentService\Common\ValueObject\BillingAddress;
+use Techork\PaymentService\Common\ValueObject\Customer;
 use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSResult;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
@@ -28,18 +27,24 @@ use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 final readonly class PlacementCommand
 {
     /**
-     * @param  ?CustomerIdentifier  $customerId  Whose payment this is — OUR id for them, minted by us and
-     *   never derived from an attribute, which is what keeps it stable when an email changes.
-     *   A {@see CustomerIdentifier} and not a string: there is a value object for this identity,
-     *   so it does not degrade at a package boundary. The interface lives in `Common` and its one
-     *   implementation is the aggregate's `CustomerId`, which is what lets this package name the
-     *   customer without being able to load a domain type — or to invent one.
+     * @param  ?Customer  $customer  Whose payment this is: OUR id for them, who they are, and the
+     *   address they are billed at. The id is never derived from an attribute, which is what keeps
+     *   it stable when an email changes, and it is a
+     *   {@see \Techork\PaymentService\Common\ValueObject\CustomerId} rather than a string so
+     *   it does not degrade at a package boundary.
+     *
+     * The whole customer rather than the id alone, and it is why there is no longer a
+     * `billingAddress` beside it. A provider needs all three parts at once — Nuvei's payment body
+     * names the payer and their address in one block, ConnexPay's `Card.Customer` in one object —
+     * and the mapper used to assemble that out of an id from here and a name read off the address,
+     * which is how the address became the de-facto record of who was paying. One field carries
+     * both, or the mapper goes on guessing.
      *
      * On the command and not on the credential, because a customer is a fact about THIS payment
      * — which is what separates it from `authenticationUrl` and `returnUrl`, one address per
-     * deployment. It sits with `clientUniqueId`, `billingAddress` and `initiation`, which are
-     * per-payment facts too. Optional here: a one-off charge can belong to nobody we have a
-     * record of. Registering an instrument is the one operation where it is not
+     * deployment. It sits with `clientUniqueId` and `initiation`, which are per-payment facts too.
+     * Optional here: a one-off charge can belong to nobody we have a record of. Registering an
+     * instrument is the one operation where it is not
      * ({@see \Techork\PaymentService\Gateway\Exception\RegistrationNeedsCustomer}).
      */
     public function __construct(
@@ -47,12 +52,11 @@ final readonly class PlacementCommand
         public PaymentInstrument $instrument,
         public Money $amount,
         public ?string $clientUniqueId = null,
-        public ?BillingAddress $billingAddress = null,
         public ?ThreeDSResult $threeDS = null,
         public ?string $statementDescription = null,
         public ?string $description = null,
         public PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated,
-        public ?CustomerIdentifier $customerId = null,
+        public ?Customer $customer = null,
     ) {}
 
 
@@ -66,12 +70,11 @@ final readonly class PlacementCommand
             'amount' => $this->amount,
             'instrument' => $this->instrument->toPayload(),
             'clientUniqueId' => $this->clientUniqueId,
-            'billingAddress' => $this->billingAddress?->toArray(),
             'threeDS' => $this->threeDS,
             'statementDescription' => $this->statementDescription,
             'description' => $this->description,
             'initiation' => $this->initiation->value,
-            'customerId' => $this->customerId?->toString(),
+            'customer' => $this->customer?->toArray(),
         ];
     }
 }

@@ -67,7 +67,11 @@ final readonly class PaymentIntentFactSchema implements FactSchema
             'payment_method.source.bin_success_rate' => FieldType::Number,
             'payment_method.source.bin_challenge_rate' => FieldType::Number,
 
-            // payment_method.billing_address
+            // payment_method.billing_address — the payer, by the name this vocabulary has always
+            // used for them. `first_name`, `last_name`, `email` and `phone` are the customer's
+            // identity now and only `country`/`city`/`postal_code`/`state` are the address; the
+            // paths are unchanged because stored rules match on them and renaming a published
+            // fact is a migration of a rule set.
             'payment_method.billing_address.first_name' => FieldType::Text,
             'payment_method.billing_address.last_name' => FieldType::Text,
             'payment_method.billing_address.country' => FieldType::Text,

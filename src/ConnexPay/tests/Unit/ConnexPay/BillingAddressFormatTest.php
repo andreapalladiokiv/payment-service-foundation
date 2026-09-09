@@ -5,26 +5,37 @@ declare(strict_types=1);
 use Money\Currency;
 use Money\Money;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
+use Techork\PaymentService\Common\ValueObject\Customer;
 use Techork\PaymentService\Common\ValueObject\Country;
 use Techork\PaymentService\Common\ValueObject\Email;
 use Techork\PaymentService\Common\ValueObject\State;
 
-it('forwards full BillingAddress to top-level RiskData (no N/A hardcode)', function () {
+/**
+ * `RiskData.Name` and `RiskData.Email` come off the customer's identity now, not the address.
+ *
+ * The two used to be the same thing and the test could not tell them apart: the address held a
+ * `firstName`/`lastName`/`email`, so naming the address named the payer. That is the copy the
+ * split removes — a payer per card, correctable nowhere. What has NOT changed is which ConnexPay
+ * fields they land in, and that is what the assertions still pin.
+ */
+it('forwards the payer and their address to top-level RiskData (no N/A hardcode)', function () {
     $billing = new BillingAddress(
-        firstName: 'Jane',
-        lastName: 'Smith',
         line: '456 Oak Ave',
         city: 'Tempe',
         country: new Country('US'),
         postalCode: '85284',
         state: new State('AZ'),
-        email: new Email('jane@test.com'),
     );
 
     $data = cpAuthorize([
         'money' => new Money(450, new Currency('USD')),
         'instrument' => cpCard(holder: 'Jane Smith'),
-        'billingAddress' => $billing,
+        'customer' => connexPaySuiteCustomer(
+            firstName: 'Jane',
+            lastName: 'Smith',
+            email: new Email('jane@test.com'),
+            address: $billing,
+        ),
     ])->payload();
 
     $risk = $data['RiskData'];
@@ -40,8 +51,6 @@ it('forwards full BillingAddress to top-level RiskData (no N/A hardcode)', funct
 
 it('keeps all RiskData keys present with nulls when optional fields are missing', function () {
     $billing = new BillingAddress(
-        firstName: 'John',
-        lastName: 'Doe',
         line: '1 St',
         city: 'NYC',
         country: new Country('US'),
@@ -51,7 +60,7 @@ it('keeps all RiskData keys present with nulls when optional fields are missing'
     $risk = cpAuthorize([
         'money' => new Money(100, new Currency('USD')),
         'instrument' => cpCard(cvv: null, holder: 'John Doe'),
-        'billingAddress' => $billing,
+        'customer' => connexPaySuiteCustomer(firstName: 'John', lastName: 'Doe', address: $billing),
     ])->payload()['RiskData'];
 
     expect($risk)->toBe([

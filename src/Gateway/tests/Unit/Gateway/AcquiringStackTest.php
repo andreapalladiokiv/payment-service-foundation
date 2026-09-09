@@ -9,7 +9,6 @@ use Techork\PaymentService\Gateway\Command\CaptureCommand;
 use Techork\PaymentService\Gateway\Command\RefundCommand;
 use Techork\PaymentService\Gateway\Command\RegisterCustomerCommand;
 use Techork\PaymentService\Gateway\Command\VaultCommand;
-use Techork\PaymentService\Common\ValueObject\CustomerIdentity;
 use Techork\PaymentService\Gateway\Contract\Gateway as GatewayContract;
 use Techork\PaymentService\Gateway\Contract\GatewayCredential;
 use Techork\PaymentService\Gateway\Contract\GatewayCredentialRepository;
@@ -244,8 +243,7 @@ it('bounds and logs every operation the acquiring stack carries', function (stri
         'cancel' => new CancelCommand(GatewayId::generate(), 'auth_ref', 'pi-1:cancel'),
         'registerCustomer' => new RegisterCustomerCommand(
             gatewayId: GatewayId::generate(),
-            customerId: gatewaySuiteCustomerId(),
-            identity: new CustomerIdentity('Ada', 'Lovelace'),
+            customer: gatewaySuiteCustomer(),
         ),
         default => new RefundCommand(
             gatewayId: GatewayId::generate(),
@@ -289,8 +287,7 @@ it('rethrows a refusal to register a customer instead of reporting a decline', f
     try {
         $stack->registerCustomer(new RegisterCustomerCommand(
             gatewayId: GatewayId::generate(),
-            customerId: gatewaySuiteCustomerId(),
-            identity: new CustomerIdentity('Ada', 'Lovelace'),
+            customer: gatewaySuiteCustomer(),
         ));
     } catch (Throwable $e) {
         $thrown = $e;
@@ -307,9 +304,16 @@ it('rethrows a refusal to register a customer instead of reporting a decline', f
  * payment reaches a provider anonymous. `authorizeRebilling` is the one that had no customer at
  * all while routing through the very call that reads the key, so a renewal could not use the
  * stored instrument it existed to charge.
+ *
+ * `customer` rather than `customerId`, and the whole customer is what closes a second hole the
+ * same shape: the id, the identity and the address were three separately-omissible fields, so a
+ * command could name a customer and still leave the provider to guess who they were off the
+ * address. There is one field to forget now instead of three.
  */
 it('gives every command a place to name the customer', function (string $class) {
-    expect(property_exists($class, 'customerId'))->toBeTrue();
+    expect(property_exists($class, 'customer'))->toBeTrue()
+        ->and(property_exists($class, 'customerId'))->toBeFalse()
+        ->and(property_exists($class, 'billingAddress'))->toBeFalse();
 })->with([
     PlacementCommand::class,
     RebillingCommand::class,
@@ -329,8 +333,8 @@ it('carries the customer through a series payment seen as a placement', function
         instrument: Mockery::mock(PaymentInstrument::class),
         amount: new Money(1000, new Currency('USD')),
         initiation: PaymentInitiation::MerchantRecurring,
-        customerId: gatewaySuiteCustomerId(),
+        customer: gatewaySuiteCustomer(),
     );
 
-    expect($series->toPlacement()->customerId)->toBe($series->customerId);
+    expect($series->toPlacement()->customer)->toBe($series->customer);
 });

@@ -19,7 +19,7 @@ use Techork\PaymentService\Common\ValueObject\ErrorCode;
  * Only one factory, and the missing one is worth a line. There was a second, for a registration
  * of the CUSTOMER with no customer named — and it is gone because
  * {@see \Techork\PaymentService\Gateway\Command\RegisterCustomerCommand} types that field as a
- * {@see \Techork\PaymentService\Common\Contract\CustomerIdentifier}, so an absent one stopped
+ * {@see \Techork\PaymentService\Common\ValueObject\CustomerId}, so an absent one stopped
  * being expressible. A refusal a type has made unreachable is better than a refusal that fires.
  *
  * This one stays because {@see \Techork\PaymentService\Gateway\Command\VaultCommand} genuinely

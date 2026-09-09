@@ -21,7 +21,7 @@ function factSupplierRequest(): FraudScreeningRequest
     return new FraudScreeningRequest(
         reference: 'ref-1',
         card: new CardSummary('411111', '1111', CardBrand::Visa, Expiration::fromMonthAndYear(1, 2031), new Holder('A B')),
-        billing: new BillingAddress('Ada', 'Lovelace', '1 Main St', 'London', new Country('GB'), 'E1 6AN'),
+        customer: forterSuiteCustomer(address: new BillingAddress('1 Main St', 'London', new Country('GB'), 'E1 6AN')),
         amountMinorUnits: 12345,
         currencyCode: 'USD',
         connection: new ConnectionContext(new IpAddress('203.0.113.7'), 'Mozilla/5.0'),

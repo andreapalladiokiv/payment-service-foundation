@@ -10,10 +10,8 @@ use Money\Money;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
 use Techork\PaymentService\Common\ValueObject\Challenge\RedirectChallenge;
 use Techork\PaymentService\Common\ValueObject\Country;
-use Techork\PaymentService\Common\ValueObject\Email;
 use Techork\PaymentService\Common\ValueObject\HostedPayment;
 use Techork\PaymentService\Common\ValueObject\State;
-use Techork\PaymentService\ConnexPay\ConnexPayHttpClientInterface;
 use Techork\PaymentService\ConnexPay\PartialCapture;
 use Techork\PaymentService\ConnexPay\Purchase;
 use Techork\PaymentService\Gateway\Command\CaptureCommand;
@@ -27,14 +25,11 @@ const HPP_PI_ID = '01991234-0000-7000-8000-aabbccddeeff';
 function hostedCpBillingAddress(): BillingAddress
 {
     return new BillingAddress(
-        firstName: 'Ada',
-        lastName: 'Lovelace',
         line: '1 Test St',
         city: 'Los Angeles',
         country: new Country('US'),
         postalCode: '90001',
         state: new State('CA'),
-        email: new Email('ada@example.test'),
     );
 }
 
@@ -57,7 +52,7 @@ function hostedCpPurchase(array $command = [], array $wiring = []): Purchase
         cpPlacement([
             'money' => new Money(1050, new Currency('USD')),
             'instrument' => hostedCpInstrument(),
-            'billingAddress' => hostedCpBillingAddress(),
+            'customer' => connexPaySuiteCustomer(address: hostedCpBillingAddress()),
             'clientUniqueId' => HPP_PI_ID,
             ...$command,
         ]),
@@ -119,8 +114,13 @@ it('refuses a hosted payment without a merchant name', function () {
     hostedCpPurchase(wiring: ['merchantName' => ''])->payload();
 })->throws(RuntimeException::class, 'require a `merchant_name` credential');
 
-it('refuses a hosted payment without a billing address', function () {
-    hostedCpPurchase(['billingAddress' => null])->payload();
+/**
+ * The refusal is now about the customer, not the address, and that is the same requirement said
+ * once instead of twice: ConnexPay mandates `Sale.RiskData` for card tenders, and that block
+ * names the payer as well as where they are billed.
+ */
+it('refuses a hosted payment that names no customer', function () {
+    hostedCpPurchase(['customer' => null])->payload();
 })->throws(RuntimeException::class, 'mandates Sale.RiskData');
 
 // ──────────────────────────────────────────────

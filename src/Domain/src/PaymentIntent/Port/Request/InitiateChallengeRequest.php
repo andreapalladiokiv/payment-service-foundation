@@ -6,7 +6,7 @@ namespace Techork\PaymentService\Domain\PaymentIntent\Port\Request;
 
 use Money\Money;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
-use Techork\PaymentService\Common\ValueObject\BillingAddress;
+use Techork\PaymentService\Common\ValueObject\Customer;
 use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
 use Techork\PaymentService\Domain\PaymentIntent\ValueObject\PaymentIntentId;
 
@@ -45,7 +45,7 @@ final readonly class InitiateChallengeRequest
         public PaymentIntentId $paymentIntentId,
         public Money $amount,
         public PaymentInstrument $instrument,
-        public BillingAddress $billingAddress,
+        public Customer $customer,
         public PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated,
         public ?string $reason = null,
     ) {}

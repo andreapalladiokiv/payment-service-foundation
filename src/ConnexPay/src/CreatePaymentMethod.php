@@ -11,6 +11,7 @@ use Techork\PaymentService\Common\Contract\PaymentInstrumentVisitor;
 use Techork\PaymentService\Common\ValueObject\Cash;
 use Techork\PaymentService\Common\ValueObject\CreditCard;
 use Techork\PaymentService\Common\ValueObject\HostedPayment;
+use Techork\PaymentService\Common\ValueObject\AttachedPaymentMethod;
 use Techork\PaymentService\Common\ValueObject\PaymentMethod;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSResult;
 use Techork\PaymentService\Common\ValueObject\Token;
@@ -38,19 +39,20 @@ use Techork\PaymentService\Gateway\ValueObject\GatewayInfrastructure;
  * endpoint that creates one from an identity alone — every one of them takes a card — which is why
  * {@see \Techork\PaymentService\Gateway\Role\RegistersCustomers} is refused for this gateway
  * and this registration does that job instead. The guid comes back as
- * `RegistrationResult::$customerReference` and pairs with the `customerId` the caller passed on
- * the same command, so the caller holds both halves and can record them in
+ * `RegistrationResult::$customerReference` and pairs with the customer's own id from the same
+ * command, so the caller holds both halves and can record them in
  * `GatewayCustomerRepository`. Until it does, that map answers null for this customer, and null is
  * an ordinary answer here rather than a failure.
  *
- * **What that made of `billingAddress` until now.** `Card.Customer` was built from the address
+ * **What that made of the billing address until now.** `Card.Customer` was built from the address
  * alone, so the customer ConnexPay created was whoever the card happened to be billed to, and the
  * name, email and phone a merchant actually recorded never reached it. That is the
  * address-derived provider customer this whole change exists to end — removed for Nuvei and Stripe
  * first, and surviving here longest because the write-up had declared there was no customer object
- * on this gateway to look at. `customerIdentity` names the person now and the address keeps naming
- * the address; see {@see \Techork\PaymentService\ConnexPay\Concern\BuildsConnexPayPayload::formatCustomer()}
- * for why both are needed rather than one replacing the other.
+ * on this gateway to look at. The command carries a whole
+ * {@see \Techork\PaymentService\Common\ValueObject\Customer} now, so the person and the address
+ * arrive together; see {@see \Techork\PaymentService\ConnexPay\Concern\BuildsConnexPayPayload::formatCustomer()}
+ * for why both are needed rather than one standing in for the other.
  *
  * @implements PaymentInstrumentVisitor<array>
  */
@@ -83,14 +85,12 @@ final class CreatePaymentMethod implements PaymentInstrumentVisitor
     {
         $card = $this->command->instrument->accept($this);
 
-        $billingAddress = $this->command->billingAddress;
-        $identity = $this->command->customerIdentity;
-
-        // Either one is enough to be worth sending: an identity with no address still tells
-        // ConnexPay who this customer is, and an address with no identity is the AVS payload plus
-        // the fallback person. Only both absent leaves nothing to say.
-        if ($billingAddress !== null || $identity !== null) {
-            $card['Customer'] = $this->formatCustomer($billingAddress, $identity);
+        // One check where there were two. The address and the identity were separate optional
+        // arguments, so "either is enough to be worth sending" was a real branch; a
+        // {@see \Techork\PaymentService\Common\ValueObject\Customer} has both or is absent.
+        $customer = $this->command->customer;
+        if ($customer !== null) {
+            $card['Customer'] = $this->formatCustomer($customer);
         }
 
         // A registration that was authenticated must carry the result through,
@@ -182,6 +182,17 @@ final class CreatePaymentMethod implements PaymentInstrumentVisitor
 
     #[Override]
     public function visitPaymentMethod(PaymentMethod $paymentMethod): never
+    {
+        throw new RuntimeException('PaymentMethod cannot be re-stored as a payment method.');
+    }
+
+    /**
+     * An attached one is refused for the same reason as a bare one: this operation is what
+     * PRODUCES a stored instrument, so being handed one is a caller's mistake either way, and
+     * having a customer attached does not make a stored card re-storable.
+     */
+    #[Override]
+    public function visitAttachedPaymentMethod(AttachedPaymentMethod $attached): never
     {
         throw new RuntimeException('PaymentMethod cannot be re-stored as a payment method.');
     }

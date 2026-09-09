@@ -10,21 +10,15 @@ use Techork\PaymentService\Gateway\Command\CaptureCommand;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 use Techork\PaymentService\Gateway\Command\CancelCommand;
 use Techork\PaymentService\Gateway\Command\RefundCommand;
-use Techork\PaymentService\Common\Contract\CustomerIdentifier;
+use Techork\PaymentService\Common\ValueObject\CustomerId;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
-use Techork\PaymentService\Common\ValueObject\CustomerIdentity;
 use Techork\PaymentService\Gateway\Command\PlacementCommand;
-use Techork\PaymentService\Common\Contract\DecryptInterface;
 use Techork\PaymentService\Gateway\Command\IssueCardCommand;
 use Techork\PaymentService\Gateway\Command\TerminateCardCommand;
 use Techork\PaymentService\Gateway\Command\UpdateCardCommand;
 use Techork\PaymentService\Gateway\Command\RegisterCustomerCommand;
 use Techork\PaymentService\Gateway\Command\VaultCommand;
-use Techork\PaymentService\Gateway\Contract\GatewayCredential;
-use Techork\PaymentService\Gateway\Contract\GatewayInstrumentRepository;
 use Techork\PaymentService\Gateway\ValueObject\CardSpendCategory;
-use Techork\PaymentService\Gateway\ValueObject\GatewayInfrastructure;
-use Techork\PaymentService\Gateway\Contract\GatewayCustomerRepository;
 use Techork\PaymentService\Revolut\RevolutHttpClientInterface;
 
 /**
@@ -57,8 +51,7 @@ function revolutInvoke(Techork\PaymentService\Revolut\RevolutGateway $gateway, s
         )),
         'registerCustomer' => $gateway->registerCustomer(new RegisterCustomerCommand(
             gatewayId: GatewayId::generate(),
-            customerId: revolutTestCustomerId(),
-            identity: new CustomerIdentity('Ada', 'Lovelace'),
+            customer: revolutSuiteCustomer(firstName: 'Ada', lastName: 'Lovelace'),
         )),
         'issueVirtualCard' => $gateway->issueVirtualCard(new IssueCardCommand(
             gatewayId: GatewayId::generate(),
@@ -248,24 +241,9 @@ it('drops non-uuid account ids from the allow-list', function () {
 });
 
 /**
- * A customer id the adapter can hold without being able to make one: Revolut depends on `Common` and
- * `Gateway`, never on the domain, which is the property
- * {@see \Techork\PaymentService\Common\Contract\CustomerIdentifier} exists to give.
+ * A customer id for the commands these tests route.
  */
-function revolutTestCustomerId(): CustomerIdentifier
+function revolutTestCustomerId(): CustomerId
 {
-    static $id = null;
-
-    return $id ??= new readonly class implements CustomerIdentifier
-    {
-        public function toString(): string
-        {
-            return '01920000-0000-7000-8000-00000000cafe';
-        }
-
-        public function __toString(): string
-        {
-            return $this->toString();
-        }
-    };
+    return CustomerId::fromString('01920000-0000-7000-8000-00000000cafe');
 }

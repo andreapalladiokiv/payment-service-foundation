@@ -5,9 +5,8 @@ declare(strict_types=1);
 namespace Techork\PaymentService\Gateway\Command;
 
 use Money\Money;
-use Techork\PaymentService\Common\Contract\CustomerIdentifier;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
-use Techork\PaymentService\Common\ValueObject\BillingAddress;
+use Techork\PaymentService\Common\ValueObject\Customer;
 use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSResult;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
@@ -32,7 +31,7 @@ use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 final readonly class RebillingCommand
 {
     /**
-     * @param  ?CustomerIdentifier  $customerId  Whose subscription this renews. Same shape and same reasons
+     * @param  ?Customer  $customer  Whose subscription this renews. Same shape and same reasons
      *   as {@see PlacementCommand}, and it matters more here than anywhere else: Nuvei renews
      *   through a `userPaymentOptionId`, which exists only under the `userTokenId` it was stored
      *   against, so a renewal that names no customer cannot reach the stored instrument at all.
@@ -46,11 +45,10 @@ final readonly class RebillingCommand
         public PaymentInitiation $initiation,
         public ?string $genesisReference = null,
         public ?string $clientUniqueId = null,
-        public ?BillingAddress $billingAddress = null,
         public ?ThreeDSResult $threeDS = null,
         public ?string $statementDescription = null,
         public ?string $description = null,
-        public ?CustomerIdentifier $customerId = null,
+        public ?Customer $customer = null,
     ) {}
 
 
@@ -64,13 +62,12 @@ final readonly class RebillingCommand
             'amount' => $this->amount,
             'instrument' => $this->instrument->toPayload(),
             'clientUniqueId' => $this->clientUniqueId,
-            'billingAddress' => $this->billingAddress?->toArray(),
             'threeDS' => $this->threeDS,
             'statementDescription' => $this->statementDescription,
             'description' => $this->description,
             'initiation' => $this->initiation->value,
             'genesisReference' => $this->genesisReference,
-            'customerId' => $this->customerId?->toString(),
+            'customer' => $this->customer?->toArray(),
         ];
     }
 
@@ -90,12 +87,11 @@ final readonly class RebillingCommand
             instrument: $this->instrument,
             amount: $this->amount,
             clientUniqueId: $this->clientUniqueId,
-            billingAddress: $this->billingAddress,
             threeDS: $this->threeDS,
             statementDescription: $this->statementDescription,
             description: $this->description,
             initiation: $this->initiation,
-            customerId: $this->customerId,
+            customer: $this->customer,
         );
     }
 }

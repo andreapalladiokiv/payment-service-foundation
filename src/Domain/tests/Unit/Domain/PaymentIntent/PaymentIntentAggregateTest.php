@@ -8,6 +8,7 @@ use Techork\PaymentService\Common\Contract\Challenge;
 use Techork\PaymentService\Common\Contract\ChallengeResult;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
+use Techork\PaymentService\Common\ValueObject\Customer;
 use Techork\PaymentService\Common\ValueObject\CardBrand;
 use Techork\PaymentService\Common\ValueObject\Challenge\RedirectChallenge;
 use Techork\PaymentService\Common\ValueObject\Challenge\RedirectResult;
@@ -20,7 +21,6 @@ use Techork\PaymentService\Common\ValueObject\CreditCard\Expiration;
 use Techork\PaymentService\Common\ValueObject\MerchantDescriptor;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Holder;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Number;
-use Techork\PaymentService\Common\ValueObject\Email;
 use Techork\PaymentService\Common\ValueObject\ExpiresAt;
 use Techork\PaymentService\Common\ValueObject\HostedPayment;
 use Techork\PaymentService\Common\ValueObject\PaymentMethod;
@@ -141,27 +141,40 @@ function makeImportedPaymentMethod(string $id = '01961f5a-0000-7000-8000-0000000
     return new PaymentMethod(
         PaymentMethodId::fromString($id),
         makeCreditCardForPI(),
-        makeBillingAddress(),
     );
 }
 
 function makeBillingAddress(): BillingAddress
 {
-    return new BillingAddress(firstName: 'Test', lastName: 'User', line: '123 Main St', city: 'NYC', country: new Country('US'), postalCode: '10001');
+    return new BillingAddress(
+        line: '123 Main St',
+        city: 'NYC',
+        country: new Country('US'),
+        postalCode: '10001',
+    );
+}
+
+/**
+ * The payer for a payment-intent event, over this file's own address.
+ *
+ * Thin wrapper over the suite-wide `makeCustomer()` so the address stays the one every assertion
+ * here was written against — the events carry a whole {@see Customer} now, and what these tests
+ * are about is the payment, not who is paying.
+ */
+function makePiCustomer(?BillingAddress $address = null): Customer
+{
+    return makeCustomer(address: $address ?? makeBillingAddress());
 }
 
 function makeBillingAddressFull(): BillingAddress
 {
     return new BillingAddress(
-        firstName: 'Test',
-        lastName: 'User',
         line: '123 Main St',
         city: 'NYC',
         country: new Country('US'),
         postalCode: '10001',
         lineExtra: 'Apt 4B',
         state: new State('NY'),
-        email: new Email('test@example.com'),
     );
 }
 
@@ -231,7 +244,7 @@ function makeCreatePiCommand(
         public function amount(): Money { return $this->amount; }
         public function instrument(): PaymentInstrument { return $this->instrument; }
         public function captureMethod(): CaptureMethod { return $this->captureMethod; }
-        public function billingAddress(): BillingAddress { return makeBillingAddress(); }
+        public function customer(): Customer { return makePiCustomer(); }
         public function merchantDescriptor(): MerchantDescriptor { return $this->merchantDescriptor; }
         public function description(): string { return $this->description; }
         public function metadata(): array { return []; }
@@ -449,7 +462,7 @@ it('records PaymentIntentCharged on create with Immediate + GatewaySuccess', fun
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Immediate,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -473,7 +486,7 @@ it('records PaymentIntentCharged carrying the FX convertedAmount from the port',
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Immediate,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -497,7 +510,7 @@ it('records PaymentIntentAuthorized on create with Automatic + GatewaySuccess', 
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Automatic,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -519,7 +532,7 @@ it('records PaymentIntentAuthorized on create with Manual + GatewaySuccess', fun
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Manual,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -545,7 +558,7 @@ it('records PaymentIntentFailed on create with GatewayDeclined', function () {
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Automatic,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -569,7 +582,7 @@ it('records PaymentIntentRequiresAction on create with GatewayChallengeRequired'
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Automatic,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -593,7 +606,7 @@ it('forwards pre-auth ChallengeResult into the initial event', function () {
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Automatic,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -617,7 +630,7 @@ it('binds the payment initiation onto the aggregate and the recorded event', fun
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Immediate,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         merchantDescriptor: makeMerchantDescriptor(),
         description: '',
@@ -672,7 +685,7 @@ it('carries the descriptor and description onto the charge', function () {
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Immediate,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         new MerchantDescriptor('ACME STORE'),
         'Order 4417',
@@ -699,7 +712,7 @@ it('carries the descriptor and description onto the authorization', function () 
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Manual,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         new MerchantDescriptor('ACME STORE'),
         'Order 4417',
@@ -784,19 +797,19 @@ it('round-trips the descriptor and description through every event payload', fun
     $descriptor = new MerchantDescriptor('ACME STORE');
 
     yield 'charged' => fn () => new PaymentIntentCharged(
-        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [], $descriptor, 'Order 4417',
+        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makePiCustomer(), [], $descriptor, 'Order 4417',
     );
     yield 'authorized' => fn () => new PaymentIntentAuthorized(
-        makeAmount(), makeInstrument(), CaptureMethod::Manual, makeBillingAddress(), [], $descriptor, 'Order 4417',
+        makeAmount(), makeInstrument(), CaptureMethod::Manual, makePiCustomer(), [], $descriptor, 'Order 4417',
     );
     yield 'failed' => fn () => new PaymentIntentFailed(
-        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [], $descriptor, 'Order 4417', 'declined', ErrorCode::GatewayDeclined,
+        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makePiCustomer(), [], $descriptor, 'Order 4417', 'declined', ErrorCode::GatewayDeclined,
     );
     yield 'requires action' => fn () => new PaymentIntentRequiresAction(
-        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [], $descriptor, 'Order 4417', makeRedirectChallenge(),
+        makeAmount(), makeInstrument(), CaptureMethod::Immediate, makePiCustomer(), [], $descriptor, 'Order 4417', makeRedirectChallenge(),
     );
     yield 'imported' => fn () => new PaymentIntentImported(
-        makeAmount(), PaymentIntentStatus::Charged, makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), $descriptor, 'Order 4417',
+        makeAmount(), PaymentIntentStatus::Charged, makeInstrument(), CaptureMethod::Immediate, makePiCustomer(), $descriptor, 'Order 4417',
     );
 });
 
@@ -866,7 +879,7 @@ it('accepts a hosted payment with immediate capture', function () {
         makeAmount(),
         makeHostedPaymentForPI(),
         CaptureMethod::Immediate,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -885,7 +898,7 @@ it('records PaymentIntentAuthorized on confirmChallenge after RequiresAction wit
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Automatic,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -900,7 +913,7 @@ it('records PaymentIntentAuthorized on confirmChallenge after RequiresAction wit
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Automatic,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -916,7 +929,7 @@ it('records PaymentIntentCharged on confirmChallenge after RequiresAction with I
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Immediate,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -931,7 +944,7 @@ it('records PaymentIntentCharged on confirmChallenge after RequiresAction with I
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Immediate,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -948,7 +961,7 @@ it('treats ThreeDSStatus::NotAvailable as success (liability shift)', function (
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Manual,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -963,7 +976,7 @@ it('treats ThreeDSStatus::NotAvailable as success (liability shift)', function (
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Manual,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -980,7 +993,7 @@ it('treats ThreeDSStatus::Info as success (data share only, not a refusal)', fun
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Manual,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -995,7 +1008,7 @@ it('treats ThreeDSStatus::Info as success (data share only, not a refusal)', fun
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Manual,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1012,7 +1025,7 @@ it('treats RedirectResult as success', function () {
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Automatic,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1027,7 +1040,7 @@ it('treats RedirectResult as success', function () {
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Automatic,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1052,7 +1065,7 @@ it('places the payment on confirmChallenge when the gateway never received it', 
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Immediate,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1067,7 +1080,7 @@ it('places the payment on confirmChallenge when the gateway never received it', 
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Immediate,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1088,7 +1101,7 @@ it('forwards the resolved authentication to the gateway as the payment evidence'
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Manual,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1117,13 +1130,13 @@ it('forwards the resolved authentication to the gateway as the payment evidence'
         ->and($port->request->amount)->toEqual(makeAmount())
         ->and($port->request->instrument)->toEqual(makeInstrument())
         ->and($port->request->captureMethod)->toBe(CaptureMethod::Manual)
-        ->and($port->request->billingAddress)->toEqual(makeBillingAddress());
+        ->and($port->request->customer)->toEqual(makePiCustomer());
 
     then(new PaymentIntentAuthorized(
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Manual,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1140,7 +1153,7 @@ it('records PaymentIntentFailed when the gateway declines the authenticated paym
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Immediate,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1155,7 +1168,7 @@ it('records PaymentIntentFailed when the gateway declines the authenticated paym
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Immediate,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1178,7 +1191,7 @@ it('records PaymentIntentFailed on confirmChallenge with NotAuthenticated', func
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Automatic,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1193,7 +1206,7 @@ it('records PaymentIntentFailed on confirmChallenge with NotAuthenticated', func
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Automatic,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1212,7 +1225,7 @@ it('records PaymentIntentFailed on confirmChallenge with Rejected', function () 
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Manual,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1227,7 +1240,7 @@ it('records PaymentIntentFailed on confirmChallenge with Rejected', function () 
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Manual,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1245,7 +1258,7 @@ it('throws PaymentIntentChallengeNotPending when confirmChallenge called outside
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Immediate,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1267,7 +1280,7 @@ it('records PaymentIntentCaptured on capture from Authorized + GatewaySuccess', 
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Manual,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1290,7 +1303,7 @@ it('records PaymentIntentCaptured carrying the FX convertedAmount from the port'
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Manual,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1312,7 +1325,7 @@ it('records PaymentIntentCaptured with partial amount', function () {
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Manual,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1340,7 +1353,7 @@ it('lets a refused capture propagate instead of recording PaymentIntentFailed', 
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Manual,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1358,7 +1371,7 @@ it('records nothing and stays authorized when a capture is refused', function ()
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Manual,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1387,7 +1400,7 @@ it('throws PaymentIntentCannotBeCaptured on capture from Charged', function () {
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Immediate,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1409,7 +1422,7 @@ it('records PaymentIntentCancelled on cancel from Authorized + GatewaySuccess', 
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Manual,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1430,7 +1443,7 @@ it('records PaymentIntentCancelled on cancel from RequiresAction + GatewaySucces
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Automatic,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1452,7 +1465,7 @@ it('records PaymentIntentFailed on cancel + GatewayDeclined', function () {
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Manual,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1466,7 +1479,7 @@ it('records PaymentIntentFailed on cancel + GatewayDeclined', function () {
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Manual,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1483,7 +1496,7 @@ it('throws PaymentIntentCannotBeCancelled when already Charged', function () {
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Immediate,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1498,7 +1511,7 @@ it('throws PaymentIntentCannotBeCancelled when already Cancelled', function () {
     $id = $this->aggregateRootId();
 
     given(
-        new PaymentIntentAuthorized(makeAmount(), makeInstrument(), CaptureMethod::Manual, makeBillingAddress(), [], makeMerchantDescriptor(), ''),
+        new PaymentIntentAuthorized(makeAmount(), makeInstrument(), CaptureMethod::Manual, makePiCustomer(), [], makeMerchantDescriptor(), ''),
         new PaymentIntentCancelled('first cancel'),
     );
 
@@ -1520,7 +1533,7 @@ it('records RefundProcessed with retryInstrument when alternative card supplied'
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Immediate,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1546,7 +1559,7 @@ it('records RefundFailed with retryInstrument when alternative card declines', f
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Immediate,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1571,7 +1584,7 @@ it('records RefundProcessed (full) on refund from Charged + GatewaySuccess', fun
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Immediate,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1594,7 +1607,7 @@ it('records RefundProcessed (partial) and stays charged', function () {
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Immediate,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1614,7 +1627,7 @@ it('allows two partial refunds that sum to full amount', function () {
     $second = RefundId::generate();
 
     given(
-        new PaymentIntentCharged(makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [], makeMerchantDescriptor(), ''),
+        new PaymentIntentCharged(makeAmount(), makeInstrument(), CaptureMethod::Immediate, makePiCustomer(), [], makeMerchantDescriptor(), ''),
         new RefundProcessed($first, new Money(400, new Currency('USD'))),
     );
 
@@ -1634,7 +1647,7 @@ it('records RefundFailed when gateway declines the refund', function () {
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Immediate,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1657,7 +1670,7 @@ it('failed refund does not consume refundable amount', function () {
     $second = RefundId::generate();
 
     given(
-        new PaymentIntentCharged(makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [], makeMerchantDescriptor(), ''),
+        new PaymentIntentCharged(makeAmount(), makeInstrument(), CaptureMethod::Immediate, makePiCustomer(), [], makeMerchantDescriptor(), ''),
         new RefundFailed($first, makeAmount(), 'declined', ErrorCode::GatewayDeclined),
     );
 
@@ -1677,7 +1690,7 @@ it('throws PaymentIntentRefundExceedsAmount when refund exceeds remaining', func
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Immediate,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1695,7 +1708,7 @@ it('throws PaymentIntentCannotBeRefunded when not Charged (Authorized)', functio
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Manual,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1713,7 +1726,7 @@ it('records RefundFeeRecorded for an existing refund', function () {
     $observedAt = new DateTimeImmutable('2026-04-29T16:00:00Z');
 
     given(
-        new PaymentIntentCharged(makeAmount(), makeInstrument(), CaptureMethod::Immediate, makeBillingAddress(), [], makeMerchantDescriptor(), ''),
+        new PaymentIntentCharged(makeAmount(), makeInstrument(), CaptureMethod::Immediate, makePiCustomer(), [], makeMerchantDescriptor(), ''),
         new RefundProcessed($refundId, makeAmount()),
     );
 
@@ -1732,7 +1745,7 @@ it('throws RefundNotFound when recording fee for unknown refund', function () {
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Immediate,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1764,7 +1777,7 @@ it('imports an intent the gateway already holds without touching a port', functi
         status: PaymentIntentStatus::RequiresAction,
         instrument: HostedPayment::unknown(),
         captureMethod: CaptureMethod::Manual,
-        billingAddress: BillingAddress::unknown(),
+        customer: makePiCustomer(BillingAddress::unknown()),
         merchantDescriptor: makeMerchantDescriptor(),
         description: '',
     );
@@ -1775,7 +1788,7 @@ it('imports an intent the gateway already holds without touching a port', functi
         status: PaymentIntentStatus::RequiresAction,
         instrument: HostedPayment::unknown(),
         captureMethod: CaptureMethod::Manual,
-        billingAddress: BillingAddress::unknown(),
+        customer: makePiCustomer(BillingAddress::unknown()),
         merchantDescriptor: makeMerchantDescriptor(),
         description: '',
     ));
@@ -1789,7 +1802,7 @@ it('refuses to import over an intent that already exists', function () {
         status: PaymentIntentStatus::Charged,
         instrument: makeImportedPaymentMethod(),
         captureMethod: CaptureMethod::Automatic,
-        billingAddress: makeBillingAddress(),
+        customer: makePiCustomer(),
         merchantDescriptor: makeMerchantDescriptor(),
         description: '',
     ));
@@ -1803,7 +1816,7 @@ it('refuses to import over an intent that already exists', function () {
         status: PaymentIntentStatus::RequiresAction,
         instrument: HostedPayment::unknown(),
         captureMethod: CaptureMethod::Manual,
-        billingAddress: BillingAddress::unknown(),
+        customer: makePiCustomer(BillingAddress::unknown()),
         merchantDescriptor: makeMerchantDescriptor(),
         description: '',
     ))->toThrow(InvalidPaymentIntent::class, 'already exists');
@@ -1819,7 +1832,7 @@ it('finishes an intent imported as RequiresAction through the ordinary challenge
         status: PaymentIntentStatus::RequiresAction,
         instrument: HostedPayment::unknown(),
         captureMethod: CaptureMethod::Manual,
-        billingAddress: BillingAddress::unknown(),
+        customer: makePiCustomer(BillingAddress::unknown()),
         merchantDescriptor: makeMerchantDescriptor(),
         description: '',
     ));
@@ -1834,7 +1847,7 @@ it('finishes an intent imported as RequiresAction through the ordinary challenge
         amount: new Money(5000, new Currency('USD')),
         instrument: HostedPayment::unknown(),
         captureMethod: CaptureMethod::Manual,
-        billingAddress: BillingAddress::unknown(),
+        customer: makePiCustomer(BillingAddress::unknown()),
         metadata: [],
         merchantDescriptor: makeMerchantDescriptor(),
         description: '',
@@ -1842,10 +1855,21 @@ it('finishes an intent imported as RequiresAction through the ordinary challenge
     ));
 });
 
-it('reads a legacy import that stored no billing address as the no-data marker', function () {
-    // Guards the coercion in fromPayload() and nothing wider than that: the
-    // event store serialises through a property normaliser, which reaches the
-    // constructor directly, so this path has no production caller.
+/**
+ * A payload written before the event carried a customer cannot be read, and that is the intended
+ * answer rather than a gap.
+ *
+ * `fromPayload()` used to coerce a null `billing_address` into
+ * {@see BillingAddress::unknown()} — a no-data marker for a field that was genuinely optional
+ * once. There is no equivalent coercion for a missing `customer`, deliberately: a customer
+ * invented here would be a payer nobody named, which is the whole behaviour this change removes,
+ * and it would look identical to a real one for the rest of the intent's life. So a pre-split row
+ * fails loudly and gets migrated.
+ *
+ * Guards `fromPayload()` and nothing wider: the event store serialises through a property
+ * normaliser, which reaches the constructor directly, so this path has no production caller.
+ */
+it('refuses a legacy import that names no customer rather than inventing one', function () {
     $legacy = [
         'amount' => '5000',
         'currency' => 'USD',
@@ -1857,8 +1881,8 @@ it('reads a legacy import that stored no billing address as the no-data marker',
         'description' => '',
     ];
 
-    expect(PaymentIntentImported::fromPayload($legacy)->billingAddress)
-        ->toEqual(BillingAddress::unknown());
+    expect(fn () => PaymentIntentImported::fromPayload($legacy))
+        ->toThrow(RuntimeException::class, 'carries no customer');
 });
 
 it('applies PaymentIntentImported and allows refund up to the imported amount', function () {
@@ -1870,7 +1894,7 @@ it('applies PaymentIntentImported and allows refund up to the imported amount', 
         status: PaymentIntentStatus::Charged,
         instrument: makeImportedPaymentMethod(),
         captureMethod: CaptureMethod::Automatic,
-        billingAddress: makeBillingAddress(),
+        customer: makePiCustomer(),
         merchantDescriptor: makeMerchantDescriptor(),
         description: '',
     ));
@@ -1898,7 +1922,7 @@ it('applies RefundImported and projects refund into refunds()', function () {
             status: PaymentIntentStatus::Charged,
             instrument: makeImportedPaymentMethod(),
             captureMethod: CaptureMethod::Automatic,
-            billingAddress: makeBillingAddress(),
+            customer: makePiCustomer(),
             merchantDescriptor: makeMerchantDescriptor(),
             description: '',
         ),
@@ -1927,7 +1951,7 @@ it('records PaymentIntentFeeRecorded from any state', function () {
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Immediate,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1949,7 +1973,7 @@ it('PaymentIntentAuthorized survives serialization roundtrip', function () {
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Manual,
-        makeBillingAddress(),
+        makePiCustomer(),
         ['k' => 'v'],
         makeMerchantDescriptor(),
         '',
@@ -1970,7 +1994,7 @@ it('PaymentIntentCharged survives serialization roundtrip without challenge resu
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Immediate,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -1989,7 +2013,7 @@ it('PaymentIntentRequiresAction survives serialization roundtrip (3DS)', functio
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Automatic,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -2008,7 +2032,7 @@ it('PaymentIntentRequiresAction survives serialization roundtrip (Redirect)', fu
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Automatic,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -2027,7 +2051,7 @@ it('PaymentIntentFailed survives serialization roundtrip', function () {
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Automatic,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -2067,7 +2091,7 @@ it('PaymentIntentImported survives serialization roundtrip', function () {
         status: PaymentIntentStatus::Charged,
         instrument: makeImportedPaymentMethod(),
         captureMethod: CaptureMethod::Manual,
-        billingAddress: makeBillingAddressFull(),
+        customer: makePiCustomer(makeBillingAddressFull()),
         merchantDescriptor: makeMerchantDescriptor(),
         description: '',
     );
@@ -2076,7 +2100,7 @@ it('PaymentIntentImported survives serialization roundtrip', function () {
 
     expect($restored->amount->getAmount())->toBe('3000')
         ->and($restored->status)->toBe(PaymentIntentStatus::Charged)
-        ->and((string) $restored->billingAddress->state)->toBe('NY');
+        ->and((string) $restored->customer->billingAddress->state)->toBe('NY');
 
     then();
 });
@@ -2090,7 +2114,7 @@ it('imports a hosted-flow PaymentIntent with no billing details of its own', fun
         status: PaymentIntentStatus::Charged,
         instrument: new HostedPayment('', ''),
         captureMethod: CaptureMethod::Automatic,
-        billingAddress: BillingAddress::unknown(),
+        customer: makePiCustomer(BillingAddress::unknown()),
         merchantDescriptor: makeMerchantDescriptor(),
         description: '',
     ));
@@ -2100,7 +2124,7 @@ it('imports a hosted-flow PaymentIntent with no billing details of its own', fun
     // The marker, not null: a hosted intent has no merchant-side billing on file,
     // and saying so with the "no data" sentinel keeps it resolvable — the events
     // that would finish it all require an address.
-    expect($aggregate->billingAddress())->toEqual(BillingAddress::unknown())
+    expect($aggregate->customer()->billingAddress)->toEqual(BillingAddress::unknown())
         ->and($aggregate->instrument())->toBeInstanceOf(HostedPayment::class);
 
     then();
@@ -2112,14 +2136,14 @@ it('hosted-flow PaymentIntentImported survives serialization roundtrip', functio
         status: PaymentIntentStatus::Charged,
         instrument: new HostedPayment('', ''),
         captureMethod: CaptureMethod::Automatic,
-        billingAddress: BillingAddress::unknown(),
+        customer: makePiCustomer(BillingAddress::unknown()),
         merchantDescriptor: makeMerchantDescriptor(),
         description: '',
     );
 
     $restored = PaymentIntentImported::fromPayload($event->toPayload());
 
-    expect($restored->billingAddress)->toEqual(BillingAddress::unknown())
+    expect($restored->customer->billingAddress)->toEqual(BillingAddress::unknown())
         ->and($restored->instrument)->toBeInstanceOf(HostedPayment::class);
 
     then();
@@ -2172,7 +2196,7 @@ it('reads a failure recorded before error codes existed as unclassified', functi
         fn (array $payload) => PaymentIntentFailed::fromPayload($payload),
         fn () => array_diff_key(
             new PaymentIntentFailed(
-                makeAmount(), makeInstrument(), CaptureMethod::Automatic, makeBillingAddress(), [],
+                makeAmount(), makeInstrument(), CaptureMethod::Automatic, makePiCustomer(), [],
                 makeMerchantDescriptor(), '', 'card_declined', ErrorCode::GatewayDeclined,
             )->toPayload(),
             ['code' => null],
@@ -2266,7 +2290,7 @@ it('throws InvalidRefund::currencyMismatch when refund currency differs from PI'
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Immediate,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -2292,13 +2316,15 @@ it('snapshot roundtrip preserves cancelled state', function () {
         'instrument' => $instrument->toPayload(),
         'capture_method' => CaptureMethod::Automatic->value,
         'metadata' => [],
-        'billing_address' => [
-            'first_name' => 'Test',
-            'last_name' => 'User',
-            'line' => '456 Elm St',
-            'city' => 'LA',
-            'country' => 'US',
-            'postal_code' => '90001',
+        'customer' => [
+            'id' => '01920000-0000-7000-8000-00000000cafe',
+            'identity' => ['first_name' => 'Test', 'last_name' => 'User', 'email' => null, 'phone' => null],
+            'billing_address' => [
+                'line' => '456 Elm St',
+                'city' => 'LA',
+                'country' => 'US',
+                'postal_code' => '90001',
+            ],
         ],
     ];
 
@@ -2306,7 +2332,7 @@ it('snapshot roundtrip preserves cancelled state', function () {
         ->invoke(null, $id, $state);
 
     expect($restored->status())->toBe(PaymentIntentStatus::Cancelled)
-        ->and($restored->billingAddress()->city)->toBe('LA');
+        ->and($restored->customer()->billingAddress->city)->toBe('LA');
 
     then();
 });
@@ -2646,7 +2672,7 @@ it('refuses to confirm a challenge on a success status with no authentication va
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Automatic,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',
@@ -2675,7 +2701,7 @@ it('still records a failure when the issuer actually refused, cryptogram or not'
         makeAmount(),
         makeInstrument(),
         CaptureMethod::Automatic,
-        makeBillingAddress(),
+        makePiCustomer(),
         [],
         makeMerchantDescriptor(),
         '',

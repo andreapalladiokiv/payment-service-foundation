@@ -7,7 +7,7 @@ namespace Techork\PaymentService\Domain\PaymentIntent\Command;
 use Money\Money;
 use Techork\PaymentService\Common\Contract\ChallengeResult;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
-use Techork\PaymentService\Common\ValueObject\BillingAddress;
+use Techork\PaymentService\Common\ValueObject\Customer;
 use Techork\PaymentService\Common\ValueObject\ConnectionContext;
 use Techork\PaymentService\Common\ValueObject\MerchantDescriptor;
 use Techork\PaymentService\Domain\PaymentIntent\CaptureMethod;
@@ -24,7 +24,7 @@ interface CreatePaymentIntentCommand
 
     public function captureMethod(): CaptureMethod;
 
-    public function billingAddress(): BillingAddress;
+    public function customer(): Customer;
 
     /**
      * What the cardholder will see on their statement. May be empty, in which

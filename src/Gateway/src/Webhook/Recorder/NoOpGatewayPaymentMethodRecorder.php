@@ -7,6 +7,7 @@ namespace Techork\PaymentService\Gateway\Webhook\Recorder;
 use Override;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
 use Techork\PaymentService\Common\ValueObject\CreditCard;
+use Techork\PaymentService\Common\ValueObject\CustomerIdentity;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 
 /**
@@ -26,6 +27,7 @@ final readonly class NoOpGatewayPaymentMethodRecorder implements GatewayPaymentM
         string $paymentMethodReference,
         CreditCard $creditCard,
         BillingAddress $billingAddress,
+        CustomerIdentity $identity,
     ): RecorderOutcome {
         return RecorderOutcome::Skipped;
     }

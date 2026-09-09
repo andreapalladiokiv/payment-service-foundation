@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use GuzzleHttp\Exception\TransferException;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
+use Techork\PaymentService\Common\ValueObject\Customer;
 use Techork\PaymentService\Common\ValueObject\Cash;
 use Techork\PaymentService\Common\ValueObject\Country;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Expiration;
@@ -13,7 +14,6 @@ use Techork\PaymentService\Common\ValueObject\CreditCard;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Cvc;
 use Techork\PaymentService\Common\ValueObject\Email;
 use Techork\PaymentService\Common\ValueObject\State;
-use Techork\PaymentService\ConnexPay\ConnexPayHttpClientInterface;
 use Techork\PaymentService\ConnexPay\CreateCard;
 
 /**
@@ -34,14 +34,11 @@ function cpCreateCard(array $command = [], array $wiring = []): CreateCard
 function cpVerifyBilling(): BillingAddress
 {
     return new BillingAddress(
-        firstName: 'Jane',
-        lastName: 'Doe',
         line: '456 Oak Ave',
         city: 'Tempe',
         country: new Country('US'),
         postalCode: '85284',
         state: new State('AZ'),
-        email: new Email('jane@test.com'),
     );
 }
 
@@ -73,8 +70,13 @@ it('omits CVV when empty and forwards empty CardHolderName', function () {
         ->and($data['Card']['CardHolderName'])->toBe('');
 });
 
-it('includes Customer block when billingAddress is provided', function () {
-    $data = cpCreateCard(['instrument' => cpCard(), 'billingAddress' => cpVerifyBilling()])->payload();
+it('includes the Customer block when a customer is named', function () {
+    $data = cpCreateCard(['instrument' => cpCard(), 'customer' => connexPaySuiteCustomer(
+        firstName: 'Jane',
+        lastName: 'Doe',
+        email: new Email('jane@test.com'),
+        address: cpVerifyBilling(),
+    )])->payload();
 
     expect($data['Card']['Customer'])->toBe([
         'FirstName' => 'Jane',

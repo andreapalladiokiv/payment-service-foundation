@@ -11,7 +11,6 @@ use Techork\PaymentService\Common\ValueObject\CreditCard\CardSummary;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Expiration;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Holder;
 use Techork\PaymentService\Common\ValueObject\IpAddress;
-use Techork\PaymentService\Common\ValueObject\Challenge\ThreeDSChallenge;
 use Techork\PaymentService\Domain\PaymentIntent\Port\FirewallDecision;
 use Techork\PaymentService\Domain\PaymentIntent\Port\FirewallVerdict;
 use Techork\PaymentService\Domain\PaymentIntent\Port\NullPaymentIntentFirewall;
@@ -23,7 +22,7 @@ function paymentIntentFirewallRequest(?string $gatewayId = 'gw-1'): PaymentInten
     return new PaymentIntentFirewallRequest(
         amount: Money::USD(15000),
         card: new CardSummary('411111', '1111', CardBrand::Visa, Expiration::fromMonthAndYear(6, 2031), new Holder('A B')),
-        billing: new BillingAddress('Ada', 'Lovelace', '1 Main St', 'London', new Country('GB'), 'E1 6AN'),
+        customer: makeCustomer(address: new BillingAddress('1 Main St', 'London', new Country('GB'), 'E1 6AN')),
         connection: new ConnectionContext(new IpAddress('203.0.113.7'), 'Mozilla/5.0'),
         gatewayId: $gatewayId,
     );
@@ -63,7 +62,7 @@ it('evaluates the chain even when there is no connection to inspect', function (
     $request = new PaymentIntentFirewallRequest(
         amount: Money::USD(15000),
         card: new CardSummary('411111', '1111', CardBrand::Visa, Expiration::fromMonthAndYear(6, 2031), new Holder('A B')),
-        billing: new BillingAddress('Ada', 'Lovelace', '1 Main St', 'London', new Country('GB'), 'E1 6AN'),
+        customer: makeCustomer(address: new BillingAddress('1 Main St', 'London', new Country('GB'), 'E1 6AN')),
     );
 
     expect($firewall->evaluate($request)->isDenied())->toBeTrue();

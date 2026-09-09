@@ -13,6 +13,7 @@ use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSStatus;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSVersion;
 use Techork\PaymentService\ConnexPay\Authorize;
 use Techork\PaymentService\Gateway\Exception\UnsupportedInstrument;
+use Techork\PaymentService\Common\ValueObject\Customer;
 
 /**
  * @param  array<string, mixed>  $command
@@ -58,7 +59,7 @@ it('builds authorize data for token with Guid', function () {
 
 it('builds authorize data for payment method with Guid', function () {
     $data = cpAuthorize(
-        ['instrument' => cpStoredPaymentMethod()],
+        ['instrument' => cpAttachedPaymentMethod()],
         ['reference' => 'pm-guid-xyz'],
     )->payload();
 
@@ -79,11 +80,11 @@ it('forwards clientUniqueId as OrderNumber', function () {
 it('includes billing address as top-level RiskData', function () {
     $data = cpAuthorize([
         'instrument' => cpCard(cvv: null, holder: 'Test'),
-        'billingAddress' => cpBilling(email: 'test@test.com'),
+        'customer' => cpPayer(email: 'test@test.com'),
     ])->payload();
 
     expect($data['Card'])->not->toHaveKey('Customer')
-        ->and($data['RiskData']['Name'])->toBe('Test User')
+        ->and($data['RiskData']['Name'])->toBe('Ada Lovelace')
         ->and($data['RiskData']['BillingAddress1'])->toBe('456 Oak')
         ->and($data['RiskData']['BillingPostalCode'])->toBe('90001')
         ->and($data['RiskData']['BillingCountryCode'])->toBe('US')

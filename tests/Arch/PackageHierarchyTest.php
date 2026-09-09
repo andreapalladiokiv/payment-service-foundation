@@ -111,10 +111,10 @@ arch('every package is placed in the hierarchy', function () use ($layers): void
 |
 | A provider's own id for a person — `customer_reference`, `cus_...`, ConnexPay's
 | `card.customer.guid` — belongs to `Gateway` and to its Laravel implementation,
-| and nowhere else. The aggregate holds identity; the map holds identifiers. That
-| is what keeps a customer of ours from acquiring a second, provider-shaped
-| identity it would then have to reconcile — and it is why `CustomerForgotten`
-| can leave those rows alone without the aggregate needing to know they exist.
+| and nowhere else. The application holds identity; the map holds identifiers.
+| That is what keeps a customer of ours from acquiring a second, provider-shaped
+| identity it would then have to reconcile — and it is why erasing a customer can
+| leave those rows alone without anything upstream knowing they exist.
 |
 | `toUse()` cannot check it. The concept crosses as a string — a column name, an
 | array key, a property called `customerReference` — so there is no class to name

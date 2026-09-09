@@ -10,6 +10,7 @@ use Techork\PaymentService\Common\Contract\PaymentInstrumentVisitor;
 use Techork\PaymentService\Common\ValueObject\Cash;
 use Techork\PaymentService\Common\ValueObject\CreditCard;
 use Techork\PaymentService\Common\ValueObject\HostedPayment;
+use Techork\PaymentService\Common\ValueObject\AttachedPaymentMethod;
 use Techork\PaymentService\Common\ValueObject\PaymentMethod;
 use Techork\PaymentService\Common\ValueObject\Token;
 
@@ -49,6 +50,19 @@ final class CardSummaryExtractor implements PaymentInstrumentVisitor
     public function visitPaymentMethod(PaymentMethod $paymentMethod): ?CardSummary
     {
         return $paymentMethod->instrument->accept($this);
+    }
+
+    /**
+     * Through the customer to the card, because a summary is about the card.
+     *
+     * Nothing of the payer appears in a {@see CardSummary} — it is a BIN, a last four, a brand and
+     * an expiry, deliberately, so a firewall rule can match on the instrument without holding a
+     * card number or a person. The customer travels beside it on the request.
+     */
+    #[Override]
+    public function visitAttachedPaymentMethod(AttachedPaymentMethod $attached): ?CardSummary
+    {
+        return $attached->paymentMethod->accept($this);
     }
 
     #[Override]

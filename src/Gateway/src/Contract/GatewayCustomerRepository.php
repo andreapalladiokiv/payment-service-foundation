@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Gateway\Contract;
 
-use Techork\PaymentService\Common\Contract\CustomerIdentifier;
+use Techork\PaymentService\Common\ValueObject\CustomerId;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 
 /**
@@ -12,19 +12,15 @@ use Techork\PaymentService\Gateway\ValueObject\GatewayId;
  *
  * The same kind of thing as {@see VirtualCardReferenceRepository} and
  * {@see GatewayTransactionRepository}, named and shaped to match: our id in, that gateway's
- * reference out. It replaces {@see CustomerRepository}, which is named for the *thing* while
- * every sibling is named for what it stores, and keyed by an **instrument** while every sibling
- * is keyed by whatever the reference belongs to. That key is why a raw card can never resolve a
+ * reference out. It replaces the retired `CustomerRepository`, which was named for the *thing*
+ * while every sibling is named for what it stores, and keyed by an **instrument** while every
+ * sibling is keyed by whatever the reference belongs to. That key is why a raw card can never resolve a
  * customer today and why an expiring `Token` can.
  *
- * The customer arrives as a {@see CustomerIdentifier}, an interface in `Common` whose one
- * implementation is the aggregate's own `CustomerId`. So this package can name the customer's
- * identity without being able to load a domain type: what it cannot do is mint one, and it has no
- * reason to — a caller reaching a gateway already holds the customer it is acting for.
- *
- * The id does not degrade to a `string` at this boundary. A string here would be a value with no
- * type at exactly the point where a wrong one is least visible, and there is a value object for
- * it, so the boundary speaks it.
+ * The customer arrives as a {@see CustomerId}. This package has no reason to make one — a caller
+ * reaching a gateway already holds the customer it is acting for — and no way to get it wrong:
+ * the id does not degrade to a `string` at this boundary, which is exactly the point where a
+ * wrong value would be least visible. There is a type for it, so the boundary speaks it.
  *
  * The reference coming back the other way IS a bare string, and that asymmetry is the point: it
  * is the *provider's* id for a person, and this is the only place in the tree allowed to know
@@ -44,16 +40,16 @@ use Techork\PaymentService\Gateway\ValueObject\GatewayId;
  * gateway at a different reference orphans whatever the old one owned, and a UNIQUE constraint
  * can refuse that without the domain learning that providers exist.
  *
- * **Erasure does not reach these rows, by design rather than by omission.** Forgetting a
- * customer erases the identity in its own stream; a `cus_...` is not personal data, and dropping
- * it would orphan every payment method and every payment that names it — including payments that
- * must stay auditable. The note belongs here and not on the aggregate, because the aggregate
- * holds no such links at all: it never learns that providers exist, so it cannot be the place
- * that says what happens to their references.
+ * **Erasure does not reach these rows, by design rather than by omission.** Forgetting a customer
+ * erases the identity wherever the application keeps it; a `cus_...` is not personal data, and
+ * dropping it would orphan every payment method and every payment that names it — including
+ * payments that must stay auditable. The note belongs here because this is the only layer that
+ * knows these references exist: an erasure routine reading a customer's own record will not find
+ * them, and should not go looking.
  */
 interface GatewayCustomerRepository
 {
-    public function find(GatewayId $gatewayId, CustomerIdentifier $customerId): ?string;
+    public function find(GatewayId $gatewayId, CustomerId $customerId): ?string;
 
-    public function saveReference(GatewayId $gatewayId, CustomerIdentifier $customerId, string $reference): void;
+    public function saveReference(GatewayId $gatewayId, CustomerId $customerId, string $reference): void;
 }

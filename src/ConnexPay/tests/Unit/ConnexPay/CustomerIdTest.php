@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Money\Currency;
 use Money\Money;
+use Techork\PaymentService\Common\ValueObject\CustomerId;
 use Techork\PaymentService\Common\ValueObject\CustomerIdentity;
 use Techork\PaymentService\Common\ValueObject\Email;
 use Techork\PaymentService\Common\ValueObject\PhoneNumber;
@@ -14,6 +15,9 @@ use Techork\PaymentService\ConnexPay\Refund;
 use Techork\PaymentService\ConnexPay\ReturnRetry;
 use Techork\PaymentService\Gateway\Command\RefundCommand;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
+use Techork\PaymentService\Common\ShreddingStubs;
+use Techork\PaymentService\Common\ValueObject\BillingAddress;
+use Techork\PaymentService\Common\ValueObject\Customer;
 
 /**
  * ConnexPay's two customer fields, which are different things and are wired differently.
@@ -27,22 +31,9 @@ use Techork\PaymentService\Gateway\ValueObject\GatewayId;
  * searchable field was taken as ConnexPay's whole notion of a customer, so `Card.Customer` went
  * unexamined and went on being assembled out of a billing address.
  */
-function connexPayCustomerId(): Techork\PaymentService\Common\Contract\CustomerIdentifier
+function connexPayCustomerId(): CustomerId
 {
-    static $id = null;
-
-    return $id ??= new readonly class implements Techork\PaymentService\Common\Contract\CustomerIdentifier
-    {
-        public function toString(): string
-        {
-            return '01920000-0000-7000-8000-00000000cafe';
-        }
-
-        public function __toString(): string
-        {
-            return $this->toString();
-        }
-    };
+    return CustomerId::fromString('01920000-0000-7000-8000-00000000cafe');
 }
 
 // ────────────────────────────── CustomerID, on the three endpoints that take it
@@ -89,7 +80,7 @@ it('never reaches the endpoints that do not document the field', function () {
         amount: new Money(1000, new Currency('USD')),
         clientUniqueId: 'refund-1',
         retryInstrument: cpCard(),
-        customerId: connexPayCustomerId(),
+        customer: connexPaySuiteCustomer(id: connexPayCustomerId()),
     );
 
     expect(new Refund(cpSettings(), $refund, cpHttpClient())->payload())->not->toHaveKey('CustomerID')
@@ -127,12 +118,12 @@ it('builds the customer from the identity and the address from the address', fun
         cpSettings(),
         cpVault([
             'instrument' => cpCard(),
-            'billingAddress' => cpBilling(email: 'whoever-paid@test.com'),
-            'customerIdentity' => new CustomerIdentity(
-                'Ada',
-                'Lovelace',
-                new Email('ada@example.com'),
-                new PhoneNumber('+12025550123'),
+            'customer' => connexPaySuiteCustomer(
+                firstName: 'Ada',
+                lastName: 'Lovelace',
+                email: new Email('ada@example.com'),
+                phone: new PhoneNumber('+12025550123'),
+                address: cpBilling(),
             ),
         ]),
         cpInfrastructure(),
@@ -153,32 +144,38 @@ it('builds the customer from the identity and the address from the address', fun
         ->and($customer['Zip'])->not->toBeNull();
 });
 
-/**
- * With nobody named the address answers for both, which is the state every ConnexPay customer was
- * created in before. Kept as the last resort rather than removed: a host that has not adopted
- * customers yet registers cards exactly as it did.
+/*
+ * Two tests lived here and describe arrangements that no longer exist.
+ *
+ * `it('falls back to the address for the person when no identity was named')` pinned the last
+ * resort: with nobody named, the address answered for the person too. That was the state every
+ * ConnexPay customer was created in — the payer was whoever the card happened to be billed to —
+ * and it is what the whole split removes. A `Customer` has an identity or does not exist, so
+ * "no identity was named" is no longer expressible.
+ *
+ * `it('sends the customer block for an identity with no address at all')` pinned the other half:
+ * an identity was worth sending without an address, because it is the part that creates
+ * ConnexPay's customer object. An address is required on a customer now, and where it is unknown
+ * it is the no-data marker rather than absent — which the test below asserts instead.
  */
-it('falls back to the address for the person when no identity was named', function () {
-    $payload = new CreatePaymentMethod(
-        cpSettings(),
-        cpVault(['instrument' => cpCard(), 'billingAddress' => cpBilling(email: 'whoever-paid@test.com')]),
-        cpInfrastructure(),
-        cpHttpClient(),
-    )->payload();
-
-    expect($payload['Card']['Customer']['Email'])->toBe('whoever-paid@test.com');
-});
 
 /**
- * And an identity with no address is still worth sending: it tells ConnexPay who the customer is,
- * which is the half that creates their customer object. Only both absent leaves nothing to say.
+ * An unknown address still names the person, and says "no data" for the place.
+ *
+ * This is what replaced an identity with no address. `BillingAddress::unknown()` is `ZZ` and the
+ * shredding stubs, so the block still creates ConnexPay's customer object while the AVS fields
+ * carry a value nothing will verify — which is the truth, and is distinguishable from a real
+ * address in a way an empty string is not.
  */
-it('sends the customer block for an identity with no address at all', function () {
+it('sends the customer block with the no-data marker for an unknown address', function () {
     $payload = new CreatePaymentMethod(
         cpSettings(),
         cpVault([
             'instrument' => cpCard(),
-            'customerIdentity' => new CustomerIdentity('Ada', 'Lovelace', new Email('ada@example.com')),
+            'customer' => connexPaySuiteCustomer(
+                email: new Email('ada@example.com'),
+                address: BillingAddress::unknown(),
+            ),
         ]),
         cpInfrastructure(),
         cpHttpClient(),
@@ -186,13 +183,11 @@ it('sends the customer block for an identity with no address at all', function (
 
     expect($payload['Card'])->toHaveKey('Customer')
         ->and($payload['Card']['Customer']['FirstName'])->toBe('Ada')
-        // No address means no AVS payload, and null is the honest answer rather than an empty
-        // string ConnexPay would try to verify.
-        ->and($payload['Card']['Customer']['City'])->toBeNull()
-        ->and($payload['Card']['Customer']['Country'])->toBeNull();
+        ->and($payload['Card']['Customer']['Country'])->toBe(ShreddingStubs::COUNTRY)
+        ->and($payload['Card']['Customer']['City'])->toBe(ShreddingStubs::CITY);
 });
 
-it('omits the customer block when neither an identity nor an address was given', function () {
+it('omits the customer block when no customer was named', function () {
     $payload = new CreatePaymentMethod(
         cpSettings(),
         cpVault(['instrument' => cpCard()]),
@@ -207,15 +202,15 @@ it('omits the customer block when neither an identity nor an address was given',
  * A name is transliterated for the same reason the city always was — ConnexPay rejects non-ASCII
  * on this block, "München" and "Kraków" fail validation — and a person's own name is far likelier
  * to carry an accent than anything that survived being typed into an address form. Which is
- * exactly why this had to move with the identity: the fallback path folded the city and left the
- * name alone.
+ * exactly why it had to move with the identity: the old fallback path folded the city and left
+ * the name alone.
  */
 it('transliterates a name that arrives on the identity', function () {
     $payload = new CreatePaymentMethod(
         cpSettings(),
         cpVault([
             'instrument' => cpCard(),
-            'customerIdentity' => new CustomerIdentity('Zoë', 'Kraków'),
+            'customer' => connexPaySuiteCustomer(firstName: 'Zoë', lastName: 'Kraków'),
         ]),
         cpInfrastructure(),
         cpHttpClient(),

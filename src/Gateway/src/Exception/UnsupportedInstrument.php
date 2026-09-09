@@ -34,6 +34,31 @@ final class UnsupportedInstrument extends InvalidArgumentException implements Un
     }
 
     /**
+     * A stored payment method offered for payment with nobody attached to it.
+     *
+     * Not a decline and not a gateway limitation — every gateway here can charge a stored card.
+     * What is missing is the payer, and the reason it must be refused rather than filled in is
+     * the behaviour this replaced: a `PaymentMethod` carried a billing address, the address
+     * carried a name and an email, and every mapper read the payer off it. So a card was charged
+     * to whoever it happened to be billed to, one uncorrectable copy per card, and nothing said
+     * so.
+     *
+     * An {@see \Techork\PaymentService\Common\ValueObject\AttachedPaymentMethod} is the
+     * instrument these operations take. It is an `UnsupportedByGateway` so the failure boundary
+     * rethrows it: a caller must not be able to read its own wiring mistake as an issuer's no.
+     */
+    public static function needsAttachedCustomer(string $gatewayName, string $operation, PaymentInstrument $instrument): self
+    {
+        return self::coded(ErrorCode::UnsupportedByGateway, sprintf(
+            'Gateway "%s" cannot take a payment on a "%s" that names no customer on the "%s" '
+            .'operation. Attach it to a customer first and pass an "attached_payment_method".',
+            $gatewayName,
+            $instrument::type(),
+            $operation,
+        ));
+    }
+
+    /**
      * For the inverse case: a gateway that accepts exactly one instrument kind
      * and is being handed anything else, where naming the one it wants is more
      * useful than naming the one it got.

@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 use GuzzleHttp\Exception\TransferException;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
+use Techork\PaymentService\Common\ValueObject\Customer;
 use Techork\PaymentService\Common\ValueObject\Cash;
 use Techork\PaymentService\Common\ValueObject\Country;
-use Techork\PaymentService\ConnexPay\ConnexPayHttpClientInterface;
 use Techork\PaymentService\ConnexPay\CreatePaymentMethod;
 
 /**
@@ -28,7 +28,7 @@ it('builds a verify payload from the token reference with the cardholder Custome
     $data = cpRegister(
         [
             'instrument' => cpStoredToken(),
-            'billingAddress' => new BillingAddress('Test', 'User', '1 St', 'NYC', new Country('US'), '10001'),
+            'billingAddress' => new BillingAddress('1 St', 'NYC', new Country('US'), '10001'),
         ],
         ['reference' => 'card-guid-abc'],
     )->payload();

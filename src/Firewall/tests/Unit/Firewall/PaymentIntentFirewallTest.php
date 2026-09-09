@@ -33,7 +33,7 @@ function firewallRequestFor(bool $withConnection = true, ?string $gatewayId = 'g
     return new PaymentIntentFirewallRequest(
         amount: Money::USD(15000),
         card: new CardSummary('411111', '1111', CardBrand::Visa, Expiration::fromMonthAndYear(6, 2031), new Holder('A B')),
-        billing: new BillingAddress('Ada', 'Lovelace', '1 Main St', 'London', new Country('GB'), 'E1 6AN'),
+        customer: firewallSuiteCustomer(address: new BillingAddress('1 Main St', 'London', new Country('GB'), 'E1 6AN')),
         connection: $withConnection
             ? new ConnectionContext(new IpAddress('203.0.113.7'), 'Mozilla/5.0', 'device-1')
             : null,
@@ -226,7 +226,7 @@ it('tells a rule whether a cardholder is present', function (PaymentInitiation $
     ])->evaluate(new PaymentIntentFirewallRequest(
         amount: Money::USD(1000),
         card: firewallRequestFor()->card,
-        billing: firewallRequestFor()->billing,
+        customer: firewallRequestFor()->customer,
         initiation: $initiation,
     ));
 
@@ -249,14 +249,14 @@ it('lets a step-up rule exclude unattended traffic, which is the reason the fact
     $present = paymentIntentFirewall($chain)->evaluate(new PaymentIntentFirewallRequest(
         amount: Money::USD(1000),
         card: firewallRequestFor()->card,
-        billing: firewallRequestFor()->billing,
+        customer: firewallRequestFor()->customer,
         initiation: PaymentInitiation::CardholderInitiated,
     ));
 
     $unattended = paymentIntentFirewall($chain)->evaluate(new PaymentIntentFirewallRequest(
         amount: Money::USD(1000),
         card: firewallRequestFor()->card,
-        billing: firewallRequestFor()->billing,
+        customer: firewallRequestFor()->customer,
         initiation: PaymentInitiation::MerchantRecurring,
     ));
 

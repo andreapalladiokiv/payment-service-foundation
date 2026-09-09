@@ -14,7 +14,6 @@ use Techork\PaymentService\Common\ValueObject\CreditCard\Cvc;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Expiration;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Holder;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Number;
-use Techork\PaymentService\Common\ValueObject\Email;
 use Techork\PaymentService\Common\ValueObject\ExpiresAt;
 use Techork\PaymentService\Common\ValueObject\HostedPayment;
 use Techork\PaymentService\Common\ValueObject\Token;
@@ -157,13 +156,10 @@ function connexpaySandboxCard(): CreditCard
 function connexpaySandboxBilling(string $city = 'New York'): BillingAddress
 {
     return new BillingAddress(
-        firstName: 'Foundation',
-        lastName: 'Test',
         line: '1 Test St',
         city: $city,
         country: new Country('US'),
         postalCode: '10001',
-        email: new Email('foundation-tests@example.com'),
     );
 }
 
@@ -178,7 +174,7 @@ function connexpaySandboxSale(int $amountMinor): array
             gatewayId: GatewayId::generate(),
             instrument: connexpaySandboxCard(),
             amount: new Money($amountMinor, new Currency('USD')),
-            billingAddress: connexpaySandboxBilling(),
+            customer: connexPaySuiteCustomer(address: connexpaySandboxBilling()),
         ),
         connexpaySandboxInfrastructure(),
         connexpaySandboxClient(),
@@ -215,7 +211,7 @@ function connexpaySandboxAuth(int $amountMinor): string
             gatewayId: GatewayId::generate(),
             instrument: connexpaySandboxCard(),
             amount: new Money($amountMinor, new Currency('USD')),
-            billingAddress: connexpaySandboxBilling(),
+            customer: connexPaySuiteCustomer(address: connexpaySandboxBilling()),
         ),
         connexpaySandboxInfrastructure(),
         connexpaySandboxClient(),
@@ -232,7 +228,7 @@ it('verifies a card whose billing city carries accents', function () {
         new VaultCommand(
             gatewayId: GatewayId::generate(),
             instrument: connexpaySandboxCard(),
-            billingAddress: connexpaySandboxBilling(city: 'München'),
+            customer: connexPaySuiteCustomer(address: connexpaySandboxBilling(city: 'München')),
         ),
         connexpaySandboxInfrastructure(),
         connexpaySandboxClient(),
@@ -313,7 +309,7 @@ it('registers a token as a payment method via verify and returns the customer gu
         new VaultCommand(
             gatewayId: GatewayId::generate(),
             instrument: connexpaySandboxCard(),
-            billingAddress: connexpaySandboxBilling(),
+            customer: connexPaySuiteCustomer(address: connexpaySandboxBilling()),
         ),
         connexpaySandboxInfrastructure(),
         connexpaySandboxClient(),
@@ -326,7 +322,7 @@ it('registers a token as a payment method via verify and returns the customer gu
         new VaultCommand(
             gatewayId: GatewayId::generate(),
             instrument: new Token(TokenId::generate(), connexpaySandboxCard(), ExpiresAt::fromDateTime(new DateTimeImmutable('+1 hour'))),
-            billingAddress: connexpaySandboxBilling(),
+            customer: connexPaySuiteCustomer(address: connexpaySandboxBilling()),
         ),
         connexpaySandboxInfrastructure($tokenized->reference),
         connexpaySandboxClient(),
@@ -373,7 +369,7 @@ it('creates a hosted payment page and returns a redirect challenge', function ()
             ),
             amount: new Money(1099, new Currency('USD')),
             clientUniqueId: $paymentIntentId,
-            billingAddress: connexpaySandboxBilling(),
+            customer: connexPaySuiteCustomer(address: connexpaySandboxBilling()),
         ),
         connexpaySandboxInfrastructure(),
         connexpaySandboxClient(),

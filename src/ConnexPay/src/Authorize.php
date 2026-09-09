@@ -11,6 +11,7 @@ use Techork\PaymentService\Common\Contract\PaymentInstrumentVisitor;
 use Techork\PaymentService\Common\ValueObject\Cash;
 use Techork\PaymentService\Common\ValueObject\CreditCard;
 use Techork\PaymentService\Common\ValueObject\HostedPayment;
+use Techork\PaymentService\Common\ValueObject\AttachedPaymentMethod;
 use Techork\PaymentService\Common\ValueObject\PaymentMethod;
 use Techork\PaymentService\Common\ValueObject\Token;
 use Techork\PaymentService\ConnexPay\Concern\BuildsConnexPayPayload;
@@ -72,14 +73,14 @@ final class Authorize implements PaymentInstrumentVisitor
             $data['Card']['ThreeDS'] = $threeDS;
         }
 
-        $billingAddress = $this->command->billingAddress;
-        if ($billingAddress !== null) {
-            $data['RiskData'] = $this->formatRiskData($billingAddress);
+        $customer = $this->command->customer;
+        if ($customer !== null) {
+            $data['RiskData'] = $this->formatRiskData($customer);
         }
 
         return $this->withCustomerId(
             $this->withIdentifiers($data, $this->command->clientUniqueId),
-            $this->command->customerId,
+            $customer,
         );
     }
 
@@ -134,12 +135,26 @@ final class Authorize implements PaymentInstrumentVisitor
     }
 
     /**
+     * Refused: a stored card is charged to somebody, and a bare payment method names nobody.
+     *
+     * What this used to do is now {@see visitAttachedPaymentMethod()}, unchanged apart from
+     * reaching the instrument through the customer that holds it. The refusal is the change:
+     * the payer used to come off the address the payment method carried, so a card was charged
+     * to whoever it happened to be billed to.
+     */
+    #[Override]
+    public function visitPaymentMethod(PaymentMethod $paymentMethod): never
+    {
+        throw UnsupportedInstrument::needsAttachedCustomer('connexpay', 'authorize', $paymentMethod);
+    }
+
+    /**
      * @return array<string, mixed>
      */
     #[Override]
-    public function visitPaymentMethod(PaymentMethod $paymentMethod): array
+    public function visitAttachedPaymentMethod(AttachedPaymentMethod $attached): array
     {
-        return ['Guid' => $this->storedReference($paymentMethod, "payment method {$paymentMethod->id->toString()}")];
+        return ['Guid' => $this->storedReference($attached->paymentMethod, "payment method {$attached->paymentMethod->id->toString()}")];
     }
 
     #[Override]

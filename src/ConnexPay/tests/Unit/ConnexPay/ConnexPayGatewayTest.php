@@ -4,9 +4,8 @@ declare(strict_types=1);
 
 use Money\Currency;
 use Money\Money;
-use Techork\PaymentService\Common\Contract\CustomerIdentifier;
+use Techork\PaymentService\Common\ValueObject\CustomerId;
 use Techork\PaymentService\Common\ValueObject\Cash;
-use Techork\PaymentService\Common\ValueObject\CustomerIdentity;
 use Techork\PaymentService\Common\ValueObject\Email;
 use Techork\PaymentService\ConnexPay\ConnexPayGateway;
 use Techork\PaymentService\ConnexPay\ConnexPaySettings;
@@ -19,6 +18,7 @@ use Techork\PaymentService\Gateway\Exception\UnsupportedByGateway;
 use Techork\PaymentService\Gateway\Exception\UnsupportedOperation;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 use Techork\PaymentService\Gateway\ValueObject\GatewayInfrastructure;
+use Techork\PaymentService\Common\ValueObject\Customer;
 
 /**
  * @param  array<string, mixed>  $settings
@@ -213,8 +213,7 @@ it('refuses to register a customer because none can be made without a card', fun
     try {
         makeConnexPayGateway()->registerCustomer(new RegisterCustomerCommand(
             gatewayId: GatewayId::generate(),
-            customerId: connexPayTestCustomerId(),
-            identity: new CustomerIdentity('Ada', 'Lovelace', new Email('ada@example.com')),
+            customer: connexPaySuiteCustomer(firstName: 'Ada', lastName: 'Lovelace', email: new Email('ada@example.com')),
         ));
     } catch (Throwable $e) {
         $thrown = $e;
@@ -242,23 +241,9 @@ it('takes a missing customer reference as an ordinary answer', function () {
 });
 
 /**
- * A customer id this adapter can hold without being able to make one: ConnexPay depends on
- * `Common` and `Gateway`, never on the domain.
+ * A customer id for the commands these tests route.
  */
-function connexPayTestCustomerId(): CustomerIdentifier
+function connexPayTestCustomerId(): CustomerId
 {
-    static $id = null;
-
-    return $id ??= new readonly class implements CustomerIdentifier
-    {
-        public function toString(): string
-        {
-            return '01920000-0000-7000-8000-00000000cafe';
-        }
-
-        public function __toString(): string
-        {
-            return $this->toString();
-        }
-    };
+    return CustomerId::fromString('01920000-0000-7000-8000-00000000cafe');
 }

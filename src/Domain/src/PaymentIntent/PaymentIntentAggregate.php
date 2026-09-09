@@ -16,13 +16,12 @@ use RuntimeException;
 use Techork\PaymentService\Common\Contract\Challenge;
 use Techork\PaymentService\Common\Contract\ChallengeResult;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
-use Techork\PaymentService\Common\ValueObject\BillingAddress;
+use Techork\PaymentService\Common\ValueObject\Customer;
 use Techork\PaymentService\Common\ValueObject\CreditCard\CardSummaryExtractor;
 use Techork\PaymentService\Common\ValueObject\HostedPayment;
 use Techork\PaymentService\Common\ValueObject\MerchantDescriptor;
 use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
 use Techork\PaymentService\Common\ValueObject\PaymentInstrumentFactory;
-use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSResult;
 use Techork\PaymentService\Domain\PaymentIntent\Command\CancelPaymentIntentCommand;
 use Techork\PaymentService\Domain\PaymentIntent\Command\CapturePaymentIntentCommand;
 use Techork\PaymentService\Domain\PaymentIntent\Command\CreatePaymentIntentCommand;
@@ -103,12 +102,17 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
     /**
      * Total, because every event that opens an intent carries one — imports included, and
      * `PaymentIntentImported` was the last event where it was ever optional. The property
-     * used to be nullable purely so a snapshot written before `billing_address` existed
-     * could still reconstitute; that concession made every reader downstream carry a null
-     * case that no live aggregate could produce. Absence, where it is genuinely possible,
-     * is {@see BillingAddress::unknown()} rather than null.
+     * used to be a nullable `BillingAddress`, purely so a snapshot written before that key
+     * existed could still reconstitute; that concession made every reader downstream carry a
+     * null case that no live aggregate could produce. Absence, where it is genuinely possible,
+     * is the customer's `BillingAddress::unknown()` rather than null.
+     *
+     * A whole {@see Customer} rather than the address alone, because the address was already
+     * carrying the payer — it held their name, email and phone — for want of anywhere else to
+     * put them. The intent still learns nothing it can act on from the id; what it gains is
+     * that the person and their address stop being one field pretending to be two.
      */
-    private BillingAddress $billingAddress;
+    private Customer $customer;
 
     /** @var array<string, mixed> */
     private array $metadata = [];
@@ -160,9 +164,9 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         return $this->captureMethod;
     }
 
-    public function billingAddress(): BillingAddress
+    public function customer(): Customer
     {
-        return $this->billingAddress;
+        return $this->customer;
     }
 
     /** @return array<string, mixed> */
@@ -257,7 +261,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                     $command->amount(),
                     $command->instrument(),
                     $command->captureMethod(),
-                    $command->billingAddress(),
+                    $command->customer(),
                     $command->metadata(),
                     $command->merchantDescriptor(),
                     $command->description(),
@@ -293,7 +297,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                     $command->amount(),
                     $command->instrument(),
                     $command->captureMethod(),
-                    $command->billingAddress(),
+                    $command->customer(),
                     $command->metadata(),
                     $command->merchantDescriptor(),
                     $command->description(),
@@ -301,7 +305,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                         $command->paymentIntentId(),
                         $command->amount(),
                         $command->instrument(),
-                        $command->billingAddress(),
+                        $command->customer(),
                         $command->initiation(),
                         $decision->reason,
                     )),
@@ -330,7 +334,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                     $command->amount(),
                     $command->instrument(),
                     $command->captureMethod(),
-                    $command->billingAddress(),
+                    $command->customer(),
                     $command->metadata(),
                     $command->merchantDescriptor(),
                     $command->description(),
@@ -355,7 +359,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                 $command->amount(),
                 $command->instrument(),
                 $command->captureMethod(),
-                $command->billingAddress(),
+                $command->customer(),
                 $evidence,
                 $command->initiation(),
             ));
@@ -364,7 +368,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                 $command->amount(),
                 $command->instrument(),
                 $command->captureMethod(),
-                $command->billingAddress(),
+                $command->customer(),
                 $command->metadata(),
                 $command->merchantDescriptor(),
                 $command->description(),
@@ -383,7 +387,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                 $command->amount(),
                 $command->instrument(),
                 $command->captureMethod(),
-                $command->billingAddress(),
+                $command->customer(),
                 $command->metadata(),
                 $command->merchantDescriptor(),
                 $command->description(),
@@ -398,7 +402,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
             $command->captureMethod(),
             $command->amount(),
             $command->instrument(),
-            $command->billingAddress(),
+            $command->customer(),
             $command->metadata(),
             $command->merchantDescriptor(),
             $command->description(),
@@ -431,7 +435,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         PaymentIntentStatus $status,
         PaymentInstrument $instrument,
         CaptureMethod $captureMethod,
-        BillingAddress $billingAddress,
+        Customer $customer,
         MerchantDescriptor $merchantDescriptor,
         string $description,
     ): void {
@@ -447,7 +451,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
             $status,
             $instrument,
             $captureMethod,
-            $billingAddress,
+            $customer,
             $merchantDescriptor,
             $description,
         ));
@@ -505,8 +509,8 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
      * parameter this method could only record, so the case where we raise the
      * challenge booked a charge the gateway had never been asked for.
      *
-     * The billing address is not null here: the only states this runs in were
-     * reached by an event that carries a required one.
+     * The customer is not null here: the only states this runs in were reached by
+     * an event that carries a required one.
      */
     public function confirmChallenge(ChallengeResult $result, ConfirmChallengePort $port): void
     {
@@ -535,7 +539,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                 $this->amount,
                 $this->instrument,
                 $this->captureMethod,
-                $this->billingAddress,
+                $this->customer,
                 $this->initiation,
                 $this->challenge,
             ));
@@ -544,7 +548,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
                 $this->captureMethod,
                 $this->amount,
                 $this->instrument,
-                $this->billingAddress,
+                $this->customer,
                 $this->metadata,
                 $this->merchantDescriptor(),
                 $this->description,
@@ -656,7 +660,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         return $firewall->evaluate(new PaymentIntentFirewallRequest(
             $command->amount(),
             $card,
-            $command->billingAddress(),
+            $command->customer(),
             $command->connection(),
             $command->paymentIntentId(),
             $command->gatewayId(),
@@ -697,7 +701,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         CaptureMethod $captureMethod,
         Money $amount,
         PaymentInstrument $instrument,
-        BillingAddress $billingAddress,
+        Customer $customer,
         array $metadata,
         MerchantDescriptor $merchantDescriptor,
         string $description,
@@ -706,11 +710,11 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         ?Money $convertedAmount = null,
     ): void {
         if ($captureMethod === CaptureMethod::Immediate) {
-            $this->recordThat(new PaymentIntentCharged($amount, $instrument, $captureMethod, $billingAddress, $metadata, $merchantDescriptor, $description, $challengeResult, $convertedAmount, $initiation));
+            $this->recordThat(new PaymentIntentCharged($amount, $instrument, $captureMethod, $customer, $metadata, $merchantDescriptor, $description, $challengeResult, $convertedAmount, $initiation));
         } else {
             // Authorize-only holds funds without settlement, so no FX has
             // occurred yet — the converted amount surfaces on capture.
-            $this->recordThat(new PaymentIntentAuthorized($amount, $instrument, $captureMethod, $billingAddress, $metadata, $merchantDescriptor, $description, $challengeResult, $initiation));
+            $this->recordThat(new PaymentIntentAuthorized($amount, $instrument, $captureMethod, $customer, $metadata, $merchantDescriptor, $description, $challengeResult, $initiation));
         }
     }
 
@@ -721,7 +725,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
             $this->amount,
             $this->instrument,
             $this->captureMethod,
-            $this->billingAddress,
+            $this->customer,
             $this->metadata,
             $this->merchantDescriptor(),
             $this->description,
@@ -756,7 +760,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
             'metadata' => $this->metadata,
             'merchant_descriptor' => (string) $this->merchantDescriptor(),
             'description' => $this->description,
-            'billing_address' => $this->billingAddress->toArray(),
+            'customer' => $this->customer->toArray(),
             'challenge' => $this->challenge === null ? null : ChallengeArraySerializer::toArray($this->challenge),
             'challenge_result' => $this->challengeResult === null ? null : ChallengeResultArraySerializer::toArray($this->challengeResult),
             'initiation' => $this->initiation->value,
@@ -781,12 +785,12 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         $self->metadata = $state['metadata'] ?? [];
         $self->merchantDescriptor = new MerchantDescriptor($state['merchant_descriptor'] ?? '');
         $self->description = $state['description'] ?? '';
-        // Refused rather than defaulted: a snapshot with no billing address predates the
+        // Refused rather than defaulted: a snapshot with no customer predates the
         // field being required, and quietly substituting one would put an address the
         // cardholder never gave into AVS and reporting.
-        $self->billingAddress = isset($state['billing_address'])
-            ? BillingAddress::fromArray($state['billing_address'])
-            : throw new RuntimeException("Payment intent snapshot '{$id->toString()}' carries no billing address.");
+        $self->customer = isset($state['customer'])
+            ? Customer::fromArray($state['customer'])
+            : throw new RuntimeException("Payment intent snapshot '{$id->toString()}' carries no customer.");
         $self->challenge = isset($state['challenge']) ? ChallengeArraySerializer::fromArray($state['challenge']) : null;
         $self->challengeResult = isset($state['challenge_result']) ? ChallengeResultArraySerializer::fromArray($state['challenge_result']) : null;
         $self->initiation = PaymentInitiation::from($state['initiation'] ?? PaymentInitiation::CardholderInitiated->value);
@@ -805,7 +809,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         $this->status = $event->status;
         $this->amount = $event->amount;
         $this->instrument = $event->instrument;
-        $this->billingAddress = $event->billingAddress;
+        $this->customer = $event->customer;
         $this->captureMethod = $event->captureMethod;
         $this->merchantDescriptor = $event->merchantDescriptor;
         $this->description = $event->description;
@@ -821,7 +825,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         $this->amount = $event->amount;
         $this->instrument = $event->instrument;
         $this->captureMethod = $event->captureMethod;
-        $this->billingAddress = $event->billingAddress;
+        $this->customer = $event->customer;
         $this->metadata = $event->metadata;
         $this->merchantDescriptor = $event->merchantDescriptor;
         $this->description = $event->description;
@@ -836,7 +840,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         $this->amount = $event->amount;
         $this->instrument = $event->instrument;
         $this->captureMethod = $event->captureMethod;
-        $this->billingAddress = $event->billingAddress;
+        $this->customer = $event->customer;
         $this->metadata = $event->metadata;
         $this->merchantDescriptor = $event->merchantDescriptor;
         $this->description = $event->description;
@@ -852,7 +856,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         $this->amount = $event->amount;
         $this->instrument = $event->instrument;
         $this->captureMethod = $event->captureMethod;
-        $this->billingAddress = $event->billingAddress;
+        $this->customer = $event->customer;
         $this->metadata = $event->metadata;
         $this->merchantDescriptor = $event->merchantDescriptor;
         $this->description = $event->description;
@@ -866,7 +870,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         $this->amount = $event->amount;
         $this->instrument = $event->instrument;
         $this->captureMethod = $event->captureMethod;
-        $this->billingAddress = $event->billingAddress;
+        $this->customer = $event->customer;
         $this->metadata = $event->metadata;
         $this->merchantDescriptor = $event->merchantDescriptor;
         $this->description = $event->description;

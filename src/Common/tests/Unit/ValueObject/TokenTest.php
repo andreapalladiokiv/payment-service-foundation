@@ -12,6 +12,7 @@ use Techork\PaymentService\Common\ValueObject\CreditCard\Holder;
 use Techork\PaymentService\Common\ValueObject\CreditCard\Number;
 use Techork\PaymentService\Common\ValueObject\ExpiresAt;
 use Techork\PaymentService\Common\ValueObject\HostedPayment;
+use Techork\PaymentService\Common\ValueObject\AttachedPaymentMethod;
 use Techork\PaymentService\Common\ValueObject\PaymentMethod;
 use Techork\PaymentService\Common\ValueObject\Token;
 use Techork\PaymentService\Common\ValueObject\TokenId;
@@ -101,6 +102,8 @@ it('accepts visitor', function () {
         { return 'token'; }
         public function visitPaymentMethod(PaymentMethod $paymentMethod): string
         { return 'pm'; }
+        public function visitAttachedPaymentMethod(AttachedPaymentMethod $attached): string
+        { return 'attached'; }
         public function visitHostedPayment(HostedPayment $hosted): string
         { return 'hosted'; }
     };

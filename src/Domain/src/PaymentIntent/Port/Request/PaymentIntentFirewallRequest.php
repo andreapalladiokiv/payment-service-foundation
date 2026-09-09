@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Techork\PaymentService\Domain\PaymentIntent\Port\Request;
 
 use Money\Money;
-use Techork\PaymentService\Common\ValueObject\BillingAddress;
+use Techork\PaymentService\Common\ValueObject\Customer;
 use Techork\PaymentService\Common\ValueObject\ConnectionContext;
 use Techork\PaymentService\Common\ValueObject\CreditCard\CardSummary;
 use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
@@ -40,7 +40,7 @@ final readonly class PaymentIntentFirewallRequest
     public function __construct(
         public Money $amount,
         public CardSummary $card,
-        public BillingAddress $billing,
+        public Customer $customer,
         public ?ConnectionContext $connection = null,
         public ?PaymentIntentId $paymentIntentId = null,
         public ?string $gatewayId = null,

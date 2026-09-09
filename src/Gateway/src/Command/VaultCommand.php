@@ -4,10 +4,8 @@ declare(strict_types=1);
 
 namespace Techork\PaymentService\Gateway\Command;
 
-use Techork\PaymentService\Common\Contract\CustomerIdentifier;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
-use Techork\PaymentService\Common\ValueObject\BillingAddress;
-use Techork\PaymentService\Common\ValueObject\CustomerIdentity;
+use Techork\PaymentService\Common\ValueObject\Customer;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 
 /**
@@ -22,35 +20,37 @@ use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 final readonly class VaultCommand
 {
     /**
-     * @param  ?CustomerIdentifier  $customerId  Whom the instrument is being kept FOR.
+     * @param  ?Customer  $customer  Whom the instrument is being kept FOR — which id, who they
+     *   are, and where they are billed.
      *
      * Nullable on the type and required in practice for `registerPaymentMethod`, which refuses
      * an absent one with {@see \Techork\PaymentService\Gateway\Exception\RegistrationNeedsCustomer}:
      * storing an instrument for later use is storing it for somebody. Stripe will not make a
      * PaymentMethod reusable without a customer, and Nuvei cannot produce a
      * `userPaymentOptionId` without a `userTokenId`. `tokenize()` genuinely has no customer —
-     * a token is one use and then gone, which is the same reason the aggregate will not hold
-     * one — so the field stays nullable rather than being split across two commands.
-     * @param  ?CustomerIdentity  $customerIdentity  WHO the customer is, for the provider that
-     *   creates its customer object here rather than on a call of its own.
+     * a token is one use and then gone — so the field stays nullable rather than being split
+     * across two commands.
      *
-     * ConnexPay is that provider and the only one: every endpoint it has that can make a customer
-     * takes a card, so registering the payment method IS registering the customer, and the request
-     * has to be told who they are. It was building one out of `billingAddress` — so the person
-     * ConnexPay recorded was whoever the card happened to be billed to, and the name and email a
-     * merchant actually recorded never reached it.
+     * **One field where there were three.** The id, the identity and the address were separate
+     * arguments here, and ConnexPay is why they cannot be: every endpoint it has that can make a
+     * customer takes a card, so registering the payment method IS registering the customer, and
+     * its `Card.Customer` is four person fields AND six AVS fields in one object. Assembling that
+     * from three optional arguments is how it came to be built out of `billingAddress` alone — so
+     * the person ConnexPay recorded was whoever the card happened to be billed to, and the name
+     * and email a merchant actually recorded never reached it. The parts stay distinct *inside*
+     * {@see Customer}, which is what keeps an identity from being substituted for an address and
+     * quietly ending address verification; what they no longer are is separately omissible.
      *
-     * Both fields, not one: ConnexPay's `Card.Customer` is four person fields AND six AVS fields,
-     * so an identity substituted for the address would have registered the right person and
-     * silently ended address verification.
+     * The consequence for `tokenize()`: an address with nobody attached to it is not expressible
+     * any more. A one-use token that carries AVS data for a person we cannot name was a shape
+     * with no honest caller — the address had to come from somewhere, and what it came from was
+     * the payment.
      */
     public function __construct(
         public GatewayId $gatewayId,
         public PaymentInstrument $instrument,
-        public ?BillingAddress $billingAddress = null,
         public ?string $clientUniqueId = null,
-        public ?CustomerIdentifier $customerId = null,
-        public ?CustomerIdentity $customerIdentity = null,
+        public ?Customer $customer = null,
     ) {}
 
 
@@ -62,10 +62,8 @@ final readonly class VaultCommand
         return [
             'gatewayId' => $this->gatewayId->toString(),
             'instrument' => $this->instrument->toPayload(),
-            'billingAddress' => $this->billingAddress?->toArray(),
             'clientUniqueId' => $this->clientUniqueId,
-            'customerId' => $this->customerId?->toString(),
-            'customerIdentity' => $this->customerIdentity?->toArray(),
+            'customer' => $this->customer?->toArray(),
         ];
     }
 }

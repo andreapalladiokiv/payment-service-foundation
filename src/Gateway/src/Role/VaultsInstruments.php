@@ -13,14 +13,15 @@ use Techork\PaymentService\Gateway\Exception\UnsupportedByGateway;
  *
  * The asymmetry between the two is deliberate and predates this interface. A token is a one-use
  * handle that expires, so a collection of them belonging to a person would fill with dead
- * entries — which is why `Domain\Customer\CustomerAggregate` holds payment methods and refuses
- * tokens. Tokenizing is therefore an operation on an instrument and nothing else, while
- * registering a payment method is an operation on somebody's instrument.
+ * entries; a payment method is what a person keeps. Tokenizing is therefore an operation on an
+ * instrument and nothing else, while registering a payment method is an operation on somebody's
+ * instrument.
  *
- * That aggregate is named in prose and not as a `{@see}`, deliberately: this package depends on
- * `Common` alone and cannot load a domain type. The prose outran the class once — it described
- * `CustomerAggregate` while no such class existed — so the name is worth keeping only as long as
- * the class is.
+ * Which person is not this package's business and no longer anything's in this tree: nothing here
+ * holds a customer's payment methods, so "whose card is this" is a question the application
+ * answers. The prose here described a `CustomerAggregate` twice — once before any such class
+ * existed and once after it was removed — so what is left is the asymmetry itself, which is a
+ * property of the two operations rather than of anything that holds them.
  *
  * **"Somebody's" is now enforced rather than described.** {@see registerPaymentMethod()} refuses a
  * {@see \Techork\PaymentService\Gateway\Command\VaultCommand} that names no customer at the
