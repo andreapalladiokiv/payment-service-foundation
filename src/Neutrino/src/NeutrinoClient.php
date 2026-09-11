@@ -20,6 +20,15 @@ final class NeutrinoClient implements NeutrinoHttpClientInterface
 {
     public const string BASE_URL = 'https://neutrinoapi.net';
 
+    /**
+     * Guzzle defaults to no limit at all: a hung enrichment call would hold the
+     * whole screening chain open indefinitely. Anything past this is a stalled
+     * call, not a slow one.
+     */
+    private const float HTTP_TIMEOUT = 10.0;
+
+    private const float HTTP_CONNECT_TIMEOUT = 5.0;
+
     private ClientInterface $http;
 
     public function __construct(
@@ -31,6 +40,8 @@ final class NeutrinoClient implements NeutrinoHttpClientInterface
         $this->http = $http ?? new Client([
             'base_uri' => rtrim($baseUrl, '/').'/',
             'headers' => ['Accept' => 'application/json'],
+            'timeout' => self::HTTP_TIMEOUT,
+            'connect_timeout' => self::HTTP_CONNECT_TIMEOUT,
         ]);
     }
 

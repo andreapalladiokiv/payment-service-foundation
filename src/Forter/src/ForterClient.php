@@ -26,6 +26,15 @@ final class ForterClient implements ForterHttpClientInterface
 
     public const string API_VERSION = '2.2';
 
+    /**
+     * Guzzle defaults to no limit at all: a hung request would hold the
+     * screening — and the payment that awaits its verdict — open indefinitely.
+     * A screening call that has not answered by this point is stalled, not slow.
+     */
+    private const float HTTP_TIMEOUT = 10.0;
+
+    private const float HTTP_CONNECT_TIMEOUT = 5.0;
+
     private ClientInterface $http;
 
     public function __construct(
@@ -37,6 +46,8 @@ final class ForterClient implements ForterHttpClientInterface
         $this->http = $http ?? new Client([
             'base_uri' => rtrim($baseUrl, '/').'/',
             'headers' => ['Content-Type' => 'application/json', 'Accept' => 'application/json'],
+            'timeout' => self::HTTP_TIMEOUT,
+            'connect_timeout' => self::HTTP_CONNECT_TIMEOUT,
         ]);
     }
 

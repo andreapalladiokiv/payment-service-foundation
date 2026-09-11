@@ -15,6 +15,15 @@ final class ConnexPayClient implements ConnexPayHttpClientInterface
 
     private const string PRODUCTION_BASE_URL = 'https://salesapi.connexpay.com';
 
+    /**
+     * Guzzle defaults to no limit at all: a hung request would hold the payment
+     * flow open indefinitely. The token endpoint answers in well under a second;
+     * anything past this is a stalled call, not a slow one.
+     */
+    private const float HTTP_TIMEOUT = 10.0;
+
+    private const float HTTP_CONNECT_TIMEOUT = 5.0;
+
     private Client $http;
 
     private ?string $bearerToken = null;
@@ -27,6 +36,8 @@ final class ConnexPayClient implements ConnexPayHttpClientInterface
         $this->http = new Client([
             'base_uri' => $this->baseUrl(),
             'headers' => ['Content-Type' => 'application/json', 'Accept' => 'application/json'],
+            'timeout' => self::HTTP_TIMEOUT,
+            'connect_timeout' => self::HTTP_CONNECT_TIMEOUT,
         ]);
     }
 

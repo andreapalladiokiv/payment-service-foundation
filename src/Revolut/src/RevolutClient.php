@@ -37,6 +37,15 @@ final class RevolutClient implements RevolutHttpClientInterface
 {
     public const string PRODUCTION_BASE_URL = 'https://b2b.revolut.com';
 
+    /**
+     * Guzzle defaults to no limit at all: a hung request would hold the card
+     * issuance open indefinitely. Anything past this is a stalled call, not a
+     * slow one.
+     */
+    private const float HTTP_TIMEOUT = 10.0;
+
+    private const float HTTP_CONNECT_TIMEOUT = 5.0;
+
     private ClientInterface $http;
 
     private RevolutAuthenticator $authenticator;
@@ -54,6 +63,8 @@ final class RevolutClient implements RevolutHttpClientInterface
         $this->http = $http ?? new Client([
             'base_uri' => rtrim($baseUrl, '/').'/',
             'headers' => ['Accept' => 'application/json'],
+            'timeout' => self::HTTP_TIMEOUT,
+            'connect_timeout' => self::HTTP_CONNECT_TIMEOUT,
         ]);
 
         $this->authenticator = new RevolutAuthenticator($clientId, $privateKey, $issuer, $this->http);
