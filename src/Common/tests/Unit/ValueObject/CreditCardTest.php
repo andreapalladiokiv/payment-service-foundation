@@ -67,6 +67,30 @@ it('creates CreditCard from array with address', function () {
 //  isValid / expired
 // ──────────────────────────────────────────────
 
+/**
+ * The stored expiration carries only a month and a two-digit year, so the day
+ * (and clock time) in `createFromFormat` would otherwise arrive from *now* —
+ * and a '02..' value parsed on the 29th–31st of a month overflows February
+ * into March, shifting the month the card was stored under. The reset
+ * modifier fixes it; this sweep goes red on those month-end days if it
+ * regresses, and stays green the rest of the month — which is exactly when
+ * the defect it guards against is observable.
+ */
+it('preserves the stored expiration month, however late in the month it is parsed', function () {
+    foreach (range(1, 12) as $month) {
+        $card = CreditCard::fromArray([
+            'first6' => '411111',
+            'last4' => '1111',
+            'brand' => 'visa',
+            'expiration' => sprintf('%02d50', $month),
+            'holder' => 'Test',
+        ]);
+
+        expect($card->expiration->format('my'))->toBe(sprintf('%02d50', $month))
+            ->and($card->expiration->format('m'))->toBe(sprintf('%02d', $month));
+    }
+});
+
 it('reports card as valid when not expired', function () {
     $card = new CreditCard(
         new Number('411111', '1111', CardBrand::Visa),

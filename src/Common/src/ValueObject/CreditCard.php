@@ -45,7 +45,12 @@ final readonly class CreditCard implements PaymentInstrument
      */
     public static function fromArray(array $data): self
     {
-        $expiration = DateTimeImmutable::createFromFormat('my', $data['expiration'])
+        // The `!` reset is what keeps the month honest: without it, createFromFormat
+        // fills the unspecified day (and clock time) with *now*, so '0230' parsed on the
+        // 29th–31st of a month overflows February into March before
+        // {@see Expiration}'s first-of-month normalization can see the original month.
+        // {@see Expiration::fromMonthAndYear()} carries the same reset for the same reason.
+        $expiration = DateTimeImmutable::createFromFormat('!my', $data['expiration'])
             ?: throw new InvalidArgumentException("Stored card expiration '{$data['expiration']}' is not a readable date.");
 
         return new self(
