@@ -345,6 +345,12 @@ final class Purchase implements PaymentInstrumentVisitor
      * sandbox host is documented anywhere, so the production one would be a
      * guess, and a wrong guess sends buyers into the void.
      *
+     * Only https passes: the host is where the buyer is redirected with the
+     * tempToken in the URL, and a payment page over an unencrypted transport
+     * hands that token — and everything the buyer types on the page — to
+     * whoever sits between. A host ConnexPay has not named as https reads as
+     * no host at all, and the payment fails with the named reason.
+     *
      * @param  array<string, mixed>  $response
      */
     private static function hostedPageHost(array $response): ?string
@@ -359,7 +365,7 @@ final class Purchase implements PaymentInstrumentVisitor
         $scheme = $parts['scheme'] ?? null;
         $host = $parts['host'] ?? null;
 
-        return $scheme === null || $host === null ? null : $scheme.'://'.$host;
+        return $scheme === 'https' && $host !== null ? 'https://'.$host : null;
     }
 
     /**

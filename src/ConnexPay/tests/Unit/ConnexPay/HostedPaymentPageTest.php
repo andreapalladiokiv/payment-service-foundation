@@ -178,6 +178,23 @@ it('reports a token with no derivable host instead of silently dropping the chal
         ->and($result->message)->toContain('no otherUrl to derive the page host');
 });
 
+it('refuses an unencrypted page host rather than sending the buyer to it', function () {
+    // The tempToken rides the URL into the page; over http it — and everything
+    // the buyer types there — is readable on the wire. No scheme is treated the
+    // same way: no host at all.
+    $client = cpHttpClient();
+    $client->shouldReceive('post')->once()->andReturn([
+        'otherUrl' => 'http://pay.cxppayments.com/HostedPaymentResult',
+        'tempToken' => 'tok-plain',
+    ]);
+
+    $result = hostedCpPurchase(wiring: ['client' => $client])->charge();
+
+    expect($result->challenge)->toBeNull()
+        ->and($result->success)->toBeFalse()
+        ->and($result->message)->toContain('no otherUrl to derive the page host');
+});
+
 it('surfaces a transport failure as a failed response', function () {
     $client = cpHttpClient();
     $client->shouldReceive('post')->once()->andThrow(new BadResponseException(
