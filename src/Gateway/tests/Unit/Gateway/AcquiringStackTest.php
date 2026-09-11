@@ -15,6 +15,7 @@ use Techork\PaymentService\Gateway\Contract\GatewayCredentialRepository;
 use Techork\PaymentService\Gateway\Contract\GatewayResult;
 use Techork\PaymentService\Gateway\Decorator\FailureBoundary;
 use Techork\PaymentService\Gateway\Decorator\LoggingGateway;
+use Techork\PaymentService\Gateway\Exception\RegistrationNeedsCustomer;
 use Techork\PaymentService\Gateway\Exception\UnsupportedByGateway;
 use Techork\PaymentService\Gateway\Exception\UnsupportedOperation;
 use Techork\PaymentService\Gateway\GatewayFactory;
@@ -177,6 +178,33 @@ it('rethrows a marked refusal instead of folding it into a decline', function ()
 
     expect($thrown)->toBeInstanceOf(UnsupportedByGateway::class)
         ->and($thrown)->toBeInstanceOf(UnsupportedOperation::class);
+});
+
+/**
+ * The registration-flavoured variant of the same rule: an instrument offered for storage with
+ * nobody to store it for is a wiring error of the caller, and `boundRegistration`'s fallback
+ * (`RegistrationResult::failed()`) would record it as the issuer's no. The marker on
+ * {@see RegistrationNeedsCustomer} is what keeps the exception out of that catch.
+ */
+it('rethrows a registration refused for a missing customer instead of folding it into a decline', function () {
+    $driver = Mockery::mock(AcquiringGateway::class);
+    $driver->shouldReceive('registerPaymentMethod')->andThrow(RegistrationNeedsCustomer::forGateway('stripe'));
+
+    $boundary = new FailureBoundary($driver);
+
+    $thrown = null;
+
+    try {
+        $boundary->registerPaymentMethod(new VaultCommand(
+            gatewayId: GatewayId::generate(),
+            instrument: Mockery::mock(PaymentInstrument::class),
+        ));
+    } catch (Throwable $e) {
+        $thrown = $e;
+    }
+
+    expect($thrown)->toBeInstanceOf(UnsupportedByGateway::class)
+        ->and($thrown)->toBeInstanceOf(RegistrationNeedsCustomer::class);
 });
 
 

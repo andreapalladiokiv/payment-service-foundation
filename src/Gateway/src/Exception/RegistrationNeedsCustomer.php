@@ -33,8 +33,13 @@ use Techork\PaymentService\Common\ValueObject\ErrorCode;
  * a `RegistrationResult::failed()` — a caller cannot mistake a wiring mistake of its own for an
  * issuer's verdict. Same rule as {@see UnsupportedInstrument}: foundation states the invariant,
  * the application checks what it can before calling.
+ *
+ * The {@see UnsupportedByGateway} marker is what keeps that promise in the failure boundary:
+ * without it {@see FailureBoundary::boundRegistration()} folded this into
+ * `RegistrationResult::failed()`, which records exactly the issuer's-no lie the docblock above
+ * rules out.
  */
-final class RegistrationNeedsCustomer extends InvalidArgumentException
+final class RegistrationNeedsCustomer extends InvalidArgumentException implements UnsupportedByGateway
 {
     use CarriesErrorCode;
 
