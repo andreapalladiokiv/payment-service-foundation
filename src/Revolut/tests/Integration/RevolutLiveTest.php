@@ -4,12 +4,12 @@ declare(strict_types=1);
 
 use Money\Currency;
 use Money\Money;
-use Techork\PaymentService\Revolut\IssueVirtualCardRequest;
-use Techork\PaymentService\Revolut\RevolutClient;
 use Techork\PaymentService\Gateway\Command\IssueCardCommand;
 use Techork\PaymentService\Gateway\ValueObject\CardSpendCategory;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 use Techork\PaymentService\Revolut\CardSettings;
+use Techork\PaymentService\Revolut\IssueVirtualCard;
+use Techork\PaymentService\Revolut\RevolutClient;
 
 /**
  * Live integration coverage for Revolut card issuing.
@@ -29,16 +29,16 @@ use Techork\PaymentService\Revolut\CardSettings;
  * to issue a £1.00 card against the live API (it will be a real card —
  * terminate it afterwards). The client performs the JWT client-assertion
  * token exchange itself, so real OAuth credentials are required.
+ *
+ * SAFETY. The card is issued with a £1.00 spend limit and no sensitive details
+ * are fetched (that endpoint needs READ_SENSITIVE_CARD_DATA and an allow-listed
+ * IP — and a smoke test has no business reading a PAN anyway).
  */
 const REVOLUT_LIVE_SKIP = 'Revolut has no virtual-card Sandbox; set REVOLUT_CLIENT_ID + REVOLUT_PRIVATE_KEY + REVOLUT_REFRESH_TOKEN + REVOLUT_ISSUER to run the Production smoke test (issues a real card).';
 
 function revolutLiveConfigured(): bool
 {
-    if (array_any(['REVOLUT_CLIENT_ID', 'REVOLUT_PRIVATE_KEY', 'REVOLUT_REFRESH_TOKEN', 'REVOLUT_ISSUER'], fn($var) => (getenv($var) ?: '') === '')) {
-        return false;
-    }
-
-    return true;
+    return array_all(['REVOLUT_CLIENT_ID', 'REVOLUT_PRIVATE_KEY', 'REVOLUT_REFRESH_TOKEN', 'REVOLUT_ISSUER'], fn($var) => (getenv($var) ?: '') !== '');
 }
 
 it('issues a virtual card against the live Revolut API', function () {
@@ -50,16 +50,15 @@ it('issues a virtual card against the live Revolut API', function () {
         baseUrl: RevolutClient::PRODUCTION_BASE_URL,
     );
 
-    $result = new IssueVirtualCardRequest(
+    $result = new IssueVirtualCard(
         $client,
         new CardSettings(fetchSensitiveDetails: false),
-        new IssueCardCommand(
-            gatewayId: GatewayId::generate(),
-            transactionReference: 'live-smoke',
-            amountLimit: new Money(100, new Currency('GBP')),
-            spendCategory: CardSpendCategory::TravelAir,
-        ),
-    )->send()->toVirtualCardResult();
+    )->issue(new IssueCardCommand(
+        gatewayId: GatewayId::generate(),
+        transactionReference: 'live-smoke',
+        amountLimit: new Money(100, new Currency('GBP')),
+        spendCategory: CardSpendCategory::TravelAir,
+    ));
 
     expect($result->success)->toBeTrue($result->message ?? 'issuance failed')
         ->and($result->cardGuid)->not->toBeEmpty();
