@@ -24,6 +24,9 @@ use Techork\PaymentService\Gateway\Routing\RoutedGateway;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
+use Techork\PaymentService\Common\ValueObject\ThreeDS\ECICode;
+use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSResult;
+use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSStatus;
 use Techork\PaymentService\Gateway\Command\PlacementCommand;
 use Techork\PaymentService\Gateway\Command\RebillingCommand;
 
@@ -102,6 +105,44 @@ it('holds the series anchor on the command, and an absent one as absent', functi
         ->and(property_exists(PlacementCommand::class, 'genesisReference'))->toBeFalse();
 });
 
+/**
+ * Log contexts ride along with every gateway call the LoggingGateway makes, so a command that
+ * dumped its ThreeDSResult whole put the cryptogram — the one-time bearer credential the
+ * liability shift is claimed with — into every request log. The projection on the value object
+ * is what keeps the tail only; this pins the two commands that carry a 3DS result.
+ */
+it('logs the 3DS result masked, never the cryptogram in the clear', function () {
+    $threeDS = new ThreeDSResult(
+        ThreeDSStatus::Successful,
+        'cavv-bearer-credential-4321',
+        ECICode::VisaSuccessful,
+        'ds-txn-123',
+        'acs-txn-456',
+    );
+
+    $instrument = Mockery::mock(PaymentInstrument::class);
+    $instrument->shouldReceive('toPayload')->andReturn([]);
+
+    $placement = new PlacementCommand(
+        gatewayId: GatewayId::generate(),
+        instrument: $instrument,
+        amount: new Money(1000, new Currency('USD')),
+        threeDS: $threeDS,
+    );
+
+    $rebilling = new RebillingCommand(
+        gatewayId: GatewayId::generate(),
+        instrument: $instrument,
+        amount: new Money(1000, new Currency('USD')),
+        initiation: PaymentInitiation::CardholderInitiated,
+        threeDS: $threeDS,
+    );
+
+    expect($placement->toLogContext()['threeDS']['authentication_value'])->toBe('…4321')
+        ->and($rebilling->toLogContext()['threeDS']['authentication_value'])->toBe('…4321')
+        ->and(json_encode($placement->toLogContext()))->not->toContain('cavv-bearer-credential-4321');
+});
+
 // ────────────────────────────── FailureBoundary
 
 it('turns a thrown provider error into a failed result', function () {
@@ -137,6 +178,7 @@ it('rethrows a marked refusal instead of folding it into a decline', function ()
     expect($thrown)->toBeInstanceOf(UnsupportedByGateway::class)
         ->and($thrown)->toBeInstanceOf(UnsupportedOperation::class);
 });
+
 
 // ────────────────────────────── LoggingGateway
 

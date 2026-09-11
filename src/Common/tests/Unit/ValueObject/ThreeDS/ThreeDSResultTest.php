@@ -52,6 +52,33 @@ it('serializes to payload and back', function () {
 });
 
 // ──────────────────────────────────────────────
+//  Log-safe projection
+// ──────────────────────────────────────────────
+
+/**
+ * The authentication value is a one-time bearer credential a payment claims the liability
+ * shift with; a log line that carried it in the clear would hand whoever reads the log a
+ * credential they did not earn. Only its four-character tail survives, for correlation.
+ */
+it('masks the authentication value in the log projection and nothing else', function () {
+    $context = makeThreeDSResult()->toLogContext();
+
+    expect($context['authentication_value'])->toBe('…-abc')
+        ->and($context)->toBe([
+            'status' => 'Y',
+            'authentication_value' => '…-abc',
+            'eci' => '05',
+            'ds_transaction_id' => 'ds-txn-123',
+            'acs_transaction_id' => 'acs-txn-456',
+            'version' => '2.2.0',
+        ]);
+});
+
+it('keeps a null authentication value null in the log projection', function () {
+    expect(makeThreeDSResult(authenticationValue: null)->toLogContext()['authentication_value'])->toBeNull();
+});
+
+// ──────────────────────────────────────────────
 //  Nullable eci and version
 // ──────────────────────────────────────────────
 

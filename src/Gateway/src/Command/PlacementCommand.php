@@ -70,7 +70,7 @@ final readonly class PlacementCommand
             'amount' => $this->amount,
             'instrument' => $this->instrument->toPayload(),
             'clientUniqueId' => $this->clientUniqueId,
-            'threeDS' => $this->threeDS,
+            'threeDS' => $this->threeDS?->toLogContext(),
             'statementDescription' => $this->statementDescription,
             'description' => $this->description,
             'initiation' => $this->initiation->value,

@@ -43,6 +43,24 @@ final readonly class ThreeDSResult implements ChallengeResult
         ];
     }
 
+    /**
+     * The log-safe projection the gateway stack's {@see toLogContext()} methods use. The
+     * authentication value (CAVV / UCAF) is a one-time bearer credential that proves the
+     * cardholder authenticated — it goes to the acquirer with the payment, and a log line that
+     * carried it would hand whoever reads the log the ability to claim a liability shift they
+     * did not earn. Everything else in a result is correlation data and is logged as-is.
+     */
+    public function toLogContext(): array
+    {
+        $payload = $this->toPayload();
+
+        if (is_string($payload['authentication_value'])) {
+            $payload['authentication_value'] = '…'.substr($payload['authentication_value'], -4);
+        }
+
+        return $payload;
+    }
+
     public static function fromPayload(array $payload): self
     {
         return new self(
