@@ -5,8 +5,6 @@ declare(strict_types=1);
 namespace Techork\PaymentService\ConnexPay\Webhook;
 
 use Override;
-use Techork\PaymentService\ConnexPay\Webhook\Handler\PurchaseSettledHandler;
-use Techork\PaymentService\ConnexPay\Webhook\Handler\SaleApprovedHandler;
 use Techork\PaymentService\ConnexPay\Webhook\Handler\SaleDeclinedHandler;
 use Techork\PaymentService\ConnexPay\Webhook\Handler\SaleVoidedHandler;
 use Techork\PaymentService\Gateway\Webhook\Contract\WebhookSubscriber;
@@ -20,10 +18,8 @@ final readonly class ConnexPayWebhookSubscriber implements WebhookSubscriber
     public function __construct(
         private SignatureVerifier $verifier,
         private EventParser $parser,
-        private SaleApprovedHandler $saleApproved,
         private SaleDeclinedHandler $saleDeclined,
         private SaleVoidedHandler $saleVoided,
-        private PurchaseSettledHandler $purchaseSettled,
     ) {}
 
     #[Override]
@@ -31,9 +27,7 @@ final readonly class ConnexPayWebhookSubscriber implements WebhookSubscriber
     {
         $verifiers->register(self::KIND, $this->verifier, $this->parser);
 
-        $handlers->register(self::KIND, EventParser::TYPE_SALE_AUTH_APPROVED, $this->saleApproved);
         $handlers->register(self::KIND, EventParser::TYPE_SALE_AUTH_DECLINED, $this->saleDeclined);
         $handlers->register(self::KIND, EventParser::TYPE_SALE_AUTH_VOIDED, $this->saleVoided);
-        $handlers->register(self::KIND, EventParser::TYPE_PURCHASE_AUTH_SETTLED, $this->purchaseSettled);
     }
 }

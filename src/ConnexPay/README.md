@@ -185,16 +185,17 @@ registers kind `ConnexPay`:
 
 | Event | Handler | Effect |
 | --- | --- | --- |
-| `sale.card.auth.approved` | `SaleApprovedHandler` | Records the finalized processor fee on the PaymentIntent |
 | `sale.card.auth.declined` | `SaleDeclinedHandler` | Records a gateway failure (dashboard-initiated declines) |
 | `sale.card.auth.voided` | `SaleVoidedHandler` | Cancels the PaymentIntent (dashboard-initiated voids) |
-| `purchase.card.auth.settled` | `PurchaseSettledHandler` | Records the settled fee on the virtual card |
 
-Webhook payloads do **not** carry the fee — `HttpServiceFeeFetcher`
-(`ServiceFeeFetcher` implementation) pulls `serviceFee` from
-`Search/Sales` / `Search/Purchases` at handle time. The field's exact shape
-is undocumented, so it is read defensively and a warning is logged when
-absent; `null` maps to a Skipped outcome and relies on webhook redelivery.
+Processor fees are **not** recorded live for ConnexPay. Webhook payloads do
+not carry the fee, and the only place it is exposed — `Search/Sales` —
+honors no exact guid filter (`SaleGuid`/`Guid` are silently ignored; its
+only exact filter is `OrderNumber`), so an earlier live fetch could book
+the fee of an arbitrary recent sale. That fetcher was removed; fees are
+to be backfilled instead, selected by `OrderNumber` (= the `clientUniqueId`
+sent on the sale, here the payment intent id) with the row's `guid`
+matched against the sale guid client-side.
 
 ## Testing
 

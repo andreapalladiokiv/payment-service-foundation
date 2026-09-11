@@ -15,9 +15,10 @@ use Techork\PaymentService\Gateway\Webhook\Contract\ParsedEvent;
  * {@see https://docs.connexpay.com/docs/sale-message}) and a `guid` —
  * unique per transaction, doubles as our idempotency key.
  *
- * Documented event types we react to today live as constants below.
- * Anything else falls through to the router as an unknown type and
- * resolves to {@see HandlerOutcome::Skipped}.
+ * Documented event types live as constants below; the
+ * {@see ConnexPayWebhookSubscriber} registers handlers only for the subset
+ * we act on, and anything else falls through to the router as an unknown
+ * type and resolves to {@see HandlerOutcome::Skipped}.
  */
 final readonly class EventParser implements EventParserContract
 {

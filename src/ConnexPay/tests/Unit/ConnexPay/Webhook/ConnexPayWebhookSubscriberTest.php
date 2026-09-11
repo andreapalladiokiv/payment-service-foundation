@@ -7,15 +7,11 @@ use Psr\Http\Message\ServerRequestInterface;
 use Techork\PaymentService\ConnexPay\ConnexPayGateway;
 use Techork\PaymentService\ConnexPay\Webhook\ConnexPayWebhookSubscriber;
 use Techork\PaymentService\ConnexPay\Webhook\EventParser;
-use Techork\PaymentService\ConnexPay\Webhook\Handler\PurchaseSettledHandler;
-use Techork\PaymentService\ConnexPay\Webhook\Handler\SaleApprovedHandler;
 use Techork\PaymentService\ConnexPay\Webhook\Handler\SaleDeclinedHandler;
 use Techork\PaymentService\ConnexPay\Webhook\Handler\SaleVoidedHandler;
-use Techork\PaymentService\ConnexPay\Webhook\ServiceFeeFetcher;
 use Techork\PaymentService\ConnexPay\Webhook\SignatureVerifier;
 use Techork\PaymentService\Gateway\Contract\GatewayCredential;
 use Techork\PaymentService\Gateway\Contract\GatewayCredentialRepository;
-use Techork\PaymentService\Gateway\Contract\VirtualCardReferenceRepository;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 use Techork\PaymentService\Gateway\Webhook\Contract\HandlerOutcome;
 use Techork\PaymentService\Gateway\Webhook\Contract\StoredWebhookCall;
@@ -23,7 +19,6 @@ use Techork\PaymentService\Gateway\Webhook\Contract\TransactionIdResolver;
 use Techork\PaymentService\Gateway\Webhook\HandlerRegistry;
 use Techork\PaymentService\Gateway\Webhook\Recorder\GatewayCancellationRecorder;
 use Techork\PaymentService\Gateway\Webhook\Recorder\GatewayFailureRecorder;
-use Techork\PaymentService\Gateway\Webhook\Recorder\GatewayFeeRecorder;
 use Techork\PaymentService\Gateway\Webhook\Recorder\RecorderOutcome;
 use Techork\PaymentService\Gateway\Webhook\VerifierRegistry;
 use Techork\PaymentService\Gateway\Webhook\WebhookRouter;
@@ -38,7 +33,7 @@ use Techork\PaymentService\Gateway\Webhook\WebhookRouter;
  * constructor nobody can satisfy. Mocked registries would answer whatever they
  * were asked and prove none of it.
  *
- * Only the recorder / fee-fetcher / resolver layer stays mocked — that is the
+ * Only the recorder / resolver layer stays mocked — that is the
  * persistence and outbound-API boundary, and the handlers have their own tests
  * against it.
  *
@@ -104,7 +99,7 @@ function connexPayWiringRequest(array $payload, string $username, string $passwo
 }
 
 /**
- * The subscriber with all four handlers real and only the boundary mocked.
+ * The subscriber with both remaining handlers real and only the boundary mocked.
  * Constructing them is part of what is pinned: the subscriber names each by
  * concrete type, so a handler whose constructor changed shape fails here rather
  * than at container-resolution time in production.
@@ -118,18 +113,8 @@ function connexPayWiringSubscriber(
     return new ConnexPayWebhookSubscriber(
         new SignatureVerifier,
         new EventParser,
-        new SaleApprovedHandler(
-            $resolver,
-            Mockery::mock(GatewayFeeRecorder::class),
-            Mockery::mock(ServiceFeeFetcher::class),
-        ),
         new SaleDeclinedHandler($resolver, Mockery::mock(GatewayFailureRecorder::class)),
         new SaleVoidedHandler($resolver, $cancellation ?? Mockery::mock(GatewayCancellationRecorder::class)),
-        new PurchaseSettledHandler(
-            Mockery::mock(VirtualCardReferenceRepository::class),
-            Mockery::mock(GatewayFeeRecorder::class),
-            Mockery::mock(ServiceFeeFetcher::class),
-        ),
     );
 }
 
@@ -180,27 +165,29 @@ it('registers the verifier and parser under the kind the gateway reports', funct
 
 it('points each ConnexPay event type at the handler written for it', function (string $eventType, string $handlerClass) {
     // Keyed on the parser's own constants, so a renamed constant fails to compile
-    // this test rather than quietly registering a type nothing emits. The
-    // sale-versus-purchase split is the one to read carefully: a sale is money
-    // coming in from the cardholder, a purchase is the virtual card we issued
-    // being settled, and they book to opposite sides.
+    // this test rather than quietly registering a type nothing emits.
     [, $handlers] = connexPayWiringRegistries();
 
     expect($handlers->resolve('connexpay', $eventType))->toBeInstanceOf($handlerClass);
 })->with([
-    'sale approved' => [EventParser::TYPE_SALE_AUTH_APPROVED, SaleApprovedHandler::class],
     'sale declined' => [EventParser::TYPE_SALE_AUTH_DECLINED, SaleDeclinedHandler::class],
     'sale voided' => [EventParser::TYPE_SALE_AUTH_VOIDED, SaleVoidedHandler::class],
-    'purchase settled' => [EventParser::TYPE_PURCHASE_AUTH_SETTLED, PurchaseSettledHandler::class],
 ]);
 
 it('registers no handler for a ConnexPay event type we do not act on', function (string $eventType) {
-    // ConnexPay's sale/purchase lifecycle is wider than the four we react to.
+    // ConnexPay's sale/purchase lifecycle is wider than the two we react to.
     // Unmapped types must resolve to nothing so the router reports Skipped.
+    // Fee recording is deliberately absent: Search/Sales — the only place
+    // ConnexPay exposes the fee — has no exact guid filter (see README), so
+    // fetching it live booked whatever sale the endpoint happened to return.
+    // Fees are backfilled instead; the approved / purchase-settled events
+    // therefore stay unmapped.
     [, $handlers] = connexPayWiringRegistries();
 
     expect($handlers->resolve('connexpay', $eventType))->toBeNull();
 })->with([
+    'sale approved, whose fee fetch was removed' => EventParser::TYPE_SALE_AUTH_APPROVED,
+    'purchase settled, whose fee fetch was removed' => EventParser::TYPE_PURCHASE_AUTH_SETTLED,
     'sale settlement, which we take from the purchase side' => 'sale.card.auth.settled',
     'a lifecycle stage we do not subscribe to' => 'purchase.card.auth.approved',
     'no type at all' => '',
