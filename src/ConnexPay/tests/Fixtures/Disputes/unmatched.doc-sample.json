@@ -1,0 +1,23 @@
+[
+  {
+    "FamilyId": "FAM-9001",
+    "CaseNumber": "CB-9001",
+    "CaseType": 1,
+    "ReasonCode": "C08",
+    "CardBrand": 3,
+    "ResolutionTo": "M",
+    "Amount": 77.77,
+    "DueDate": "2026-10-01T00:00:00",
+    "OrderNumber": "pi-foreign",
+    "Arn": "ARN-FOREIGN",
+    "NetPosition": -77.77,
+    "WinLoss": null,
+    "HasResponse": false,
+    "HasImage": false,
+    "IsSurrendered": false,
+    "SaleGuid": "sale-9001",
+    "AuthCode": "AUTH91",
+    "ResolvedDate": null,
+    "ImageFileUrl": null
+  }
+]

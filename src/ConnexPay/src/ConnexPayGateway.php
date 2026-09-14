@@ -8,8 +8,10 @@ use InvalidArgumentException;
 use Override;
 use RuntimeException;
 use Techork\PaymentService\Common\ValueObject\Cash;
+use Techork\PaymentService\ConnexPay\Dispute\DisputeCaseRead;
 use Techork\PaymentService\Gateway\Command\CancelCommand;
 use Techork\PaymentService\Gateway\Command\CaptureCommand;
+use Techork\PaymentService\Gateway\Command\DisputeCaseQuery;
 use Techork\PaymentService\Gateway\Command\IssueCardCommand;
 use Techork\PaymentService\Gateway\Command\PlacementCommand;
 use Techork\PaymentService\Gateway\Command\RebillingCommand;
@@ -20,11 +22,13 @@ use Techork\PaymentService\Gateway\Command\UpdateCardCommand;
 use Techork\PaymentService\Gateway\Command\VaultCommand;
 use Techork\PaymentService\Gateway\Concern\HoldsInfrastructure;
 use Techork\PaymentService\Gateway\Contract\AuthorizationResult;
+use Techork\PaymentService\Gateway\Contract\DisputeCaseReading;
 use Techork\PaymentService\Gateway\Contract\Gateway;
 use Techork\PaymentService\Gateway\Contract\GatewayResult;
 use Techork\PaymentService\Gateway\Contract\RegistrationResult;
 use Techork\PaymentService\Gateway\Contract\VirtualCardResult;
 use Techork\PaymentService\Gateway\Exception\UnsupportedOperation;
+use Techork\PaymentService\Gateway\Role\ReadsDisputeCases;
 use Techork\PaymentService\Gateway\ValueObject\GatewayInfrastructure;
 
 /**
@@ -38,8 +42,22 @@ use Techork\PaymentService\Gateway\ValueObject\GatewayInfrastructure;
  * the call, and a test does not need them — {@see ConnexPaySettings} is a public value object, so
  * anything that wants a payload can build the operation itself. A seam for tests does not belong
  * in the gateway's public API when the thing it reaches is already reachable.
+ *
+ * ## The third host, and the role declared for it
+ *
+ * {@see ReadsDisputeCases} is implemented here beside the acquiring roles because a case is read
+ * from a third ConnexPay host — the CMS API — with its own client and its own credentials. The
+ * role is declared on this class rather than on a driver of its own because the gateway *is* the
+ * driver: `GatewayServiceProvider` discovers drivers by their `getName()`, and a second class
+ * answering to `connexpay` would be a second thing the factory could build for one credential row.
+ *
+ * The read is the whole of ConnexPay's dispute surface in this direction. There is no submission
+ * and no concession role: the CMS API is read-only, so `SubmitsDisputeEvidence` and
+ * `ConcedesDisputes` are absent here rather than implemented with a refusal, and what an operator
+ * can do about a case is described — with a link into the portal — by the Laravel-side
+ * `DisputeActionsPort`. Absence is the statement.
  */
-final class ConnexPayGateway implements Gateway
+final class ConnexPayGateway implements Gateway, ReadsDisputeCases
 {
     use HoldsInfrastructure;
 
@@ -52,6 +70,8 @@ final class ConnexPayGateway implements Gateway
     private ConnexPayHttpClientInterface $client;
 
     private ConnexPayHttpClientInterface $purchasesClient;
+
+    private ConnexPayDisputesClientInterface $disputesClient;
 
     #[Override]
     public function getName(): string
@@ -93,6 +113,17 @@ final class ConnexPayGateway implements Gateway
             username: $this->username,
             password: $this->password,
             environment: $this->settings->environment,
+        );
+
+        // A third host with a third credential pair, and NOT a fallback to the two above: ConnexPay
+        // requires "merchant-specific API credentials created separately from your normal ConnexPay
+        // CRM user", which is the pair the sales API authenticates with. Sending that pair to the
+        // CMS host is a 401 at best and a credential leak at worst, so the keys are their own and an
+        // unset one is empty rather than borrowed — see {@see ConnexPayDisputesClient}, which is
+        // also where the decision that these are the application's to hold is written down.
+        $this->disputesClient = new ConnexPayDisputesClient(
+            username: $infrastructure->stringSetting('disputesUsername'),
+            password: $infrastructure->stringSetting('disputesPassword'),
         );
     }
 
@@ -157,6 +188,34 @@ final class ConnexPayGateway implements Gateway
     {
         $this->client = $client;
         $this->purchasesClient = $purchasesClient ?? $client;
+    }
+
+    /**
+     * Swaps the CMS client the configured gateway built.
+     *
+     * A separate seam from {@see self::setHttpClient()} because it is a separate host with a
+     * separate authentication: the two interfaces have one method each and nothing in common, so a
+     * single setter would have to take both and every caller would pass a null for the half it does
+     * not want. Nothing here reaches ConnexPay in a test — the role's caller hands in a fake of
+     * {@see ConnexPayDisputesClientInterface}, which is the transport's own seam.
+     */
+    public function setDisputesClient(ConnexPayDisputesClientInterface $client): void
+    {
+        $this->disputesClient = $client;
+    }
+
+    /**
+     * What ConnexPay says is still open on a case, read from the CMS API.
+     *
+     * The whole of the implementation is {@see DisputeCaseRead}: the window it asks about, the way
+     * it picks the case out of that window and the way it reads `ResolutionTo` all live there, and
+     * the gateway's part is the client and the caller's query. A failure propagates — see the read
+     * class for why a case that could not be read is never reported as one with nothing open on it.
+     */
+    #[Override]
+    public function readDisputeCase(DisputeCaseQuery $query): DisputeCaseReading
+    {
+        return new DisputeCaseRead($this->disputesClient, $query)->read();
     }
 
     #[Override]

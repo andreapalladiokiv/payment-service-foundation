@@ -28,15 +28,17 @@
 
     <issueHandlers>
         <!--
-            Both sides declare `static`; PHP binds it late, so on CheckoutId both resolve
-            to CheckoutId and the interface is satisfied. Psalm instead resolves `static`
-            in each declaring class and compares UuidValueObject against AggregateRootId,
-            neither of which is a subtype of the other. Verified: the classes load and the
-            suite passes, so this is Psalm's context resolution, not a variance bug.
+            Both sides declare `static`; PHP binds it late, so on each of these ids both
+            resolve to the id class itself and the interface is satisfied. Psalm instead
+            resolves `static` in each declaring class and compares UuidValueObject against
+            AggregateRootId, neither of which is a subtype of the other. Verified: the
+            classes load and the suite passes, so this is Psalm's context resolution, not a
+            variance bug.
         -->
         <MethodSignatureMismatch>
             <errorLevel type="suppress">
                 <file name="src/Domain/src/Checkout/ValueObject/CheckoutId.php"/>
+                <file name="src/Domain/src/Dispute/ValueObject/DisputeId.php"/>
                 <file name="src/Domain/src/PaymentIntent/ValueObject/PaymentIntentId.php"/>
                 <file name="src/Domain/src/Subscription/ValueObject/SubscriptionId.php"/>
             </errorLevel>
@@ -53,6 +55,7 @@
         <InvalidArgument>
             <errorLevel type="suppress">
                 <file name="src/Laravel/src/EventSourcing/Repositories/CheckoutAggregateRepository.php"/>
+                <file name="src/Laravel/src/EventSourcing/Repositories/DisputeAggregateRepository.php"/>
                 <file name="src/Laravel/src/EventSourcing/Repositories/PaymentIntentAggregateRepository.php"/>
                 <file name="src/Laravel/src/EventSourcing/Repositories/SubscriptionAggregateRepository.php"/>
             </errorLevel>

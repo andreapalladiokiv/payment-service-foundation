@@ -1,0 +1,23 @@
+[
+  {
+    "FamilyId": "FAM-1001",
+    "CaseNumber": "CB-1101",
+    "CaseType": 2,
+    "ReasonCode": "13.1",
+    "CardBrand": 1,
+    "ResolutionTo": "M",
+    "Amount": 120.00,
+    "DueDate": "2026-09-29T00:00:00",
+    "OrderNumber": "",
+    "Arn": "ARN-0001",
+    "NetPosition": -120.00,
+    "WinLoss": null,
+    "HasResponse": false,
+    "HasImage": false,
+    "IsSurrendered": false,
+    "SaleGuid": "sale-0001",
+    "AuthCode": "AUTH01",
+    "ResolvedDate": null,
+    "ImageFileUrl": null
+  }
+]

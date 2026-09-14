@@ -5,11 +5,385 @@ each is scoped to a single session. The "Provider Reference" section at the end 
 truth — **do not invent endpoints or fields outside of it; if in doubt, stop and ask**.
 
 Facts in the reference were verified against public documentation on 2026-08-07. Nuvei REST 2.0 is
-marked beta — confirm availability on the production accounts before starting F4/F9.
+marked beta — confirm availability on the production accounts before starting F4/F8.
 
 **Revised 2026-08-07** against the actual repository: layout corrected to the package monorepo,
 tasks that belong to the consuming application split out into Part II, and the Nuvei checksum task
 reduced to what is not already implemented.
+
+**Revised 2026-09-14** after a line-by-line audit against the code. What changed:
+
+- **Five blockers resolved.** The `providerEventKey` hashing contract is written out (F1); the
+  snapshot hash is now explicitly "compare against the previous value", not "a set of hashes ever
+  seen" (F1, F5); the fee model is a `DisputeFee[]` list rather than one `Money` (F1, A4); dispute
+  reference storage is specified and needs **no migration or model** (F2); the recorder DTOs' home
+  and their permitted field types are stated (F2).
+- **Three claims in §0 were wrong, not just stale.** "No `void` returns" (§0.4) is false — four of
+  ten port methods return `void`; "the recorder is implemented by the application, not here" (§0.3) is
+  half true — `EloquentPaymentIntentRecorder` implements four of them in this repository; and the
+  Omnipay paragraph (§0 stack) describes a removal that is already finished.
+- **Status and `SubmissionState` transition tables added** (F1), including what is terminal and the
+  `ACCEPTED`-vs-`lost` question.
+- **F4 re-scoped:** the merchant-pair gate in `ChecksumVerifier` is now the first thing to check, and
+  the "third scheme" is the expected answer rather than the fallback.
+
+**Revised again 2026-09-14**, after F2 was built and reviewed:
+
+- **F7, F8 and F9 could not have been implemented as written.** Their file lists put an adapter
+  "implementing the F2 ports" inside `src/Stripe/`, `src/Nuvei/` and `src/ConnexPay/`, but
+  `tests/Arch/PackageHierarchyTest.php` lets those packages reach `['Common', 'Gateway']` only, so
+  none of them can name a `Domain\Dispute\Port\*` type. §0.4 now states the rule and the real split
+  (provider package owns the HTTP call behind a `Gateway\Role\*` interface; the port implementation
+  lives in `src/Laravel/src/Port/`), and all three file lists are corrected.
+- **F5 had no source for `DisputeStatus`.** Its mapping table produced a stage and a "who is
+  waiting" but left F1's required status unproduced, with `WinLoss` dismissed as display-only. F5 now
+  states the hole and that the candidate derivation (`ResolutionTo` + `WinLoss`) is provider
+  semantics to be confirmed against ConnexPay's own documentation rather than inferred from field
+  names.
+- **The ConnexPay hasher had no layer it could legally live in** — the same boundary F7/F8/F9 cross,
+  in the other direction. F1 fixed the contract *and* wrote the class under
+  `Domain\Dispute\ValueObject\`, which is unreachable from the F5 code the same section tells to
+  implement it ("computed by the adapter in F5"). F1's own justification — that the aggregate was
+  "promised" a fixed key shape — does not hold: the aggregate treats `providerEventKey` as opaque and
+  only compares it, so a Domain home bought nothing and cost the arch rule. The class is now
+  `ConnexPay\Dispute\ProviderSnapshotCanonicaliser`, behaviour byte-identical (its eleven-field digest
+  is pinned by a literal and that test moved with it), its three refusals are `InvalidArgumentException`
+  — this package's own convention, it has no `Exception/` directory — and the three `InvalidDispute`
+  factories only that class used are gone.
+- **Nothing folds a transport failure for the dispute roles, and that is now a stated decision
+  rather than an accident.** On the acquiring path both the proxy and the boundary implement
+  `AcquiringGateway` (`src/Gateway/src/Routing/RoutedGateway.php`,
+  `src/Gateway/src/Decorator/FailureBoundary.php`), so every thrown provider error becomes a failed
+  result before a caller sees it. Nothing does that for `SubmitsDisputeEvidence` /
+  `ConcedesDisputes` / `ReadsDisputeCases`: the driver's own `catch` is the whole boundary, and
+  Stripe's catches the SDK's `ApiErrorException`, whose family is **not** exhaustive —
+  `ApiConnectionException` is in it, but `Stripe\Exception\UnexpectedValueException`, thrown by the
+  SDK's own JSON decode, is not, so a malformed response escapes these methods untyped. Left that
+  way deliberately, and written down so F8 and F9 do not each decide it privately: a submission
+  whose outcome is *unknowable* is better thrown than recorded, the aggregate has no
+  `SubmissionState` for "we tried and it failed" (F1's table), and every dispute call is
+  idempotency-keyed (`StripeRequestParameters::stripeOpts()`, `:stage:` / `:submit:` / `:close`), so
+  a retry replays. What a driver must not do is the opposite — fold a transport failure into a value
+  that claims an outcome nobody can know.
+- **F9's deep link has no source in the reference.** The plan requires a `DashboardDisputeAction`
+  "plus a working deep link" and F9's own Done-when asserts one, but the ConnexPay reference (§ end) carries
+  the **API** base only — `https://cmsapi.connexpay.com/` — and no portal/UI URL, because that is a
+  fact about their web application rather than their API. Per this document's own rule ("do not
+  invent endpoints … if in doubt, stop and ask") the base URL is **configuration supplied by a
+  human**, and F9 builds the link from it rather than hardcoding a guess; a deep link invented from
+  a plausible-looking hostname is worse than a missing one, because the operator clicks it.
+- **Two more classes were specified where their only consumer cannot reach them** — the F1 hasher's
+  seam crossed twice more. F9's deep link and its evidence composition were both placed inside
+  `src/ConnexPay/src/Dispute/`, but the deep link's only consumer is the `DisputeActionsPort`
+  implementation, the composition speaks the Domain's evidence vocabulary, and `src/Laravel/composer.json`
+  does not require the ConnexPay package at all — so `Laravel` cannot see a class living there, which
+  the arch hierarchy forbids in the same breath. Both are `src/Laravel/src/Dispute/` now, beside the
+  adapter that uses them, as F7's Stripe-only adapter already sits in `src/Laravel/src/Port/`. The
+  alternative — a `?string $portalUrl` on F7's `DisputeCaseReading` — was rejected: it would put a URL
+  the provider never documents into a contract every provider shares, and the base is configuration
+  rather than provider knowledge.
+- **F9's action set deliberately differs from F7's on two points, and F8 will meet both.**
+  `AcceptDisputeAction` is withheld even though ConnexPay's portal offers "Accept Chargeback": nothing
+  in the CMS payload says whether the portal would take one on *this* case, an acceptance is the one
+  irreversible act in this domain, and withholding costs nothing because the link lands the operator
+  on the case. And `SUBMITTED` is **not** consulted when deciding whether the case is still ours,
+  unlike at Stripe — there it means an API call of ours filed the response, here it means an operator
+  *says* they filed it, so hiding the link would remove the only place a wrong claim can be
+  discovered while the window kept running. A provider whose submission is a human's claim reads
+  F2's "still waiting on us" rule differently from one whose submission is a call; that difference is
+  the finding, not a divergence to smooth over.
+- **The action model was rebuilt around a ceiling and subtractions, and one substitution.**
+  `DisputeAggregate::availableDisputeActions()` is the single authority for what a case admits — a
+  pure Domain query over stage, status and deadline — and each adapter may only **subtract** from it
+  from facts the aggregate cannot see (the live provider read). Two consequences are recorded rather
+  than left to be found: at Stripe the `SUBMITTED`/`CONFIRMED` veto stays in the adapter, because the
+  ceiling cannot consult `submissionState()` — one pure query has one answer, and the two adapters
+  must answer that state differently (pinned by a test in each file); and the **substitution** at
+  ConnexPay is the one place the model is neither, since the action that travels is the adapter's own
+  link in place of the call the case named.
+- **The unattributable case answers a response and no concession, at either provider.** This is a
+  behavioural change, not a refactor: `AcceptDisputeAction` requires a `Money $disputedAmount`, the
+  unattributable case has no aggregate to supply it, and `DisputeCaseReading` carries no amount — it
+  is a `Gateway` contract shared with every provider, and widening it to make one branch richer would
+  put a fact in every provider's reading that most of them do not state. Dropping the concession is
+  the safe direction, and guessing the sum is exactly the mistake the concession path is built to
+  prevent. One assertion in the Stripe adapter test inverts for this, and the sentence it used to
+  carry ("it can only ever offer more than the aggregate would, never fewer") is false now.
+- **One Stripe input loses the concession, and it is treated as reachable.** At
+  `warning_needs_response` with `case_type: 'chargeback'` two deliberate readings collide: ingestion
+  records the stage from the status prefix (`warning_` ⇒ `inquiry`, `StatusMapping`'s own rule), while
+  `DisputeCaseRead` answers `concedable: true` because it gates that on `case_type`, not on the
+  prefix. The rule withholds `AcceptDisputeAction` on `Inquiry` and no subtraction can add it back, so
+  on that input the case is surfaced with a response and **no concession**, while the provider's own
+  read says the case can be closed. Whether Stripe ever reports the pair is a fact this side cannot
+  settle, and the owner's ruling is to **assume it does**. What follows is recorded as a consequence
+  rather than smoothed over: the operator concedes in the dashboard instead of through one call, which
+  is the safe direction (`concedable`'s own docblock argues offering wrongly costs the disputed sum,
+  and withholding costs a portal visit) and stays consistent with the model's asymmetry — a provider
+  read may subtract but never add. **The two ways to change it, for the owner to choose, and neither
+  is taken here:** let ingestion decide the *kind* from `case_type` rather than the phase from the
+  status prefix, or let the live read state the stage the way it states `respondBy` and the brand/code
+  pair — the second means a fourth argument on `availableDisputeActions()` and a stage field on
+  `DisputeCaseReading`, which is a `Gateway` contract every provider's read would have to answer.
+- **The ceiling deliberately does not read a provider's stage vocabulary.** The clause is
+  `stage() !== Inquiry`, never `=== Chargeback`, because a case escalated to `PreArbitration` keeps its
+  concession — and because the predicate must not depend on which stages a given provider happens to
+  reach (`StatusMapping.php:47-49` records that Stripe never reports a pre-arbitration stage).
+  `Arbitration` is admitted by the predicate and **unreachable** — `DisputeAggregate::open()` refuses
+  it, since no adapter maps a signal to that phase — and the rule says so rather than enumerating
+  today's reachable stages, so the day an adapter does reach it the concession is already there instead
+  of being a second place to go and change.
+- **F1 kept a stage history the aggregate never read, and it is gone.** F1's field list required a
+  `DisputeEvent[] — stage history`, and `DisputeEvent` was a value object built for it. Nothing read
+  it: the one guard that could have — `changeStage()` — compares `$this->stage`, and the only readers
+  of `history()` were tests. It was also a second copy of facts the events already carry, since
+  `DisputeOpened` and `DisputeStageChanged` both hold the provider's `providerCode`, which is exactly
+  the code the list existed to preserve; and the aggregate uses `SnapshottingBehaviour`, so the list
+  rode into every snapshot with defensive restore code whose only job was maintaining the duplicate.
+  Event sourcing already stores the history and §0.2 gives history *output* to projectors, so the
+  field, the getter, the snapshot key, the restore block, the two writes and the value object are
+  removed, and the capability is pinned on the stream instead — `DisputeOpened` carries the opening
+  stage and cycle code and a case that never escalated releases no `DisputeStageChanged` at all, which
+  is what makes the history rebuildable. The insight that made the list look necessary ("the opening
+  stage is the first entry, not a stage change") now lives in `DisputeOpened`'s own docblock, where a
+  projector will read it. The plan's `DisputeEvent[]` line is deleted above, and the two stage-table
+  rows that referred to that word now refer to the event's `providerCode` — the provider reference
+  section's `CaseNumber` row uses "`DisputeEvent`" for ConnexPay's own case-cycle concept and was
+  reworded to say so.
+- **`DeadlineAt` is gone; the deadline is a `\DateTimeImmutable`.** F1's field list carried a
+  `DeadlineAt { at, isAuthoritative }` value object whose flag said whether the date came from the
+  provider or from a buffer we subtracted. Nothing read it: the only production reader was the value's
+  own `equals()`, both real adapters hardcode `true` (`DisputePayload`, `DisputePoller`), and
+  `computedByUs()` was reachable only from tests. What the flag was protecting — an operator shown a
+  buffered date told it is the network's word — is a labelling decision at render time, and the
+  application that applied the buffer knows it applied one; the docblock's own example of harm ("a
+  deadline that moves when somebody changes a configuration constant") describes the buffer working as
+  designed. It was also the last place where two dates could be held at once by accident: A1 needs the
+  provider's date *and* its own, and one slot with a flag inside it makes the slot's meaning change
+  underfoot while keeping one name. Collapsed to the instant, the payloads carry an ISO string or
+  null, `DisputeDeadlineChanged`'s `from`/`to` are instants, and "did the deadline move?" is now
+  compared as instants rather than as rendered strings — the old `equals()` called the same moment
+  written in two offsets two different deadlines. The command's optional `signal()` is unchanged and
+  is now the *only* carrier of "we worked this out ourselves": a derived date records no delivery key.
+  A1 owns the buffer and applies it to what it shows and when it escalates.
+
+**Revised again 2026-09-14**, after the provider's reference was taken off the dispute aggregate and
+`SaleGuid` was put first in the ConnexPay match. Two corrections, both found by reading the code this
+plan was written against rather than by re-reading the plan:
+
+- **The plan had the dispute aggregate carrying the provider's reference for the case, and no
+  aggregate in this tree carries a provider reference at all.** F1's field list had a
+  `GatewayDisputeRef` value object, the idempotency key was
+  `(GatewayId, GatewayDisputeRef, providerEventKey)`, and F2/F3's requests and F7/F9's adapters were
+  written around a reference the Domain was never the holder of. `PaymentIntent` — and by extension
+  `Refund`, `Checkout` and `Subscription` — holds our own id and nothing of the provider's: the
+  mapping between the two lives only in the polymorphic `gateway_references` table, reached through
+  `GatewayTransactionRepository`, and every adapter resolves what a call needs from it by our own id
+  (`CaptureAdapter:62-67` — `findForPaymentIntent($request->paymentIntentId->toString())` and a
+  `RuntimeException` when there is no row — with the same shape in `RefundAdapter`, `CancelAdapter`
+  and `CreateAdapter`). `CaptureAdapter`'s own docblock records that this mistake was made once
+  before and corrected: "The gateway used to look it up itself, which split one identity's lifecycle
+  across two layers". Removed everywhere it appeared: F1's field, the key's middle component, and the
+  reading that made the provider's name the aggregate's identity — **the identity is a uuid we mint**,
+  which is the only reason a provider re-referencing a case (ConnexPay's second chargeback carries a
+  new `CaseNumber` in the same family) cannot move the aggregate underneath its own stream. The
+  repository contract gains `findForDispute` / `saveForDispute` beside the refund pair (F1/A0), read
+  in both directions — by our id from the four port adapters, by the provider's reference from
+  `EloquentTransactionIdResolver::resolveDispute()` — and `AcceptDisputeRequest` /
+  `SubmitEvidenceRequest` carry `DisputeId`. The **only** place a provider reference appears in the
+  Domain's vocabulary is `AvailableActionsRequest::unattributable()` (declared in F2, called by F9's
+  action adapter), and the reason is that the unattributable case has nothing else to be named by: no
+  aggregate, no id of ours, no row. That branch is not a hedge against an unsourced premise — a row
+  written by A0 and overwritten on transition is a real window in which a case has to be shown to
+  somebody, and F5's unmatched queue is one producer of it.
+- **F5 matched ConnexPay's cases on the wrong field first, and `SaleGuid` is the one that resolves.**
+  Found by the repository's owner reviewing the matching story against `EloquentTransactionIdResolver`
+  — **not** derived from the fixtures, which could not have shown it: every payload under
+  `tests/Fixtures/Disputes/` is hand-written from ConnexPay's documented field list, and what the row
+  holds is a fact about our own table. `resolvePaymentIntent()` matches
+  `gateway_references.reference` **exactly**, and what that row holds once the sale is confirmed is
+  ConnexPay's own guid for the sale — so `SaleGuid` first, `OrderNumber` second (it is in the row
+  only between a hosted-page request and the sale webhook that overwrites it with that guid), `Arn`
+  last (nothing in this repository stores one; a grep finds it only in this domain). `CaseSnapshot`
+  now reads `SaleGuid` as a nullable field and deliberately **not** into the hash, and
+  `UnmatchedDispute` carries it so an operator has the one reference that can be resolved back to a
+  payment. Three consequences of the order are written down with it: the ConnexPay key-field list in
+  the reference now names `SaleGuid` first, F5's Done-when requires a case whose **sale guid**
+  resolves to reach `onDisputeObserved()` (the case the old order sent to the operator by mistake)
+  with the `Arn` branch asserted as landing **unmatched** unless something outside this tree stored
+  one, and F5's unmatched premise — that `OrderNumber` may be empty and `Arn` absent — is demoted
+  from fact to a premise pending F0's captured payloads, because the hand-written fixtures are its
+  only "evidence" and the package's own test docblock says so. What replaces the premise as the
+  reading of an unmatched case is mechanical: the guid named no payment of ours, which points at a
+  sale we never processed rather than at a field the provider omitted — and that, rather than the
+  premise, is also the reason `AvailableActionsRequest::unattributable()` earns its place (F2).
+- **This revision settled one question the previous one left open, and narrowed the other by
+  reading the capture path.** `EloquentGatewayTransactionRepository::save()` does overwrite
+  `reference` on transition and a ConnexPay capture does return a reference
+  (`Capture.php:60-64` → `MapsConnexPayOutcome::outcome()` → `CaptureAdapter:79-80`) — but it writes
+  back **the settled sale's** reference, and a chargeback is raised against the settled transaction,
+  so the overwrite is why the primary key resolves rather than a hazard to it; the tree already keeps
+  the *opening* reference in `metadata['opening_transaction_reference']`
+  (`MapsConnexPayOutcome::openingMetadata()`), which merges and is therefore durable. What is still
+  open is narrower and belongs to an env-gated live test (commit `3938c18`): whether the guid a
+  capture returns for an **auth-only** payment is the same string a case names as `SaleGuid`, and how
+  `PartialCapture` relates. A card-data sale takes no separate capture, so the question does not
+  arise there. Every other provider field claim in this document remains documentation-level until
+  F0 replaces the fixtures in place.
+
+**Revised again 2026-09-14**, after the Nuvei classic API 1.0 channel was researched because F4/F8 were
+blocked on REST 2.0 access that had not arrived:
+
+- **1.0 is a notification channel and nothing more, and that is now the plan's shape for Nuvei.** The
+  classic reference documents no method that lists, reads or answers a chargeback; every chargeback
+  action is a Control Panel operation performed by a person, and Nuvei's own dispute team forwards the
+  documents to the acquirer. So `ReadsDisputeCases`, `SubmitsDisputeEvidence` and `ConcedesDisputes`
+  stay 2.0-only, and what 1.0 can produce is the **observation** — a case in the ledger with its
+  deadline, which is the failure this whole context exists to prevent. F4 is split accordingly
+  (F4-notification buildable now; F4-read and F8 still blocked), and F8's operator handoff joins F9's
+  pattern: a `DashboardDisputeAction` whose link base is configuration, F9's rule unchanged.
+- **The Chargeback delivery is a Control Panel Event DMN, and two of its documented properties decide
+  the adapter's work.** It carries `EventCorrelationId` — the discriminator our verifier already uses
+  to pick the header-checksum branch — and it carries **no merchant pair**, so today it is rejected at
+  `ChecksumVerifier`'s gate (`:39-49`) before any checksum is computed. The plan's earlier advice to
+  "check the merchant gate first" now has a documented answer rather than a pending one, and a third
+  branch is not what is missing: the docs' event-DMN scheme concatenates the payload's *values* in
+  order, while our JSON branch hashes the *raw body*. Whether those coincide for real deliveries is
+  the fixture question, and it is the only thing between us and a working 1.0 ingestion. F0's Nuvei set
+  can therefore start from the documented example under its own `.doc-sample.json` convention and stop
+  being the reason F0 cannot be reported done.
+- **The 2.0 unified status vocabulary is not 2.0-only.** The documented Chargeback DMN carries
+  `DisputeUnifiedStatusCode` with the same codes the reference's mapping table lists (`FC-CLSD-CHF`,
+  `FC-M-ACPT`, `IPA`, …) plus `DisputeDueDate`, so F4's mapping table and the deadline rule carry over
+  to the 1.0 payload unchanged. What the documented field list does **not** carry is a card brand, and
+  `DisputeSnapshot` requires one — the adapter needs either a field the table omits or a stated
+  derivation, which is a question for the owner, not a choice to make privately.
+- **The overwrite on transition is not a hazard to the Nuvei tie-back either, and the reading that made
+  it look like one is corrected here.** A chargeback is raised against the settled transaction, and
+  after a capture the reference row holds the settled reference; the opening one is not homeless,
+  because `NuveiTransactionOutcome` records it at `metadata['opening_transaction_reference']`
+  (`:201`, `:215`, `:260-263`) for the operations that open a payment and deliberately folds it without
+  that key for capture/refund/void (`:219-223`). Which of the two a Chargeback DMN names is a captured
+  fixture's answer — the same class of open question as ConnexPay's auth-only capture guid
+  (`DisputePoller:426-431`), and not a defect in the design.
+
+**Revised again 2026-09-14, while implementing A0 (the ingestion half) in `src/Laravel/`:**
+
+- **A0 exists, and it was the repair rather than a prerequisite.** `GatewayDisputeRecorder` had no
+  implementation and no binding anywhere, and `WebhookServiceProvider::discoverSubscribers()` resolves
+  every discovered subscriber in the manifest — `StripeWebhookSubscriber` requires three dispute
+  handlers, each requires that interface — so the first resolution of `VerifierRegistry` or
+  `HandlerRegistry` threw `BindingResolutionException` **for every webhook of every provider**, not
+  just disputes. `EloquentDisputeRecorder` + its five commands + the two container bindings are in
+  place, `EloquentDisputeRecorderTest` drives them against real repositories, and the Laravel, Domain,
+  Gateway, Stripe, ConnexPay and Arch suites plus psalm are green.
+- **Steps 1 and 2 of this plan are moot, because the tree already answers both questions the other
+  way.** `DisputeSnapshot::$cardBrand` is **not** nullable and must not become so — an unanswerable
+  case is worse than an incomplete one, and the DTO's own docblock now argues it. The derivation from
+  the code's namespace is `Common\ValueObject\ReasonCodeNetwork::issuing()`, which exists, is pinned
+  (`ReasonCodeNetworkTest`, and `ReasonCodeMapperTest`'s cross-check that the two tables agree about
+  which network owns which code) and is reachable from `src/Nuvei/` without the domain —
+  `ReasonCodeMapper::brandFor()` is not to be written. Its production caller is F4-notification's
+  `ChargebackEvent`, so until that lands the class is exercised only by its own suite.
+- **`stageCode` was carrying two facts, and that is the defect this revision corrects.** The
+  reference table below says it outright — "the four-value stage does not cover the cycle position, so
+  the cycle rides in the event's `providerCode`, not in the stage" — and F5 implements it: the poller
+  passes **raw** `CaseType` in `stageCode` (`DisputePoller:343`, with the comment saying why) while
+  passing a **derived domain spelling** in `statusCode` (`:344`, `CaseMapping::status()`). No
+  recorder can read a stage out of `stageCode`: the field holds three providers' vocabularies
+  (`CaseType` `'1'`, Stripe's `'warning_needs_response'`, Nuvei's `DisputeUnifiedStatusCode`), and the
+  table that maps each one lives in the provider package — `src/Laravel/composer.json` requires none
+  of them, so `CaseMapping` is invisible from the bridge. A recorder handed `'1'` could only guess.
+  So `DisputeSnapshot` now carries the two facts **separately**: `$stageCode` / `$statusCode` are the
+  provider's word, handed to the aggregate untouched as the code that tells two visits to one stage
+  apart, and `$stage` / `$status` are the domain's own spellings, filled by the adapter that owns the
+  table. `DisputeResolution` gains `$status` for the same reason — Nuvei's resolution codes are
+  `FC-CLSD-MF` / `FC-CLSD-CHF`, which no `DisputeStatus::tryFrom()` will ever read.
+  **Three states, and the recorder treats them differently:** a spelling beside the code places the
+  case; a **raw code with no spelling** is refused loudly, because it is a mapping gap in the adapter
+  and the router turns the refusal into a retry and then a visibly `Failed` delivery; **neither** means
+  the provider said nothing about that axis, and a case that already exists is left as it is there.
+  Opening still requires both, since an aggregate cannot be created without them.
+- **Consequence for F5, left to the owner rather than taken here.** The ConnexPay poller must fill
+  `stage:` and `status:`, and its derived status should leave `statusCode` (the CMS states no status
+  field at all, so F2's role for that field is null there). The change is one line for the stage: the
+  poller **already computes** `CaseMapping::stage($case->caseType)` to report an unmapped code
+  (`:275`) and then discards it for the snapshot. Five assertions in `DisputePollerTest`
+  (`:273`, `:313`, `:373`, `:392`, `:756`) move from `->statusCode` to `->status`; the raw
+  `stageCode` assertions (`:270`, `:370`, `:391`) stay exactly as they are. `UnmatchedDispute` would
+  want the same split for consistency, though nothing reads it today — `onUnmatchedDispute()` answers
+  `Skipped` either way. Until that edit lands, a ConnexPay-shaped delivery reaching the bridge
+  recorder is refused on the stage axis instead of being filed under a guessed stage: louder, and
+  still better than the binding that did not exist before, which took every webhook down with it.
+- **F3's mapping table is right and its target field is not.** `StatusMapping` (step 4) is still
+  wanted, and its output is the *spelling* — `warning_*` ⇒ `stage = 'inquiry'`, the four chargeback
+  statuses ⇒ `'chargeback'`, `warning_closed` ⇒ `'closed'` — which means it fills `$stage` / `$status`
+  and leaves Stripe's raw `statusCode` alone. Putting `'inquiry'` into `stageCode` would break F2's
+  contract and the two `toBeNull()` pins that depend on it
+  (`DisputeIngestionContractTest:484,508`). F0's stand-in for that mapping
+  (`DisputeIngestionContractTest:354-384`) already reads `statusCode` raw and derives the stage from
+  the `warning_` prefix, so it is already the shape this revision wants — it needs only to read the
+  spellings off the snapshot instead of re-deriving them, and it keeps passing `$snapshot->stageCode`
+  as the command's provider code, which is the role that field keeps.
+
+**Revised again 2026-09-14**, after F4-notification was built — the third revision of the day, and the
+first one written from running code rather than from reading it:
+
+- **F4-notification is built, and the claim that `EventParser` needs no change was false.** The
+  falsification is worse than a missing route, which is why it is written down here rather than
+  deleted above: a Chargeback DMN carries `EventType` and **no** `transactionType`, so `parse()` gave
+  it type `''` with `externalId = 'Unknown:nuvei_<uniqid>'` — unroutable *and* keyed on a random value,
+  so a redelivery could never be recognised as one. Both halves were silent: the registry answers
+  `null` for an unknown type and the router reports `Skipped`, which is what it also reports for a
+  delivery it has genuinely finished with. `EventParser` now reads `EventType` when there is no
+  `transactionType` and keys the delivery on `EventType:EventId`; payment DMNs keep their path byte for
+  byte, and a delivery carrying **both** fields is read as the payment DMN it also is — pinned as a
+  decision, because letting an `EventType` reroute a delivery that verifies and resolves today would
+  hand it to a handler written for another vocabulary.
+- **F4's file list named F4-read's files, and the deadline field it named is the REST 2.0 one.** "A
+  client for `GET /entities/{entity-id}/disputes/{dispute-id}`" and "the history pull" are reads, and
+  they stay blocked on the same access F4-read waits on; F4-notification is one payload DTO, one
+  mapping table, one handler and one registration, with no HTTP client at all. `expirationDate` is the
+  REST 2.0 field (`lastDisputeEvent.expirationDate`) — the 1.0 channel's is `Chargeback.DisputeDueDate`,
+  which is what the DTO reads. Both corrected in place above.
+- **The stage is read from the unified status code, not from `Chargeback.Type`, and this is a reading
+  of the vocabulary rather than a preference.** A case keeps its origin type for its whole life, so a
+  `Retrieval` that escalates arrives as `Type: Retrieval` with an `IPA` code, and a type-only reading
+  would pin every escalated case at `chargeback` forever. `Type` therefore answers only where the code
+  yields no stage — which is also what lets the two axes fail independently: an unmapped code refuses
+  the status axis while the stage is still placed. Whether `Retrieval` is ever an `EventType` of its
+  own is unconfirmed, so nothing is registered for it, and an event DMN of an unregistered type is
+  skipped rather than guessed at.
+- **The brand derivation is Nuvei's, and it is not a rule the other two providers should copy.** The
+  earlier revision recorded that the brand comes from the code's namespace via
+  `ReasonCodeNetwork::issuing()`, and that `ReasonCodeMapper::brandFor()` is not to be written; both
+  stand, and `ChargebackEvent` is now that derivation's production caller — the class is no longer
+  exercised only by its own suite. Checked against the other two channels while implementing it:
+  **neither derives a brand from a reason code, and neither needs to** — ConnexPay's CMS payload states
+  `CardBrand` as its own field (1–5, mapped in the adapter) and Stripe's dispute object states one too.
+  The derivation exists because the event DMN is the one delivery shape that states no brand anywhere;
+  it is a *read* of a structurally disjoint namespace, and a code in no list of ours is refused —
+  visibly, one table entry from working — rather than filed against the nearest network's evidence
+  requirements, which would be unanswerable and final.
+- **The event-DMN checksum branch exists, and its reachability is structural rather than promised.**
+  Both existing branches require the merchant pair and the event DMN carries none, so the new branch
+  sits at the pair check — the one line where the old code answered `false` unconditionally. Every
+  delivery that verifies today has a pair, therefore cannot have its answer changed by this, and the
+  two negatives that keep the claim testable are now tests: a pair-less delivery carrying no marker is
+  still refused, and a pair-less delivery is the only thing that can reach the branch. What it costs is
+  stated in the verifier's docblock: with no pair the **tenant is not matched**, so it is identified by
+  which candidate credential's secret validates the header, and for this shape the checksum is the
+  whole of the authentication. The concatenation's two readings — nested objects walked into, values
+  read after JSON decoding — are UNCONFIRMED #3 below.
+- **Two findings that live in code docblocks rather than in this document, recorded here so they are
+  not re-discovered.** `FC-A-EPRD` maps to `expired`, and `DisputeStatus` deliberately refuses
+  `UNDER_REVIEW -> EXPIRED`: a case we responded to and the issuer then let lapse is `Skipped` by the
+  aggregate, and the mapping's choice is not routed around to reach a status the table allows — see
+  `DisputeMapping`. And `DisputeSnapshot::$familyRef` has **nowhere to be stored**: a later cycle's new
+  reference cannot sit beside the case key because `gateway_references` holds one reference per
+  aggregate id and `EloquentGatewayTransactionRepository::save()` is an `updateOrCreate`, so until that
+  storage decision is taken a second cycle opens a second aggregate for one dispute — see
+  `EloquentDisputeRecorder`'s "What this class does not do".
 
 ---
 
@@ -24,8 +398,11 @@ reduced to what is not already implemented.
   targeting is `vendor/bin/pest --testsuite=Stripe`, not `phpunit --group=`.
 - IDs are `Techork\PaymentService\Common\ValueObject\UuidValueObject` subclasses (uuid7,
   `generate()` / `fromString()`).
-- Omnipay is irrelevant here. It is a base-class dependency of the existing gateway drivers and is
-  scheduled for removal in 2.0 (`docs/omnipay-removal-plan.md`) — **no new code references it**.
+- Omnipay is gone, not pending. It appears in no `composer.json`, not in `composer.lock`, and there
+  is no `vendor/omnipay/`. The only occurrences left in `src/` are prose inside docblocks explaining
+  how a shape differs from what Omnipay used to impose — read those as history, not as a live
+  dependency, and do not go looking for a removal task. **There is none, and no new code references
+  it.**
 
 **This is a library, not an application.** It ships domain aggregates, ports, gateway adapters and
 a thin Laravel bridge. It owns no projections (there is not one `*Projector*` in the tree), no
@@ -44,7 +421,12 @@ The repository is a monorepo of `replace`-d packages. There is no `src/Dispute/`
 | Stripe adapter | `src/Stripe/src/Webhook/Handler/` | `Techork\PaymentService\Stripe\Webhook\Handler\` |
 | Nuvei adapter | `src/Nuvei/src/Webhook/{DTO,Handler}/` | `Techork\PaymentService\Nuvei\Webhook\` |
 | ConnexPay adapter + CMS client | `src/ConnexPay/src/` | `Techork\PaymentService\ConnexPay\` |
-| Laravel wiring (only if unavoidable) | `src/Laravel/src/` | `Techork\PaymentService\Laravel\` |
+| Laravel wiring | `src/Laravel/src/` | `Techork\PaymentService\Laravel\` |
+
+`src/Laravel/` is where the dispute reference is read back (`TYPE_DISPUTE`; `findForDispute()` /
+`saveForDispute()` on the repository, `resolveDispute()` on the resolver — F2) and where a recorder
+implementation may live (§0.3). That is expected work, not a workaround — the domain itself still
+stays free of it.
 
 Mirror the domain layout under `src/Domain/src/Dispute/`: `Command/`, `Event/`, `Exception/`,
 `Port/`, `Port/Request/`, `ValueObject/`, plus `DisputeAggregate.php` and
@@ -55,6 +437,13 @@ Tests live in the owning package: `src/Domain/tests/Unit/Domain/Dispute/`,
 `src/Stripe/tests/Unit/Stripe/Webhook/Handler/`, and so on. Fixtures go in the owning package too
 (`src/Stripe/tests/Fixtures/Disputes/`), because a package split (`bin/split.sh`) must leave each
 package's suite runnable on its own.
+
+`tests/Fixtures/` would be a **new convention** — there is no `Fixtures` directory anywhere under
+`src/` today. The house style is inline factories: a small free function returning an array or a
+converted provider object, e.g. `chargeUpdatedEvent()`. Keep that for everything a test *asserts* on,
+and add `Fixtures/` only for raw bytes that have to survive verbatim — signature verification,
+checksum computation, body encoding. A JSON fixture that a test decodes into an array and never
+hashes is a factory that costs a file.
 
 ### 0.2 What is foundation and what is the application
 
@@ -68,6 +457,13 @@ settlement reconciliation, per-MID rate monitoring. These are specified here bec
 the events Part I must emit, but **they are not implemented in this repository**. If a Part I task
 seems to require a projection, the requirement is wrong — re-read §0.3.
 
+**Gateways in scope: Stripe, Nuvei, ConnexPay.** Four packages declare an `extra.laravel.webhook`
+subscriber — Stripe, Nuvei, Paynet and ConnexPay; Revolut declares a gateway and no webhook.
+**Paynet and Revolut have no dispute surface**: no handler is registered for either,
+`DisputeActionsPort` is not implemented, and `availableActions` is out of scope for them rather than
+empty-by-accident. Express that with an absent binding, never a stub returning an empty set — an
+empty set means "this dispute is not waiting on us" (F2), which is a different and wrong statement.
+
 ### 0.3 How ingestion reaches the aggregate
 
 Follow the pattern that is already in the tree; do not invent a second one.
@@ -79,9 +475,23 @@ Follow the pattern that is already in the tree; do not invent a second one.
    `Gateway\Webhook\Contract\TransactionIdResolver` and reports the business fact through a
    **recorder interface** declared in `src/Gateway/src/Webhook/Recorder/`
    (see `GatewayFeeRecorder.php` for the shape and the docblock conventions).
-3. The recorder is **implemented by the application**, not here: it loads the aggregate, dispatches
-   a command, persists. `RecorderOutcome::NotFound` is how it says "the aggregate hasn't been
-   observed yet, retry".
+3. The recorder interface is declared here; who implements it is decided per recorder, and the
+   difference matters when judging whether Part I is done. `RecorderOutcome::NotFound` is how an
+   implementation says "the aggregate hasn't been observed yet, retry". Two patterns are already in
+   the tree:
+   - `GatewayFeeRecorder` has **no implementation in this repository at all** — the application
+     supplies it end to end;
+   - `EloquentPaymentIntentRecorder` (`src/Laravel/src/Webhook/Service/`) implements **four** recorder
+     interfaces in this repository, and the application rebinds it to its own subclass
+     (`payment-service/app/Infrastructure/Providers/AppServiceProvider.php:150`).
+   For disputes, prefer the second: the read model is Part II's, but both sides need the same
+   behaviour under test, and a recorder that only ever exists downstream is a recorder Part I cannot
+   test against. `NoOpGatewayPaymentMethodRecorder`, in the same directory, is the precedent for a
+   no-op default. This does not relax rule 7 — Eloquent lives in `src/Laravel/`, never in
+   `src/Domain/`. **As the dispute work actually stands, the second is not what happened**: nothing
+   implements `GatewayDisputeRecorder` (F2, A0), and F2's own Done-when writes the
+   `gateway_references` row from the test instead. Stated in F2 rather than papered over, so a reader
+   judging "is Part I done" is not misled by the preference here.
 4. Each gateway package declares a `WebhookSubscriber` in `composer.json` under
    `extra.laravel.webhook`; it wires verifiers and handlers onto the shared registries. Dispute
    handlers register there — they do not get their own ingress.
@@ -96,13 +506,73 @@ is Part II's problem.
   **not** carry a `GatewayAccountId` field. Anything that needs it — the idempotency key included —
   reads it from the message header or from the ambient context, and the recorder receives it as a
   `Gateway\ValueObject\GatewayId` argument.
-- **A port takes a Request object and returns an Outcome object.**
+- **No aggregate carries a provider reference, and `Dispute` does not get to be the exception.**
+  `PaymentIntent` — and by extension `Refund`, `Checkout`, `Subscription` — holds our own id and
+  nothing of the provider's: the mapping between the two lives only in the polymorphic
+  `gateway_references` table, reached through `Gateway\Contract\GatewayTransactionRepository`, and an
+  adapter resolves what a call needs from it by our id (`CaptureAdapter:62-67`; same shape in
+  `RefundAdapter`, `CancelAdapter`, `CreateAdapter`), throwing when there is no row rather than
+  falling back to a reference read off a request. `CaptureAdapter`'s docblock records that this exact
+  mistake was made once before: "The gateway used to look it up itself, which split one identity's
+  lifecycle across two layers". For disputes the pair is `findForDispute()` / `saveForDispute()`
+  (F1/A0 for the contract, F2 for why the write is A0's). The rule reaches the request objects too: a
+  request names a case by our own id, with the one argued exception of
+  `AvailableActionsRequest::unattributable()` (F2), and never by a provider's name a caller would have
+  no way to have resolved. An earlier revision of this plan had a `GatewayDisputeRef` on the
+  aggregate and a reference on the requests; see the revision block and F1.
+- **A port takes a Request object and returns what its own aggregate has to record.**
   `CapturePort::capture(CaptureRequest): CaptureOutcome`
-  (`src/Domain/src/PaymentIntent/Port/CapturePort.php`). No `void` returns — the outcome is what
-  gets recorded on the aggregate. Business refusals that the aggregate must model come back in the
-  outcome; only a genuinely failed call throws.
+  (`src/Domain/src/PaymentIntent/Port/CapturePort.php`). Business refusals the aggregate must model
+  come back in the outcome; only a genuinely failed call throws.
+  This is **not** an absolute "ports never return `void`" rule — the tree does not follow one. Four
+  of the ten port methods return `void` (`CancelPort::cancel`, `RefundPort::refund`,
+  `CheckoutCapturePort::capture`, `SubscriptionCapturePort::capture`) and `ChallengePort::initiate`
+  returns a `Challenge`, not an outcome. Cancellation records nothing the aggregate does not already
+  know, so it returns nothing. **For disputes the outcomes are required** — `AcceptOutcome` and
+  `SubmissionOutcome` both carry state the aggregate must record — but justify them on that ground,
+  not on a rule that does not exist.
 - **An aggregate owns its ports.** Dispute ports go under `src/Domain/src/Dispute/Port/`. Do not
   reach into `PaymentIntent\Port`.
+- **A provider package implements a `Gateway` role, never a Domain port.**
+  `tests/Arch/PackageHierarchyTest.php` admits `Stripe` / `Nuvei` / `ConnexPay` / `Revolut` to
+  `['Common', 'Gateway']` only, so none of them can name a `Domain\Dispute\Port\*` type — or
+  `DisputeAction`, `DisputeActionSet`, `DashboardDisputeAction`, `EvidenceRequirements` — at all; the
+  attempt fails the Arch suite, not the review. Every Domain port in the tree is implemented in
+  `src/Laravel/src/Port/`
+  (`CaptureAdapter`, `CancelAdapter`, `RefundAdapter`, …): the adapter implements the port, depends
+  on a **narrow Gateway role interface** for the operation (`Gateway\Role\CapturesPayments`) plus
+  whatever it needs to persist, and turns what the gateway hands back into the port's outcome — the
+  gateway returns a value and never throws a decline (`CaptureAdapter`'s own docblock says why).
+  **So F7/F8/F9 split in two halves, and their file lists name only the first**: the provider package
+  owns the HTTP call and the provider-code mapping behind a new role interface, and
+  `src/Laravel/src/Port/` owns the port implementation. No provider package can implement
+  `SubmitEvidencePort` or `DisputeActionsPort` directly.
+  **The action model is the same rule read one step further, and it bites hardest here.** The action
+  vocabulary is Domain — `Contract/DisputeAction`, `Contract/DisputeActionVisitor`, and the three
+  concretes plus `DisputeActionSet` in `ValueObject/` (F2) — so a package that must *name* it cannot
+  live under `src/<Provider>/src/**` either. A per-gateway visitor implementation, when one is ever
+  needed, therefore goes in `src/Laravel/src/Port/` beside the adapter that uses it, **never** in the
+  provider package: `src/ConnexPay/` may hold the CMS read and the `CaseNumber` mapping, and cannot
+  hold the class that says what the resulting action is. `ConnexPayDisputePortalLink` is the worked
+  example — it was placed in `src/ConnexPay/src/Dispute/` by an earlier revision of F9 and moved for
+  exactly this reason (see the revision note).
+- **"The gateway returns a value and never throws a decline" is about declines, not about
+  transport, and no boundary folds the second one for these roles.** `RoutedGateway` and
+  `FailureBoundary` implement `AcquiringGateway` and nothing else, so on the dispute path the
+  driver's own `catch` is the entire boundary, and it covers whatever that SDK's own error family
+  happens to cover — not "everything". A driver therefore states, for each dispute method, which
+  failures become a failed result and which propagate; a failure whose outcome is unknowable (a
+  response that never parsed, a connection dropped after the request was sent) belongs in the
+  second group, because a value claiming "nothing was filed" would be a claim nobody can make. Read
+  this with the idempotency key: a propagated failure is retried, and the key is what makes the
+  retry safe.
+- **A class lives where its readers can reach it — check `composer.json`, not intuition.** The arch
+  hierarchy is only half the answer: a package's `require` block decides what is *installed*, and
+  `src/Laravel/composer.json` does not require the provider packages, so a class only the Laravel
+  layer reads cannot live in a provider package even when it is about that provider. Three items of
+  this plan moved on exactly this (the ConnexPay hasher, F9's deep link, F9's evidence composition).
+  Before writing a file, name the layer that reads it, then check both the arch map and the require
+  block.
 - **Card networks already have a type**: `Common\ValueObject\CardBrand`. Use it. Do not add
   `CardNetwork`. (ConnexPay's numeric `CardBrand` maps onto it in the adapter — see reference.)
 
@@ -112,12 +582,19 @@ is Part II's problem.
 2. Every task ends with green tests. If a test can't be written, that's a signal the task is badly
    specified — stop and report.
 3. Do not touch the PaymentIntent / Checkout / Subscription / Refund domains in F1–F9. The only
-   contact point is `TransactionIdResolver`, and it is read-only.
+   contact point is `TransactionIdResolver`, and it is read-only **in the sense that no existing
+   method changes behaviour** — no new side effects, no changed return semantics. Adding a new read
+   method for disputes is expected and allowed (F2).
 4. Provider HTTP clients are never called in tests. All adapters are tested against recorded
    fixtures (F0).
 5. Do not unify reason codes into a single enum. Rationale is in F1.
 6. Do not add retries or circuit breakers before F5 — there's a dedicated item for that there.
-7. Do not add an Eloquent model, a migration, a job or a scheduled command anywhere in Part I.
+7. Do not add an Eloquent model, a migration, a job or a scheduled command **for the Dispute
+   context**. This does not put `src/Laravel/` off limits — it already ships four models and eight
+   `.stub` migrations — and it does not block dispute-reference storage, which reuses the existing
+   polymorphic `gateway_references` table with a new `referenceable_type` value and no schema change
+   (F2). Jobs and scheduled commands stay out: the poller is a service the application schedules
+   (F5, A0), not a job in this repository.
 
 ---
 
@@ -127,7 +604,10 @@ is Part II's problem.
 
 ### F0. Fixtures and contract tests
 
-**Depends on:** nothing.
+**Depends on:** nothing that has to be written first, but **the Nuvei fixtures need REST 2.0 sandbox
+or production access** — the same access F4 is blocked on. Do the Stripe and ConnexPay sets first and
+do not report F0 done while the Nuvei set is missing; F4's whole determination (and therefore A6's
+numerator) hangs off those raw bodies.
 
 **What to do:**
 
@@ -148,6 +628,10 @@ Sources:
   Callback`, `Fraud reported Transaction`; responses from `GET /entities/{id}/disputes` and
   `GET /entities/{id}/disputes/{dispute-id}`. **Capture the raw bytes and the full header set**, not
   a re-serialized JSON — F4 depends on knowing exactly which delivery channel these arrive on.
+  The `Chargeback` body is the exception: it is documented in full (see the 1.0 reference section) and
+  may be written from that example as `*.doc-sample.json`, because F4-notification's decisive question
+  is precisely what a real body would answer. The other three types and both responses still need
+  access.
 - **ConnexPay** — `GetByUser` response over historical data (set `startDate` a year back) and
   `GetByResolvedDate`.
 
@@ -155,7 +639,7 @@ If neither production nor sandbox data is available, build fixtures from the doc
 and **explicitly suffix the files with `.doc-sample.json`** so they can be replaced later.
 
 Existing handler tests build payloads inline through a small factory function (see
-`src/Stripe/tests/Unit/Stripe/Webhook/Handler/ChargeUpdatedHandlerTest.php:20`). Keep that style for
+`src/Stripe/tests/Unit/Stripe/Webhook/Handler/ChargeUpdatedHandlerTest.php:19`). Keep that style for
 the assertions and use fixtures for the shape-of-the-wire cases (signature, encoding, field
 presence).
 
@@ -180,20 +664,58 @@ An EventSauce `DisputeAggregate` plus value objects and a
 
 ```
 DisputeAggregate (aggregate root)
-  DisputeId              — UuidValueObject subclass, ours, not the provider's
+  DisputeId              — UuidValueObject subclass, ours; never the provider's
   PaymentIntentId
-  GatewayDisputeRef      — string; may contain / and + (Nuvei)
   DisputeStage           — INQUIRY | CHARGEBACK | PRE_ARBITRATION | ARBITRATION
   DisputeStatus          — NEEDS_RESPONSE | UNDER_REVIEW | WON | LOST | ACCEPTED | EXPIRED | CLOSED
   SubmissionState        — NONE | DRAFT | UPLOAD_PENDING | SUBMITTED | CONFIRMED   (second axis, see below)
   DisputeReason          — { CardBrand, string rawCode, ReasonCategory }
   Money disputedAmount
-  Money disputeFee
-  DeadlineAt  { \DateTimeImmutable at, bool isAuthoritative }
-  DisputeEvent[]         — stage history
+  DisputeFee[]           — a list, never a single Money; see below
+  ?\DateTimeImmutable deadlineAt
 ```
 
+No history list. The case's history is a **projection of the event stream** — `DisputeOpened` for the
+opening stage and every `DisputeStageChanged` after it, each carrying the provider's cycle code in
+`providerCode`. Keeping a copy inside the aggregate would put the same fact in two places and make
+the snapshot carry it into every write, for a value nothing in the aggregate reads. §0.2 already puts
+history output on the projector side of the boundary.
+
 No `GatewayAccountId` field — §0.4.
+
+**Nor the provider's own name for the case — §0.4.** An earlier revision carried a
+`GatewayDisputeRef` here (a string, because Nuvei's ids contain `/` and `+`) and threaded it through
+`DisputeOpened`, `OpenDisputeCommand` and the port requests. Nothing in this tree works that way. The
+provider's reference for one of our aggregates is a row in `gateway_references`, written and read
+through `GatewayTransactionRepository`, and each adapter resolves it by our own id —
+`CaptureAdapter:62-67`, and the same shape in `RefundAdapter`, `CancelAdapter` and `CreateAdapter`,
+all of which throw rather than reach for a reference from anywhere else. **The aggregate's identity
+is a uuid we mint**, and that is what it is for: ConnexPay re-references its cases (a second
+chargeback carries a new `CaseNumber` inside the same `FamilyId`), and an aggregate identified by the
+provider's name would change identity underneath its own event stream. Nothing is lost by the
+absence — `DisputeId` is what the port requests carry (F2), `findForDispute()` is what the adapters
+read, and `EloquentTransactionIdResolver::resolveDispute()` is how a resolution arriving under the
+provider's own name finds the case it belongs to (F2). The idempotency key below is stated in terms
+of what the guard actually compares.
+
+**Fees are a list, not a field.** A single `Money disputeFee` contradicts A4, which requires the two
+Stripe fees to stay distinct: "dispute *received*", debited at initiation and non-refundable outside
+Mexico, and "dispute *countered*", returned on a win. ConnexPay has the same shape four times over —
+$20 on the incoming chargeback, $20 on a retrieval request, $20 on an incoming pre-arbitration, $20
+on reversal acceptance (a win), $0 on reversal denial. One dispute, several fees, charged at
+different moments and moving in different directions. Collapsing them makes A4 unbuildable from what
+Part I emits, which §Part II names as a Part I bug.
+
+```php
+DisputeFee  — { FeeType type, Money amount, \DateTimeImmutable chargedAt }
+FeeType     — CHARGEBACK | RETRIEVAL | PRE_ARBITRATION | REVERSAL_ACCEPTANCE | COUNTERED
+```
+
+`amount` is the fee as charged and positive; direction is `type`'s business, and A4 decides the sign.
+Where a provider states fees in a payload, the adapter that sees them records them
+(`DisputeFeeRecorded`). ConnexPay states none in its field list, so there A4 derives them from
+`NetPosition` and A5's settlement data — the aggregate does not guess. Re-observing a fee already
+present (same `type`, `amount` and `chargedAt`) emits nothing.
 
 **`SubmissionState` is a separate axis on purpose.** The provider's view of the case and our view of
 our own submission attempt move independently: Nuvei sits in "file uploaded, callback not yet
@@ -202,30 +724,120 @@ claims to have submitted while `HasResponse` is still `false`. Folding these int
 means F9 and A3 come back to rewrite F1's invariants. Two axes, each with its own transitions.
 
 **Events:** `DisputeOpened`, `DisputeStageChanged`, `DisputeStatusChanged`, `DisputeDeadlineChanged`,
-`EvidenceAttached`, `EvidenceSubmitted`, `EvidenceUploadConfirmed`, `DisputeResolved`,
-`DisputeAccepted`.
+`DisputeFeeRecorded`, `EvidenceAttached`, `EvidenceSubmitted`, `EvidenceUploadConfirmed`,
+`DisputeResolved`, `DisputeAccepted`.
 
 **Invariants that must be covered by tests:**
 
 - The `LOST → WON` transition **is allowed**. Stripe labels these as late wins; an issuer may credit
   outside the normal cycle. Test: aggregate in `LOST`, apply `DisputeResolved(WON)` — no exception.
-- `ACCEPTED` is terminal; no transition back out.
-- `EXPIRED` is only reachable from a provider signal or from an explicit expiry command issued by
-  the application's clock. The aggregate has no timer of its own.
+- **Statuses move exactly like this, and these are the terminals** — anything not in the table throws:
+
+  | From | To | Note |
+  |---|---|---|
+  | `NEEDS_RESPONSE` | `UNDER_REVIEW`, `WON`, `LOST`, `ACCEPTED`, `EXPIRED`, `CLOSED` | `EXPIRED` only on a provider signal or the application's expiry command |
+  | `UNDER_REVIEW` | `WON`, `LOST`, `ACCEPTED`, `CLOSED` | |
+  | `LOST` | `WON` | **late win** — the only permitted way out of `LOST` |
+  | `WON` / `ACCEPTED` / `EXPIRED` / `CLOSED` | — | terminal, no transition out |
+
+  `EXPIRED` is only reachable from a provider signal or from an explicit expiry command issued by the
+  application's clock. The aggregate has no timer of its own.
+- **`ACCEPTED` is not overwritten by the `lost` the provider reports afterwards.** F7's
+  `POST /v1/disputes/:id/close` moves the dispute to `lost` (the API does not know we conceded
+  deliberately, only that we stopped fighting). Our status records *why* — so the close emits
+  `DisputeAccepted` → `ACCEPTED`, and a later `charge.dispute.closed` carrying `lost` finds the
+  aggregate already terminal and emits nothing. A4 reads `ACCEPTED` as loss recognition. Test both
+  halves: the close reaching `ACCEPTED`, and the subsequent `lost` changing nothing.
+- **`ARBITRATION` has no producer.** Stripe does not support the phase; Nuvei's highest code in the
+  reference is `IPA` (pre-arbitration); ConnexPay's `CaseType` table tops out at pre-arbitration (9
+  and 24). The value stays in `DisputeStage` because the networks have the phase and D1 may reach it,
+  but **no adapter maps to it and no invariant may assume it is reachable**. A provider signal that
+  would land there is an unmapped-case error surfaced to the operator, not a silent default.
+- **`SubmissionState` moves like this** — the second axis, independent of the first:
+
+  | From | To | Trigger |
+  |---|---|---|
+  | `NONE` | `DRAFT` | evidence staged at the provider (Stripe `submit: false`) |
+  | `NONE` | `SUBMITTED` | operator marks a portal submission (ConnexPay only) |
+  | `DRAFT` | `SUBMITTED` | the submission call goes out |
+  | `DRAFT` | `UPLOAD_PENDING` | file uploaded, awaiting the provider's confirmation |
+  | `UPLOAD_PENDING` | `SUBMITTED` | upload confirmed, submission sent (F8 step 3) |
+  | `UPLOAD_PENDING` | `DRAFT` | the re-query shows the file was never accepted |
+  | `SUBMITTED` | `CONFIRMED` | the provider acknowledges the response — Nuvei's Image or Action callback, ConnexPay's `HasResponse: true` |
+
+  `CONFIRMED` is terminal and is **never synthesised**. Where a provider gives no acknowledgement
+  signal — Stripe does not — the state stops at `SUBMITTED` and stays there. `HasResponse: false` on a
+  later poll leaves `SUBMITTED` untouched; it does not demote it. Both axes are recorded on the
+  aggregate, but a change in one never implies a change in the other.
 - `DisputeReason` stores the raw code **and** the `CardBrand` **and** the category. Mapping raw code
   to category lives in a separate table-driven `ReasonCodeMapper` under `ValueObject/`. Visa `13.1`,
-  Mastercard `4853` and Amex `C08` do not collapse into one enum: evidence requirements differ, and
-  the hint logic hangs off the (brand, raw code) pair.
-- `DeadlineAt.isAuthoritative = false` when the date was computed by us rather than supplied by the
-  provider. This affects both the UI and escalation.
+  Mastercard `4853` and Amex `C08` do not collapse into one enum: the hint logic hangs off the
+  (brand, raw code) pair, and a code one brand does not issue must not become answerable through
+  another brand's entry.
+  Note what that argument is and is not — it is about **distinct codes never merging**, not about
+  every pair earning its own requirement set. F6's table is the authority on requirement sets, and
+  it deliberately gives `visa:13.1`, `mastercard:4853` and `amex:C08` the **same** set: "goods or
+  services not received" is one question asked by three networks. A pair earns a different set by
+  being a different *question*, not a different code. Do not "fix" the table by making every key
+  unique.
+- The deadline is a plain `\DateTimeImmutable` and nothing on it says where it came from. An earlier
+  revision carried a `DeadlineAt` value object with an `isAuthoritative` flag; it is gone because no
+  rule read it — escalation fires at a fixed offset from whatever date is stored, and the application
+  that applies a buffer knows it applied one. See the revision block at the top.
 - Idempotency: re-applying the same external signal produces no new domain event. The key is
-  `(GatewayId, GatewayDisputeRef, providerEventKey)`, where `GatewayId` comes from the message
-  header and `providerEventKey` is defined **per provider**:
+  `(GatewayId, DisputeId, providerEventKey)` — `GatewayId` from the message header, `DisputeId` the
+  case's own identity, `providerEventKey` defined **per provider**:
   - Stripe — the webhook `event.id` (already `ParsedEvent::$externalId`).
   - Nuvei — `DisputeEventId`.
-  - ConnexPay — **there is no event id.** The key is a stable hash of the case's normalised state
-    snapshot, computed by the adapter in F5. Fix the hashing contract here (which fields, what
-    normalisation) so F5 cannot drift from it.
+  - ConnexPay — **there is no event id.** The key is a hash of the case's normalised state snapshot,
+    computed by the adapter in F5 against the contract below.
+  **What the guard compares is narrower than that triple, and deliberately.**
+  `DisputeSignal` carries the provider's own key alone, and the aggregate compares it against the
+  **most recent** key it applied (`hasAlreadyApplied()` — one remembered value, never a set).
+  Neither `DisputeId` nor `GatewayId` is a component of the compared string: `DisputeId` is the
+  identity of the stream the comparison happens inside, which is what makes one component
+  sufficient, and `GatewayId` is a property of that stream too — a case is raised at one provider
+  and belongs to one gateway account for its whole life, so a gateway component could never tell two
+  keys inside one stream apart, while prefixing the key with it did write our account identity into
+  the event trail, since `signal_key` is recorded on every dispute event. The recorder is handed the
+  gateway as an argument and picks the stream with it, and `gateway_references.gateway_id` records it
+  durably against the case. Two aggregates may hold the same `providerEventKey` without colliding,
+  because a signal is only ever applied to the case the delivery resolved to.
+  **No component may be empty.** A blank `providerEventKey` is a malformed delivery or a mapping
+  bug: reject it as an error and surface it. It must never act as a wildcard matching every case, and
+  never as a constant that makes the second delivery look identical to the first. The reference is
+  not a component and cannot stand in as an empty one — see the field list above.
+- **The ConnexPay hashing contract** (F5 implements it verbatim; do not improvise a second one):
+  - Fields, in this order: `FamilyId`, `CaseNumber`, `CaseType`, `ReasonCode`, `ResolutionTo`,
+    `WinLoss`, `HasResponse`, `HasImage`, `IsSurrendered`, `DueDate`, `NetPosition`.
+  - Omission is meaningful: a field that is absent or `null` contributes the literal token `-`, and
+    so does an empty string. Absent and empty must not be distinguishable — the CMS API returns both
+    for the same underlying "not set".
+  - Per-field normalisation: dates as `Y-m-d` in UTC; amounts as integer minor units in the currency
+    the payload states; codes and enums as the raw provider value, case preserved, untrimmed.
+  - Serialise as `field=value` pairs joined by `\n` in the order above, then `sha256`, prefixed
+    `v1:`. If the field list ever changes, bump to `v2:` — a silent re-hash would make every open
+    case look new.
+  - The hash is of **the case, not the delivery**: `GetByUser` and `GetByResolvedDate` return the
+    same case in different shapes and must produce the same hash.
+  - **Where the hasher is implemented, and why `Domain` cannot hold it.** It is F5's own code, at
+    `src/ConnexPay/src/Dispute/ProviderSnapshotCanonicaliser.php`, beside the field list
+    `CaseSnapshot::hashFields()` assembles. A provider package reaches `['Common', 'Gateway']` and
+    nothing else (§0.4, `tests/Arch/PackageHierarchyTest.php`), so a hasher published under
+    `Domain\Dispute\*` is unreachable from `CaseDiffer`, `CaseSnapshot` and `DisputePoller`: the
+    contract would sit where its only caller is forbidden to look, and the Arch suite is what says
+    so. `Common` and `Gateway` are not right either — ConnexPay is the one provider with no event id
+    (Stripe has `event.id`, Nuvei has `DisputeEventId`), so a shared home would be a cross-provider
+    abstraction with a single consumer. **The aggregate is promised nothing about the hash's
+    internals**: it treats `providerEventKey` as opaque and only ever compares it, so what the hasher
+    owes is one stable key per case and a different key when the case changes — pinned by tests in
+    the package that computes it.
+- **Compare against the previous snapshot, not against a set of hashes ever seen.** F5 stores, per
+  `CaseNumber`, the **single most recent** hash and compares the new one to it; an unchanged case
+  emits nothing. A *set* of seen hashes would be a defect: any case that returns to an earlier
+  combination of values revisits an earlier hash, and a set suppresses that transition as a
+  duplicate. Keeping only the previous value makes such a return a change — which it is, and which is
+  precisely the transition the `HasResponse` and `WinLoss` mappings exist to report.
 
 **Done when:** aggregate unit tests are green under `--testsuite=Domain`, including every invariant
 above and at least one test per `providerEventKey` shape. Not a single line of gateway code.
@@ -236,22 +848,67 @@ above and at least one test per `providerEventKey` shape. Not a single line of g
 
 **Depends on:** F1.
 
-**Files:** `src/Domain/src/Dispute/Port/`, `src/Domain/src/Dispute/Port/Request/`
+**Files:** `src/Domain/src/Dispute/Port/`, `src/Domain/src/Dispute/Port/Request/` for the ports and
+their requests; `src/Domain/src/Dispute/Contract/` for the action interface and its visitor, and
+`src/Domain/src/Dispute/ValueObject/` for the three concretes and the set. The split is the ruling
+itself: **an action is a Domain value object, not a port type**, and this tree's visitor precedent
+divides the same way (`Common/src/Contract/Challenge.php` beside
+`Common/src/ValueObject/Challenge/RedirectChallenge.php` — ten `ValueObject` directories hold zero
+interfaces).
 
 **What to do:**
 
-Ports in the house shape — Request in, Outcome out:
+Ports in the house shape — Request in, Outcome out. The action model is **one value object per
+action behind an interface**, with the concrete type recovered by double dispatch — not one property
+bag with a `kind()`:
 
 ```php
-final readonly class DisputeAction
+// src/Domain/src/Dispute/Contract/
+interface DisputeAction
+{
+    /**
+     * @template TReturn
+     * @param  DisputeActionVisitor<TReturn>  $visitor
+     * @return TReturn
+     */
+    public function accept(DisputeActionVisitor $visitor): mixed;
+}
+
+/** @template TReturn */
+interface DisputeActionVisitor
+{
+    /** @return TReturn */
+    public function visitRespond(RespondDisputeAction $action): mixed;
+
+    /** @return TReturn */
+    public function visitAccept(AcceptDisputeAction $action): mixed;
+
+    /** @return TReturn */
+    public function visitDashboard(DashboardDisputeAction $action): mixed;
+}
+
+// src/Domain/src/Dispute/ValueObject/ — final readonly, each with a bare #[Override] accept()
+// that calls its own visit method; implementations carry no docblock (RedirectChallenge.php:35-39)
+final readonly class RespondDisputeAction implements DisputeAction
 {
     public function __construct(
-        public ActionType $type,               // RESPOND | ACCEPT | ACCEPT_PARTIAL
-        public Execution $execution,           // API | OPERATOR
-        public ?string $externalUrl,           // deep link into the portal, OPERATOR only
-        public ?EvidenceRequirements $requirements,
+        public ?EvidenceRequirements $requirements,   // the live read's pair, or nothing
         public \DateTimeImmutable $respondBy,
     ) {}
+}
+
+final readonly class AcceptDisputeAction implements DisputeAction
+{
+    public function __construct(
+        public Money $disputedAmount,                 // the ceiling, not the concession
+        public \DateTimeImmutable $respondBy,
+    ) {}
+}
+
+final readonly class DashboardDisputeAction implements DisputeAction
+{
+    /** Null when we hold no portal base for this provider; the case is surfaced either way. */
+    public function __construct(public ?string $dashboardUrl) {}
 }
 
 interface DisputeActionsPort
@@ -271,9 +928,49 @@ interface AcceptDisputePort
 }
 ```
 
-Three interfaces rather than one, because no provider implements all three the same way: ConnexPay
-has no API submission at all and would be forced to stub two methods it can never honour. This is
-the same reason `PaymentIntent` has `CapturePort`, `CancelPort` and `RefundPort` separately.
+`DisputeActionSet` moves from `Port/` to `ValueObject/` with the class-string keys: it holds at most
+one action per concrete class, so `has(RespondDisputeAction::class)` and
+`get(AcceptDisputeAction::class)` are psalm-typed and no enum is consulted anywhere. **There is no
+`ActionType` and no `Execution`** — "who performs this" is which class you are holding, answered by
+the visitor, and `ActionType::AcceptPartial` is gone because partiality is the sum the *call* states
+(`AcceptDisputeRequest::$partialAmount`), not a property of the action.
+
+The template on `accept()` is load-bearing and must be copied from `Common/src/Contract/Challenge.php`
+verbatim, bound parameter included. Without `@param DisputeActionVisitor<TReturn>` the type argument
+is unbound, psalm resolves it to `mixed`, and at `errorLevel="3"` the whole `MIXED_ISSUES` family is
+switched off (`Psalm/Config.php:1804-1809`), so the degradation is **silent**: `DisputeActionVisitor`
+ships, and a per-gateway implementation of it does not — no gateway in this tree holds a capability
+that is a strict subset of `{Respond, Accept}`.
+
+Three port interfaces rather than one, because no provider implements all three the same way:
+ConnexPay has no API submission at all and would be forced to stub two methods it can never honour.
+This is the same reason `PaymentIntent` has `CapturePort`, `CancelPort` and `RefundPort` separately.
+
+**Every request names the case by our own id, with one argued exception.**
+`AcceptDisputeRequest` and `SubmitEvidenceRequest` carry a `DisputeId` and none of the provider's
+names for the case: the adapter resolves the reference from `gateway_references` through
+`findForDispute()` — the `CaptureAdapter` shape — and an adapter that finds no row for a case of ours
+**throws** (`RuntimeException`) rather than falling back to a reference read off a request, because a
+missing row is our own bookkeeping and not the provider's answer. The exception is
+`AvailableActionsRequest`, which takes one of two named constructors rather than a nullable field
+pair, so a half-named case cannot be built:
+
+- `ofOurs(DisputeId $disputeId)` — a case of ours; the adapter resolves the provider's reference
+  itself, and the id is also how it reads our own state (a conceded case reports `lost` at the
+  provider, which is a non-empty answer there and an empty one here).
+- `unattributable(string $providerReference)` — a case we hold no aggregate for: no `DisputeId`, no
+  row keyed by one, and therefore no name but the provider's own (`CaseNumber` at ConnexPay). A blank
+  reference is refused at construction, as every blank reference in this domain is.
+
+**That second constructor is the only place a provider reference appears in the Domain's
+vocabulary, and it is passed through and never stored.** It exists because there is a real path on
+which a case we cannot resolve to an id of ours still has to be shown to somebody: resolution depends
+on a `gateway_references` row that A0 writes and that later calls overwrite, and
+`GatewayDisputeRecorder::onUnmatchedDispute()` (F5) is a producer of exactly those cases — a
+ConnexPay case whose `SaleGuid` names no payment of ours. What that constructor is **not** is a
+licence for a request that usually carries an id of ours to carry a provider's name as well, which is
+what the earlier revision's nullable `?DisputeId` invited; nor is it justified by the unsourced
+premise that `OrderNumber` may be empty (F5 states what that premise actually is).
 
 `AcceptOutcome` is not `void`: it carries what the provider did (accepted in full / accepted
 partially / already closed) so the aggregate records a fact rather than an assumption.
@@ -282,8 +979,26 @@ partially / already closed) so the aggregate records a fact rather than an assum
 provider offers no API action. An empty set means "this dispute isn't waiting on us": won, lost,
 accepted, expired, or challenging is disallowed by the rules.
 
-When an action is possible but a human performs it, return `Execution::OPERATOR` plus an
-`externalUrl`. This applies to all of ConnexPay.
+When an action is possible but a human performs it, return a `DashboardDisputeAction` carrying the
+deep link into the provider's portal — and **nothing else**. This applies to all of ConnexPay. The
+link is nullable, which is a fact rather than a degradation: `ConnexPayDisputePortalLink` is the only
+producer of an operator URL in the tree and its configuration key
+(`services.connexpay.dispute_portal_url`) is unset, and no Nuvei channel has a portal-link producer
+at all. The operator knows where the provider's panel is; the action says so, and the case is
+surfaced with or without a URL. **This deliberately retires the old
+`Execution::Operator ⇒ externalUrl !== null` invariant**, recorded as a reversal with reasons.
+
+**The rule that fills the set is not here — it is `DisputeAggregate::availableDisputeActions()`**
+(F1). It is a pure Domain query over the case's own stage, status and deadline, and it is the
+**ceiling**: `respond` when the status is `NeedsResponse` and a deadline is known, `accept` on top of
+that at every stage but `Inquiry`, with `disputedAmount()` supplying `AcceptDisputeAction`'s sum and
+the pair the live read states supplying `RespondDisputeAction`'s requirements. A provider adapter
+**may only subtract** from that answer. The two arguments' asymmetry is deliberate: a `respondBy`
+passed in wins over the aggregate's own and null means "the read stated none", because
+`deadlineAt()` is kept current by `changeDeadline()`; the evidence pair is **not** taken from the
+record as a fallback, because `reason()` is written once by `open()` (`DisputeAggregate.php:343`) and
+never moved, so the record would answer for the opening delivery's pair. Write the reasons for both
+into the aggregate's docblock.
 
 **Also here:** the cross-gateway recorder contract, in the Gateway package, next to its siblings:
 
@@ -294,8 +1009,11 @@ src/Gateway/src/Webhook/Recorder/GatewayDisputeRecorder.php
 ```php
 interface GatewayDisputeRecorder
 {
+    /** A case we can attach to a PaymentIntent. `$snapshot` always carries the gateway dispute ref. */
     public function onDisputeObserved(GatewayId $gatewayId, string $paymentIntentId, DisputeSnapshot $snapshot): RecorderOutcome;
 
+    /** A resolution, keyed on the provider's reference — a resolution may arrive with no
+     *  PaymentIntent in it. The snapshot's gateway dispute ref is what ties the two calls together. */
     public function onDisputeResolved(GatewayId $gatewayId, string $disputeRef, DisputeResolution $resolution): RecorderOutcome;
 
     /** ConnexPay only: a case we could not attach to any PaymentIntent. */
@@ -303,11 +1021,74 @@ interface GatewayDisputeRecorder
 }
 ```
 
-Like the other recorders it takes internal ids as plain strings — the Gateway package stays free of
-domain VOs (see the `TransactionIdResolver` docblock). The implementation is the application's.
+**Why the first two are keyed differently.** `onDisputeObserved` is reached *through* the
+PaymentIntent — the resolver found one — so the PaymentIntent is its key and the provider's reference
+rides inside the snapshot. `onDisputeResolved` cannot be: a resolution may arrive for a case whose
+PaymentIntent never resolved, or after a backlog import, so the reference itself has to be the key.
+**`DisputeSnapshot` must therefore carry the gateway dispute reference as a required field** — it is
+the only thing that ties the two calls to the same dispute, and without it the resolution lands on
+nothing.
 
-**Done when:** interfaces exist plus an in-memory fake for tests, and a test asserts that a fake
-ConnexPay-like adapter returns a non-empty set with `Execution::OPERATOR`.
+**That field belongs to a DTO at the ingestion boundary, not to the aggregate.** `DisputeSnapshot`
+lives in `src/Gateway/`, which is where a provider's name for a case legitimately appears: the
+delivery carries it, the resolver has not yet found an aggregate for it, and
+`RecorderOutcome::NotFound` is how an implementation says "not observed yet". What the Domain never
+sees is the reference — the aggregate holds `DisputeId` and `PaymentIntentId` (F1) and nothing of the
+provider's. The implementation that maps one onto the other is also the one place holding both halves
+at once, which is why writing the `gateway_references` row is A0's rather than the aggregate's
+(below).
+
+**Where those types live, and what they may carry.** `DisputeSnapshot`, `DisputeResolution` and
+`UnmatchedDispute` are declared next to this interface in `src/Gateway/src/Webhook/Recorder/`, as
+**flat DTOs of scalars, enums, `Money` and `\DateTimeImmutable`** — the types `GatewayFeeRecorder`
+already uses. No `Domain\Dispute\*` value object crosses into the Gateway package; the
+"Gateway stays free of domain VOs" convention (§0.3, `TransactionIdResolver` docblock) holds. They
+carry everything F3–F5 learn — stage, status, the deadline the provider stated, fees, provider codes — precisely
+so F1's aggregate can be created straight into a terminal state. Mapping the flat DTO onto domain VOs
+happens *inside* the implementation, in the application or in `src/Laravel/`.
+
+**Dispute-reference storage — what makes the lookups above possible.** The mapping between our id and
+the provider's name for a case is a row in the polymorphic `gateway_references` table, whose shape is
+`(gateway_id, referenceable_type, referenceable_id) → reference`. So:
+
+- add `TYPE_DISPUTE = 'dispute'` next to `TYPE_PAYMENT_INTENT` / `TYPE_REFUND` in
+  `EloquentGatewayTransactionRepository`;
+- add the pair `findForDispute(string $disputeId): ?string` and
+  `saveForDispute(GatewayId $gatewayId, string $disputeId, string $reference): void` to
+  `Gateway\Contract\GatewayTransactionRepository`, mirroring `findForRefund` / `saveForRefund`
+  exactly. This is the one the four dispute port adapters depend on, and it is deliberately on the
+  Gateway contract rather than on the Domain side: it is provider bookkeeping, and the Domain's
+  vocabulary does not name a provider reference at all (F1);
+- add `resolveDispute(GatewayId $gatewayId, string $disputeRef): ?string` to
+  `EloquentTransactionIdResolver`, parallel to the two methods already there — the reverse direction,
+  for a resolution that arrives addressed by the provider's own reference rather than by our id.
+
+**The row is read in both directions and written in one.** By our id, from the port adapters; by the
+provider's reference, from `resolveDispute()`. It is written by A0's `GatewayDisputeRecorder`
+implementation when a case is observed — and **nothing implements that interface yet**: A0 is
+unwritten, so today no dispute-reference row is ever written and both lookups return `null`. That is
+the honest state of it. F2 declares the storage and the types, F3/F4/F5 produce the snapshots, and
+the write is Part II's.
+
+**No migration and no model are needed**, which is why this does not collide with rule 7:
+`referenceable_type` is a plain `string` column with no enum constraint and no morph map is
+registered, and `referenceable_id` is a uuid — our `DisputeId` is one. Writing the row is A0's job,
+since the recorder implementation is the one place holding both halves at once: the aggregate holds
+our id and the observation carries the provider's, and nothing else in the tree holds both. One trap:
+never call `$row->referenceable()` on a dispute row — with no morph map entry `MorphTo` will look for
+a class named after the type and fail. The resolver queries the table directly and does not.
+
+**Fraud reports get their own recorder, not this one.** F4's `Fraud reported Transaction` (TC40) is
+not a dispute and must not reach `Dispute`. It needs its own interface in the same directory —
+`GatewayFraudReportRecorder` — because A6's VAMP numerator reads it independently of any dispute.
+Declaring it here is what makes F4 buildable.
+
+**Done when:** interfaces exist plus an in-memory fake for tests; the `TYPE_DISPUTE` row round-trips
+in **both** directions — by our id through `findForDispute()`, by the provider's reference through
+`resolveDispute()`, with the row written by the test itself because nothing implements the recorder
+yet; and a test asserts that a fake ConnexPay-like adapter returns a non-empty set carrying a
+`DashboardDisputeAction` and a working deep link — the non-emptiness is the assertion, since an empty
+set here would be the false statement that the case is not waiting on us.
 
 ---
 
@@ -335,7 +1116,7 @@ through `VerifierRegistry`, and `InboundWebhook` hands verifiers the raw body ex
 | `warning_under_review` | `UNDER_REVIEW` |
 | `warning_closed` | `CLOSED` (inquiry sat 120 days without escalating) |
 | `needs_response` / `under_review` / `won` / `lost` | `stage = CHARGEBACK`, status maps directly |
-| `evidence_details.due_by` | `DeadlineAt(isAuthoritative: true)` |
+| `evidence_details.due_by` | `deadlineAt` |
 
 **Guaranteed traps:**
 
@@ -347,8 +1128,12 @@ through `VerifierRegistry`, and `InboundWebhook` hands verifiers the raw body ex
 - Unchallengeable disputes arrive already `lost`, and the API doesn't distinguish them from ordinary
   ones. The handler must report a snapshot that lets the aggregate be created directly in a terminal
   state rather than blowing up on "dispute closed but never opened".
-- An unknown `payment_intent` is `HandlerOutcome::Delay`, not an exception — same as
-  `ChargeUpdatedHandler` does today.
+- A **missing** `payment_intent` and an **unresolvable** one are different outcomes, and
+  `ChargeUpdatedHandler` already draws the line (`ChargeUpdatedHandler.php:50,62`): absent from the
+  payload → `HandlerOutcome::Skipped` (the event is not about a payment we track); present but not
+  found through `GatewayReference` → `HandlerOutcome::Delay` (arrival order — the reference may be
+  written a moment later). Neither throws, and the difference is worth keeping: `Skipped` is final,
+  `Delay` retries.
 
 **Done when:** the F0 Stripe contract tests are green, including "dispute arrives already `lost`"
 and "a second dispute on the same PaymentIntent produces a second `DisputeId`".
@@ -357,16 +1142,35 @@ and "a second dispute on the same PaymentIntent produces a second `DisputeId`".
 
 ### F4. Nuvei: ingestion
 
-**Depends on:** F2. **Blocked** until REST 2.0 access and direct-acquirer status are confirmed.
+**Depends on:** F2. **Split by channel (2026-09-14).**
 
-**Files:** `src/Nuvei/src/Webhook/DTO/`, `src/Nuvei/src/Webhook/Handler/ChargebackHandler.php`;
-registration in `NuveiWebhookSubscriber`; a client for
-`GET /entities/{entity-id}/disputes/{dispute-id}`.
+- **F4-notification** — the `Chargeback` event-DMN handler, the snapshot it builds and the recorder
+  call — is the whole of what 1.0 can carry, and **it is built** (2026-09-14): `ChargebackEvent` reads
+  the nested delivery, `DisputeMapping` carries the code table, `ChargebackHandler` resolves the
+  payment and calls the recorder, and `NuveiWebhookSubscriber` registers the handler under `EventType:
+  Chargeback`. Two of its statements were wrong and one file was missing from its list — see the
+  revision block at the top of this document. What it still lacks is one captured payload answering
+  the checksum question below; its fixtures are `.doc-sample.json` (F0) and are replaced in place when
+  a real body arrives.
+- **F4-read** — `ReadsDisputeCases`, the case history and `availableActions` — and **F8** stay
+  **blocked** until REST 2.0 access and direct-acquirer status are confirmed. No 1.0 endpoint reads a
+  case, so nothing on this channel can answer `concedable` or `awaitingResponse`; F8's operator handoff
+  is F9's `DashboardDisputeAction` shape with a configured deep-link base, not an API call.
 
-**What to do:** a `Chargeback` DMN handler plus the history pull.
 
-**Mapping:** `DisputeUnifiedStatusCode` → stage and status, table-driven (see reference). The latest
-event's `expirationDate` → `DeadlineAt(isAuthoritative: true)`.
+**Files:** `src/Nuvei/src/Webhook/DTO/ChargebackEvent.php`,
+`src/Nuvei/src/Webhook/DisputeMapping.php`, `src/Nuvei/src/Webhook/Handler/ChargebackHandler.php`;
+registration in `NuveiWebhookSubscriber`; `src/Nuvei/tests/Fixtures/Disputes/*.doc-sample.json`.
+**F4-read adds,** when it unblocks, a client for
+`GET /entities/{entity-id}/disputes/{dispute-id}` — that file was on this list by mistake, and it is
+a read.
+
+**What to do:** a `Chargeback` DMN handler. The history pull belongs to F4-read.
+
+**Mapping:** `DisputeUnifiedStatusCode` → status and stage, table-driven (see reference). The stage is
+read from the code and **not** from `Chargeback.Type`, which is the case's *origin* kind and never
+changes; `Type` answers only where the code yields no stage. The deadline is `Chargeback.DisputeDueDate`
+→ `deadlineAt` — not `expirationDate`, which is the REST 2.0 field.
 
 **On the checksum — read this before writing any verification code.**
 
@@ -383,12 +1187,33 @@ The raw body already reaches the verifier untouched — `InboundWebhook::from()`
 any candidate credential is tried, and the class exists precisely to make the "someone consumed the
 stream" bug unrepresentable. **There is nothing to fix in the middleware.**
 
-The actual task is a determination, not an implementation: from the F0 fixtures, establish which of
-the two channels dispute DMNs arrive on. If it is the JSON Notification channel, the existing branch
-covers it and F4 adds only the payload DTO. If dispute DMNs turn out to use a third scheme —
-"secret + concatenation of all JSON values in the order sent", which is how the integration docs
-describe it — that is a **new branch in the existing verifier** with its own test against a raw
-fixture, not a new verifier. Report the finding before implementing.
+The determination was made and it **was** the third scheme — implemented (2026-09-14) as a new branch
+in the existing verifier, with its tests. The reasoning is kept, because the branch's own docblock has
+to keep saying it. The two implemented branches key off fields the documented Chargeback DMN does not
+carry: the form-encoded branch hashes `totalAmount + currency + responseTimeStamp + PPP_TransactionID +
+Status + productId` (`ChecksumVerifier.php:66`); the documented Chargeback fields are
+`DisputeDueDate`, `DisputeId`, `DisputeEventId`, `DisputeUnifiedStatusCode`, `ChargebackReason`,
+`ChargebackReasonCategory`, `TransactionDetails.Arn`. The intersection is nearly empty, so that
+branch would hash the secret against six empty strings. The JSON branch needs `EventCorrelationId`
+(`ChecksumVerifier.php:83`), which is not in that field list either. So:
+
+1. **The merchant gate is where the branch goes, and the pair is absent.** The event DMN carries no
+   merchant pair at all, so `ChecksumVerifier::verify()` reached `return false` for every one of them
+   and no handler work could change that. The new branch sits exactly there: a pair-less delivery
+   carrying an event-DMN marker (`EventType` / `EventCorrelationId`) is verified as
+   `sha256(merchantSecretKey + the payload's values concatenated in the order sent)`, and every other
+   delivery keeps today's answer. It is therefore reachable **only** where the old code answered
+   `false` — a structural guarantee, and the reason no delivery that verifies today can change its
+   answer.
+2. If the pair is present **and** `EventCorrelationId` is present, the existing JSON branch covers it
+   and F4 adds only the payload DTO. Unchanged, and a Notification is still `sha256(secret + rawBody)`.
+3. What the branch cannot do, stated rather than implied: with no pair the tenant is **not** matched.
+   It is identified by *which* candidate credential's secret validates the header — the registry's
+   existing multi-tenant loop — so for this shape the checksum is the whole of the authentication.
+
+**A determination the fixture settled in the other direction, worth recording:** the parser *did* need
+a change — see the revision block. It is not mentioned here because the field list suggested otherwise,
+which is precisely why the falsified claim is written down rather than quietly deleted.
 
 **Remaining traps:**
 
@@ -396,7 +1221,8 @@ fixture, not a new verifier. Report the finding before implementing.
   `FRI3dJoEHQ/f8gaGUi86So4F8AQiznNgxWZFLvDJVxhBU3tq0kzakLH6wWpM+Llc`). `rawurlencode` on path
   substitution is mandatory, with a round-trip test.
 - The `Fraud reported Transaction` DMN is TC40/SAFE, **not a dispute**. It gets its own handler and
-  its own recorder call; never route it into `Dispute`. It is what A6 needs for VAMP.
+  its own recorder call, through `GatewayFraudReportRecorder` (declared in F2) — never through
+  `GatewayDisputeRecorder`, and never routed into `Dispute`. A6's VAMP numerator is its only reader.
 
 **Done when:** Nuvei contract tests are green; the checksum channel is documented in the adapter's
 docblock with a test against a raw fixture; a URL-encoding test on the ID passes.
@@ -408,7 +1234,7 @@ docblock with a test against a raw fixture; a URL-encoding test on the ID passes
 **Depends on:** F2.
 
 **Files:** `src/ConnexPay/src/ConnexPayDisputesClient.php`,
-`src/ConnexPay/src/Dispute/{CaseDiffer,CaseSnapshot,DisputePoller}.php`
+`src/ConnexPay/src/Dispute/{CaseDiffer,CaseSnapshot,DisputePoller,ProviderSnapshotCanonicaliser}.php`
 
 **What to do:** a client and a **pollable service** — not a scheduled job. The schedule is A0's; this
 package exposes `poll(PollWindow): PollResult` and the application decides when to call it.
@@ -433,39 +1259,131 @@ provider has already closed them. Cursor **storage** is the application's (A0); 
 window and returns the new one.
 
 **Deduplication without event IDs.** ConnexPay returns a state snapshot. The differ hashes the
-normalised snapshot per `CaseNumber` using the contract fixed in F1, compares against the hash
-handed to it by the caller, and emits recorder calls only from the diff.
+normalised snapshot per `CaseNumber` using the contract fixed in F1, compares against **the single
+most recent hash** handed to it by the caller, and emits recorder calls only from the diff. One hash
+per case, not a set of hashes ever seen — F1 explains what a set loses. This path is a poll, not a
+webhook delivery, so it does not go through the webhook idempotency store and the empty-`external_id`
+hazard there does not apply to it; `PollResult` carries the new hashes back for the caller to store
+next to the cursor.
 
 **Mapping:**
 
 | ConnexPay | Domain |
 |---|---|
-| `FamilyId` | aggregate key (groups first chargeback, representments, reversals) |
-| `CaseNumber` | key of an individual `DisputeEvent` within the family |
-| `OrderNumber` | link to the PaymentIntent — primary matching key |
-| `Arn` | secondary matching key, shared across all cases of a transaction |
+| `FamilyId` | the provider's own reference for the family — what groups a first chargeback, its representments and its reversals; carried as the snapshot's `familyRef` so a recorder routes a later cycle to the aggregate the first one opened, **not** because the aggregate is identified by it |
+| `CaseNumber` | key of an individual case-cycle event within the family |
+| `SaleGuid` | link to the PaymentIntent — **primary** matching key; the guid the `gateway_references` row holds once the sale is confirmed |
+| `OrderNumber` | second matching key — our own PaymentIntent id, in the row only between the hosted-page request and the sale webhook that overwrites it |
+| `Arn` | last, shared across all cases of a transaction — **not a working fallback here**: nothing in this repository stores one |
 | `CaseType` | stage — table in the reference, use it verbatim |
 | `ResolutionTo` | `M` → waiting on us; `B` → waiting on the bank; `S` → split; `G` → moved to GL |
-| `DueDate` | `DeadlineAt(isAuthoritative: true)` |
+| `DueDate` | `deadlineAt` |
 | `HasResponse` | confirmation that a response landed — drives `SubmissionState::CONFIRMED` |
 | `NetPosition` | source of truth for money in A4 |
 | `WinLoss` | derived, display only |
 | `CardBrand` (1–5) | `Common\ValueObject\CardBrand` |
 
-**Unmatched cases.** `OrderNumber` may be empty, may belong to another system, and `Arn` may be
-absent on early events. A case that matches neither is **not** dropped and **not** retried forever:
-it goes out through `GatewayDisputeRecorder::onUnmatchedDispute()` with everything we know, and its
-snapshot hash is stored like any other so the next poll doesn't re-emit it. Without this the poller
-silently loses cases, which is the same failure mode as the missing second cursor and just as hard
-to notice.
+**`DisputeStatus` has no source in this table yet, and closing that is part of this task.** F1's
+`open()` requires a status, and none of the three position fields above produces one: `CaseType`
+gives the stage, `ResolutionTo` gives who is waiting, and `WinLoss` is dismissed in the table above
+as display-only — so nothing here says whether a newly observed case is `NEEDS_RESPONSE` or already
+`UNDER_REVIEW`, or whether a case gone quiet under review is `WON` / `LOST`. Deriving it from
+`ResolutionTo` together with `WinLoss` is the obvious candidate (`M`, waiting on us →
+`NEEDS_RESPONSE`; a win/loss outcome → `WON` / `LOST`), but that is **provider semantics and must be
+confirmed against ConnexPay's own documentation before it is written**, exactly as this plan treats
+every other provider-code claim. A mapping invented from the field names alone is the confident
+silence the rest of this document keeps refusing, and it lands on the aggregate's most consequential
+axis. Carry both raw fields on the snapshot — F2's DTO does — and write the mapping here, once, for
+F5 and F9 to share.
+
+**These tables live here, once.** `CaseType → DisputeStage` (reference) and `ResolutionTo →
+waiting-on` are needed by both this task and F9, and F9 must consume what is declared here rather
+than restate it — two independent copies of the same provider semantics inside one package drift
+apart, and nothing fails loudly when they do. F9 therefore depends on F5, not only on F6.
+
+**Matching: `SaleGuid` first, then `OrderNumber`, then `Arn` — and the order is a fact about our own
+table, not a preference.** All three go through the same `TransactionIdResolver`, and each one's
+standing is different:
+
+1. **`SaleGuid` — primary, and the one that ordinarily resolves.** It is ConnexPay's own guid for the
+   sale the case is against — the value the case payload documents — and it is exactly what the
+   `gateway_references` row holds once the sale is confirmed, for both a card-data sale (the guid the
+   sales API returns synchronously) and a hosted-page sale (the guid the sale webhook carries).
+   `TransactionIdResolver::resolvePaymentIntent()` matches `gateway_references.reference` **exactly**
+   (`EloquentTransactionIdResolver:22-29`): it does not recognise our aggregate id, and no row stores
+   a `CaseNumber`.
+2. **`OrderNumber` — second, and narrower than it looks.** It is *our* PaymentIntent id, sent as
+   `clientUniqueId`, so `resolvePaymentIntent()` can match it only while the row still holds it:
+   between the hosted-page request (`CreateAdapter:80` stores `$result->reference`, and for the hosted
+   page that reference *is* our `OrderNumber` — ConnexPay returns no guid, because the sale does not
+   exist until somebody pays) and the sale webhook, which **overwrites that same row** with the sale
+   guid (`SaleApprovedHandler` → `onGatewaySuccess(..., $saleGuid, ...)` →
+   `EloquentPaymentIntentRecorder:94` → `saveForPaymentIntent`). After the sale lands, the row no
+   longer answers to the order number.
+3. **`Arn` — last, and not a working fallback.** Nothing in this repository ever stores an `Arn`: a
+   grep finds the word only inside this dispute domain, so the branch resolves only if an application
+   outside this tree happened to store one against a payment intent of ours. It is tried because the
+   payload carries the field and because a lookup costs nothing, and an operator reading an unmatched
+   case should see it — not because anything here can be expected to match on it. A test asserting
+   that it resolves would be asserting a row this repository never writes.
+
+`CaseSnapshot` reads `SaleGuid` as a nullable field and deliberately **not** into `hashFields()`: the
+hash is a change detector over the case's state, and the guid is stable identity (F1). `UnmatchedDispute`
+gains a nullable `saleGuid` in the same change, so a case that matched nothing still hands the
+operator the one reference on it that can be resolved back to a payment.
+
+**Unmatched cases.** This section previously stated as fact that `OrderNumber` "may be empty, may
+belong to another system, and `Arn` may be absent on early events". **That premise is not sourced and
+is now carried as a premise pending captured payloads.** The only payloads any test here has seen are
+hand-written from ConnexPay's documented field list and its own sample response, and the package's own
+test docblock says exactly that — "**None of it was recorded from ConnexPay.** F0 replaces them in
+place with real captured payloads". What follows from the order above does not depend on the premise,
+and is the reading this document now uses: **with `SaleGuid` tried first, a case that matches nothing
+is one whose guid names no payment of ours** — a sale we never processed, not a field the provider
+left out. So a case that matches none of the three is **not** dropped and **not** retried forever: it
+goes out through `GatewayDisputeRecorder::onUnmatchedDispute()` with everything we know and its
+snapshot hash is stored like any other, so the next poll doesn't re-emit it. The requests an
+operator's screen is then built from are `AvailableActionsRequest::unattributable($providerReference)`
+(F2) — a case with no aggregate of ours has no id to be named by, and this queue is where such a case
+comes from. Without this the poller silently loses cases, which is the same failure mode as the
+missing second cursor and just as hard to notice.
+
+**The overwrite on capture is why this works, not a hazard to it — and that is settled from our own
+code, not left open.** `EloquentGatewayTransactionRepository::save()` overwrites `reference` on
+transition while merging `metadata`, and a ConnexPay capture does return a reference
+(`Capture::capture()` — `outcome($response['sale'] ?? $response)`, with the sale's guids, not the
+capture's, being what later Returns and Voids expect — through
+`MapsConnexPayOutcome::outcome()`'s `successReference()`), which `CaptureAdapter:79-80` writes back.
+The row's `reference` is therefore replaced on capture — **with the settled sale's reference, and a
+chargeback is raised against the settled transaction**, so the value left in the row is exactly the
+one the case names. The order above depends on that, and the tree already documents where the
+*opening* reference belongs instead: `MapsConnexPayOutcome::openingMetadata()` keeps it in
+`metadata['opening_transaction_reference']` precisely because "`reference` overwrites on transition,
+so once a capture lands the row holds the settle reference" — and `metadata` is merged, never
+replaced. No durable home needs inventing; one exists for the reference that does move. What this
+settles on its own is the card-data sale, where no separate capture happens and the row holds the
+guid the sale itself named; the auth-only path is what the next paragraph leaves to a live check.
+
+**What is still open is narrower, and belongs to a live-API check.** Whether the guid a capture
+returns for an **auth-only** payment is the same string a case names as `SaleGuid` — i.e. whether the
+settled reference and the case's guid are the same value for that path — and how `PartialCapture`
+relates to it. A card-data sale takes no separate capture, so the question does not arise for it. The
+repository has env-gated live integration tests since commit `3938c18`; that is where it is answered,
+and it is not to be inferred from the documentation here.
 
 **Also here:** retries with exponential backoff, a cap on cycle duration, and a `lastSuccessfulPoll`
 timestamp on `PollResult` so the application can alarm on staleness. If the poller dies quietly
 nobody notices — unlike webhooks, where delivery fails visibly on the provider's side.
 
 **Done when:** ConnexPay contract tests are green; a diff test passes (re-running with the same
-payload emits nothing); matching tests pass for `OrderNumber`, for the `Arn` fallback, and for the
-unmatched path.
+payload emits nothing); **the matching test that matters is that a case whose `SaleGuid` resolves
+reaches `onDisputeObserved()` rather than the unmatched queue** — that is the case the old
+`OrderNumber`-first order sent to the operator by mistake, so it is the one that has to be pinned.
+The two later keys get narrower assertions: that `OrderNumber` is tried after `SaleGuid`, and that a
+case only the `Arn` branch could have identified **lands unmatched** unless something outside this
+repository stored one — an `Arn` test that asserts resolution would be asserting a row nothing in
+this tree writes. Plus the unmatched path itself, asserting that the `UnmatchedDispute` handed to the
+recorder carries the case's `SaleGuid`.
 
 ---
 
@@ -488,8 +1406,19 @@ record, cancellation policy, cancellation confirmation.
 The *collection* API for projects is the application's (A2). What lives here is the shape and the
 requirement table, because both submission adapters need it and neither should own it.
 
-**Done when:** three different pairs (Visa 13.1, Mastercard 4837, Visa 10.4) yield three different
-requirement sets.
+**Done when:** three pairs that pose three **different questions** — Visa `13.1`, Mastercard `4837`,
+Visa `10.4` — yield three different requirement sets. These three, and not F1's trio: `4853` and
+`C08` are the *same* question ("not received") asked by other networks and share a set on purpose, so
+a Done-when built from them cannot be satisfied without either inventing differences or merging what
+should stay apart. Test the sets pairwise for distinctness **and** the project-supplied subsets
+pairwise too — a difference only in system-supplied types is one no project can act on.
+
+**The requirement sets are not in the Provider Reference.** It fixes endpoints, status codes and
+`CaseType` mappings and states no network's evidence requirements at all, so this task cannot be
+built from the section the header calls ground truth. The keys are traceable to codes this plan
+names; the sets are our reading of what each code puts in issue, and must be re-checked against the
+networks' own documentation before F7/F8 ship. Say so in the class docblock, and leave a code the
+plan never mentions absent rather than invented.
 
 ---
 
@@ -499,7 +1428,22 @@ requirement sets.
 
 **Depends on:** F6.
 
-**Files:** `src/Stripe/src/Dispute/` (adapter implementing the F2 ports)
+**Files:** `src/Stripe/src/Dispute/` (the File Upload and dispute calls, and the provider-code
+mapping), a new `Gateway\Role\*` interface in `src/Gateway/src/Role/`, and the `SubmitEvidencePort` /
+`AcceptDisputePort` implementations in `src/Laravel/src/Port/`. The split is §0.4's: a provider
+package cannot implement a `Domain\Dispute\Port\*` interface, so `src/Stripe/` names no port type.
+
+**The adapter resolves the provider's reference in the `CaptureAdapter` manner, and throws when there
+is none.** Every dispute port implementation — the `SubmitEvidenceAdapter` and `AcceptDisputeAdapter`
+this task builds for the submission and concession roles, F8's wiring of Nuvei onto those same two
+roles, and the `DisputeActionsPort` implementations F9 adds — takes our `DisputeId` off the request,
+asks `GatewayTransactionRepository::findForDispute()` what the provider knows the case as, and calls
+the gateway role with that. **A missing row throws `RuntimeException`**, exactly as
+`CaptureAdapter:62-67` does: a case of ours with no stored reference is our own bookkeeping missing,
+not the provider's answer, and it must never be answered by reading a reference off the request. The
+unattributable ConnexPay case is the single request that carries a provider reference, and it is
+admitted by its own constructor (`AvailableActionsRequest::unattributable()`, F2) rather than by a
+nullable field that every other caller would have to be trusted not to fill.
 
 **What to do:**
 
@@ -519,7 +1463,8 @@ Limit: 150,000 characters total across all text evidence fields — validate bef
 with a typed exception rather than letting Stripe reject the call.
 
 **Done when:** a staging test passes (evidence sent with `submit: false` leaves the aggregate in
-`DRAFT` and out of `UNDER_REVIEW`) and an irreversibility test on close passes.
+`DRAFT` and out of `UNDER_REVIEW`), an irreversibility test on close passes, and a missing-row test
+passes: a request naming a dispute with no stored reference throws before the gateway is called.
 
 ---
 
@@ -527,7 +1472,12 @@ with a typed exception rather than letting Stripe reject the call.
 
 **Depends on:** F6, F4.
 
-**Files:** `src/Nuvei/src/Dispute/`
+**Files:** `src/Nuvei/src/Dispute/` (the file upload, the action call, and the unified-status-code
+mapping), a new `Gateway\Role\*` interface in `src/Gateway/src/Role/`, and the port implementations
+in `src/Laravel/src/Port/` — §0.4: `src/Nuvei/` cannot name a `Domain\Dispute\Port\*` type. Both
+resolve the case's reference through `findForDispute()` and throw when there is no row, in F7's
+stated shape; a Nuvei case id containing `/` and `+` is something the adapter *reads* from the table,
+never something a request carries.
 
 **What to do:** a two-phase flow.
 
@@ -545,6 +1495,31 @@ implementing. Until then, carry both fields in the DTO and log which one was acc
 `availableActions` comes **from the response for the specific case**, not from static adapter
 configuration. Nuvei returns this array dynamically; a static flag would throw the information away.
 
+**F2 makes that array a narrowing veto and not the source of availability.** The set is built from
+`DisputeAggregate::availableDisputeActions()` — the case's own ceiling — and this read may only
+**subtract** from it: a case the response does not name an action for loses it, and a case the
+response names an action for that the aggregate does not admit gains nothing. Both directions are
+required, and the second is the one worth stating: `availableActions` is a fact *about* the case, not
+a permission, and an action offered on a case that is not waiting on us is an irreversible call on a
+case somebody else already decided. The same clause is what makes the empty set mean "not waiting on
+us" rather than "this provider has no call" (F2's critical requirement).
+
+**`PARTIAL` is a sum, not a type, and it needs no flag on the action.** The array distinguishes
+`ACCEPT` from `PARTIAL`, and F2 deletes `ActionType::AcceptPartial` and rules out an `allowsPartial`
+flag — deliberately, because partiality is *derivable* rather than declarable: a concession is partial
+when the sum conceded is less than the sum at stake. `AcceptDisputeAction::$disputedAmount` is the sum
+at stake (the ceiling), `AcceptDisputeRequest::$partialAmount` is the sum conceded (`null` = the whole
+case), and the provider's own answer comes back as `AcceptOutcome::acceptedPartially()` with
+`wasPartial()`. Nothing about the two-action case needs a third value: `PARTIAL` in this array says
+which call the API will accept on *this* case, and the amount the caller states is what makes the
+request one or the other. **An adapter whose provider cannot honour a part refuses the call and never
+rounds it up** (`AcceptDisputeRequest`'s docblock: accepting fully is irreversible and the difference
+is the entire disputed amount), so a case where only a part is permitted fails visibly rather than
+conceding more than the caller asked for.
+
+The one thing genuinely not carried is `REJECT`, which is a response and not a concession — it is
+F8's step 3 with a file, not an action F2 models.
+
 The callback timeout is a policy, so the adapter does not own the timer: it exposes the
 `UPLOAD_PENDING` state with the timestamp of the upload, and A1 escalates. What the adapter must
 provide is the ability to re-query the case so the application can tell "callback lost" from "file
@@ -557,13 +1532,69 @@ shows no file".
 
 ### F9. ConnexPay: operator handoff
 
-**Depends on:** F6.
+**Depends on:** F6, F7 for the `ReadsDisputeCases` role and its command/reading types (consume them,
+do not invent a second read shape), and F5 for the shared `CaseType` / `ResolutionTo` mapping —
+consume it, do not restate it.
 
-**Files:** `src/ConnexPay/src/Dispute/`
+**Files:** `src/ConnexPay/src/Dispute/` (the CMS read behind a `ReadsDisputeCases` implementation on
+`ConnexPayGateway`), `src/Laravel/src/Port/` for the `DisputeActionsPort` implementation (§0.4:
+`src/ConnexPay/` cannot name `DisputeAction`, `DisputeActionSet` or `DashboardDisputeAction`), and
+`src/Laravel/src/Dispute/` for the
+deep link and the evidence composition — **not** `src/ConnexPay/`, whatever the earlier revision of
+this line said; see the revision note.
+**No new role interface**: F7 already declared `Gateway\Role\ReadsDisputeCases` (with
+`Command\DisputeCaseQuery` and `Contract\DisputeCaseReading`) and there is no role for ConnexPay to
+add — it has no API submission and no API concession, so both of its portal actions are operator
+actions. Reuse F5's `ConnexPayDisputesClientInterface` for the read; it is already the one place the
+CMS host and Basic-auth live.
 
-**What to do:** implement `DisputeActionsPort` returning `Execution::OPERATOR` with a deep link into
-CMS, and the PDF package builder matching their requirements: legible, large enough, black-and-white
-print, portrait orientation. The portal accepts PDF and JPEG.
+**What to do:** implement `DisputeActionsPort` (in `src/Laravel/src/Port/`, returning a
+`DashboardDisputeAction` carrying a deep link into CMS), and the PDF package builder matching their
+requirements: legible, large enough, black-and-white print, portrait orientation. The portal accepts
+PDF and JPEG.
+
+**The substitution is the one place in the model that is neither a ceiling nor a subtraction, and
+both docblocks must say so rather than implying a subtraction.** This adapter consults the case's own
+answer for whether anything is left on it, and then travels an action of its own: the link, in place
+of the API call the case named. Two consequences follow and both must be pinned by tests rather than
+left implicit — the concession is **dropped** even where the case admits one (ConnexPay's CMS API has
+no call to close a case, no payload states whether the portal would take one, and offering an
+irreversible act on a guess is the same class of mistake as guessing the portal's hostname), and the
+link is **offered on an inquiry**, where the case admits a response and no concession, because a
+response is work for a human and nothing about the substitution depends on *which* actions the case
+named — only on whether it named any.
+
+**And the deadline and the template are lost here, deliberately.** A `DashboardDisputeAction` carries
+the link and nothing else (the owner's ruling), so an **unattributable** ConnexPay case answers a link
+alone while the response window runs — an attributable one can still read `deadlineAt()` from its own
+aggregate. Recorded with the reason rather than left to be discovered.
+
+**Two ways into the adapter, and the reference is resolved differently in each — F2's rule, applied.**
+For a case of ours the request carries a `DisputeId` and the adapter reads the `CaseNumber` out of
+`gateway_references` with `findForDispute()`, throwing when there is no row: the CMS read is addressed
+by a reference, and a case of ours with no stored one is our bookkeeping missing, not an empty answer
+about the case. For an unattributable case the request was built by
+`AvailableActionsRequest::unattributable()` and the provider's own reference **is** the name it
+carries — that is the only reason the constructor exists, and the reference is passed through without
+ever being stored. The two paths differ in what they may consult as well as in how they are named:
+only the attributable one can ask our aggregate whether the case is still waiting on us (F7's
+`ReadsDisputeCases` reading is what answers it), and the unattributable one answers from the
+provider's rules alone.
+
+**The deep link's base URL is not in the reference** — see the revision note. Take it from
+configuration and report which variable must be set; do not derive it from the API host, and do not
+let F9's Done-when pass on a link built from a guessed portal origin. What the code owes is the
+*shape* (case identity in the query, so an operator lands on the case rather than a search box), and
+a test that pins the shape against whatever base it is handed.
+
+**The PDF package builder has no library and no home yet.** Nothing in the tree produces a PDF and no
+`composer.json` declares one (`dompdf`, `mpdf`, `tcpdf` — all absent). Adding one is not this task's
+to decide: a package's `require` block is real — the packages are split and published by
+`bin/split.sh` — so a dependency added there ships to every consumer of that gateway. The two
+Done-when clauses below do not mention the PDF, and the portal accepts JPEG as well as PDF, so the
+buildable part is the **composition** (which items, in what order, as one file, in what format) and
+it is separable from the encoding. Implement the composition, report the encoder as a decision for a
+human, and do not hand an operator a file that was never rendered by anything.
 
 `SubmitEvidencePort` is **not** implemented for ConnexPay — there is no API. An operator submits in
 the portal; confirmation arrives only through F5 as `HasResponse: true`, which is what moves
@@ -573,7 +1604,8 @@ reaches at most `SUBMITTED`.
 Rationale for the split: with a 12-day deadline, automatic loss on expiry, and $20 already debited,
 the cost of treating a checkbox as confirmation is a lost case.
 
-**Done when:** an action-set test shows a non-empty `OPERATOR` set with a working deep link, and a
+**Done when:** an action-set test shows a non-empty set with one `DashboardDisputeAction` carrying a
+working deep link, and a
 state test shows `HasResponse: false` on a subsequent poll leaves `SubmissionState::SUBMITTED`
 rather than advancing it.
 
@@ -585,15 +1617,36 @@ Not implemented in this repository. Specified because Part I's events and record
 sufficient for it; if a task here cannot be built from what Part I emits, that is a Part I bug.
 
 - **A0. Wiring.** Recorder implementations (load aggregate → command → persist), the ConnexPay poll
-  schedule and cursor storage, `lastSuccessfulPoll` staleness alarm.
+  schedule and cursor storage, `lastSuccessfulPoll` staleness alarm. The recorder is also what writes
+  the dispute reference into `gateway_references` (`TYPE_DISPUTE`, F2, via `saveForDispute`) — it is
+  the only place holding both the aggregate and the provider's name for the case, and without that row
+  no later `charge.dispute.updated`, port call or resolution callback can find the aggregate it
+  belongs to. **Nothing implements `GatewayDisputeRecorder` today** — no row is written yet, so
+  `findForDispute()` and `resolveDispute()` both answer `null` and the dispute port adapters throw
+  their missing-row error. This bullet is what ends that state; F2 declares the storage, F3/F4/F5
+  produce the observations, and the write is here.
 - **A1. Projections, read model, escalation.** `dispute_cases` / `dispute_events`; search by
-  PaymentIntent, `OrderNumber`, `Arn`, `gatewayDisputeRef`; internal deadline = provider deadline
+  PaymentIntent, by the provider's own case reference, by ConnexPay's `SaleGuid` and by `OrderNumber`.
+  The provider's reference is a **column of this projection** — the recorder call carries it and the
+  aggregate never does (F1, §0.4) — which is also what an `Arn` is here: a displayed field, not a
+  search key with anything behind it (F5); internal deadline = provider deadline
   minus a per-provider buffer (default 3 days) because portal submission needs a human and a
   business day; escalation at T-7 / T-3 / T-1. **Cases arriving with less time left than the first
   step must fire the steps they are already past immediately** — ConnexPay's window is 12 days, the
   poller is periodic, and a backlog import will routinely produce T-2 on first sight. For ConnexPay,
   schedule strictly off `DueDate`: their Expired-at-`DueDate`+10 is a buffer against bank
   discrepancy, and it is their insurance, not ours.
+
+  **Which date goes in the aggregate's one slot, now that no flag says whose it is.** The slot holds
+  the provider's own statement whenever one exists — that is what `DisputeOpened` and
+  `DisputeDeadlineChanged` record, and it is the date the stream can be reconciled against a
+  provider's word by. The buffer is A1's and stays in A1: derive the actionable date here, off the
+  read model, and never write it back through `changeDeadline()`. Two reasons, and the second is the
+  one that bites: a buffered date that overwrote the provider's would lose the fact the dispute was
+  ever filed against a stated window, and the same `changeDeadline()` call would look identical to a
+  provider restating the date — one delivery key or none is all that separates them. Scheduling is
+  the one place the buffer belongs, because it is the one place where "we need three days to file by
+  hand" is the actual question.
 - **A2. Project-facing evidence API** and the confirmation gate in front of `accept()`.
 - **A3. Operator task queue** for ConnexPay: task carries the deep link, moves to
   `AWAITING_CONFIRMATION` on the operator's mark, keeps the deadline ticking and escalation running,
@@ -602,16 +1655,22 @@ sufficient for it; if a task here cannot be built from what Part I emits, that i
   **Stripe has two fees** — dispute *received* (debited at initiation, non-refundable except in
   Mexico) and dispute *countered* (returned on a win); do not collapse them. **ConnexPay charges $20
   for reversal acceptance — i.e. on a win**; reversal denial is free; `NetPosition` is the source of
-  truth. Debit timing differs per provider (Stripe debits on creation, others at settlement), so do
-  not hardcode "debit on `DisputeOpened`".
+  truth. F1 carries this as a `DisputeFee[]` list with a `FeeType`, so both Stripe fees and all four
+  ConnexPay fees have somewhere to land. Where the provider payload states no fee — ConnexPay states
+  none — derive it here from `NetPosition` and A5's settlement data rather than expecting it on the
+  aggregate. Debit timing differs per provider (Stripe debits on creation, others at settlement), so
+  do not hardcode "debit on `DisputeOpened`". Loss recognition reads `DisputeStatus::ACCEPTED`, which
+  F1 keeps terminal — the provider's later `lost` does not overwrite it.
 - **A5. Settlement reconciliation**, including refunds tagged `EXTERNAL_DEFLECTION` — with Verifi RDR
   or Ethoca on a MID some disputes resolve as a refund nobody initiated, and those must not read as
   anomalies.
 - **A6. Rate monitoring per MID**, thresholds in config, not constants — they changed twice in the
   past year.
-  - **Visa (VAMP):** numerator TC40 (from F4's fraud-report handler) + TC15; denominator settled
-    TC05, card-not-present only; **excluded** from the numerator are RDR-resolved cases and fraud
-    qualified under Compelling Evidence 3.0 — hence tagging case origin at ingestion.
+  - **Visa (VAMP):** numerator TC40 (from F4's fraud-report handler, via `GatewayFraudReportRecorder`)
+    + TC15; denominator settled TC05, card-not-present only; **excluded** from the numerator are
+    RDR-resolved cases and fraud qualified under Compelling Evidence 3.0 — hence tagging case origin
+    at ingestion. **This cannot start before F4 is unblocked**: the numerator has no producer until
+    the fraud-report handler exists, and F4 waits on Nuvei access (which F0 also waits on).
   - **Mastercard (ECP):** ECM = ≥100 chargebacks in a month **AND** ≥1.5%; HECM = ≥300 **AND** ≥3%.
     Denominator is the **prior** month's sales (Visa uses the current month) — the same number
     cannot serve both networks. First presentments only.
@@ -701,6 +1760,111 @@ Verified against public documentation on 2026-08-07.
   `responseChecksum` in the body (`src/Nuvei/src/Webhook/ChecksumVerifier.php`). These are not the
   same scheme. F4 must determine which applies to dispute DMNs from a raw fixture before writing
   code.
+- **Both implemented branches sit behind the merchant-pair gate** (`ChecksumVerifier.php:36–49`): no
+  `merchantId` *and* `merchantSiteId` in the body — camelCase or snake_case — and `verify()` returns
+  `false` before any checksum is computed. A dispute DMN that omits the pair is rejected outright;
+  see F4, which treats this as the first thing to establish from the fixture.
+
+## Nuvei (classic API 1.0 — the DMN channel)
+
+Documentation-level, gathered 2026-09-14 from `docs.nuvei.com` — the Control Panel Event DMN page, the
+payment DMN page, the chargeback pages of the Control Panel docs and the API 1.0 / advanced references.
+**The 1.0 reference page is ~1.2 MB and truncates in an ordinary fetch**, so the "no chargeback method"
+statement below rests on an enumeration of its method list plus the absence of any chargeback parameter
+from the parameter documentation, not on a line-by-line read. Documentation-level like every other
+provider claim in this document, until F0 replaces it with captured payloads.
+
+**Nothing to call.** The 1.0 method list contains no chargeback or dispute method — nothing that lists
+cases, reads one or answers one. The only transaction-read method, `getTransactionDetails.do`, returns
+`transactionStatus` (`APPROVED` / `DECLINED` / `ERROR`) and `transactionType` (`auth`, `sale`, `payout`,
+`refund`, `settle`, `void`, `auth3D`, `sale3D`), and names no chargeback state, ARN, reason code or due
+date. Everything a dispute role needs beyond a notification is REST 2.0 Dispute Management.
+
+**Reading and answering are Control Panel work.** A dispute request is opened from *Risk → Chargebacks
+Report* by a user with `Management` or `Risk_actions`, by uploading documents (PDF, Doc, Docx, txt, up
+to 4 MB each, up to 10 per dispute) and free text; Nuvei's dispute team then sends them to the acquirer
+— "no automation is required". Bulk limits: 20 transactions per action, same payment account and
+acquiring bank, status `Regular` or `Soft_CB`, due date not passed. **A transaction with a chargeback
+cannot be refunded, by API or by Control Panel.**
+
+**The chargeback DMN is an event DMN, not a payment DMN.** `EventType: "Chargeback"` — "Notifies you
+that you have either received a new chargeback/dispute, which requires your response, OR that a
+chargeback/dispute status has been updated following your response". Fields as documented:
+
+| Field | What it is |
+|---|---|
+| `Chargeback.Date` | when the chargeback was initiated |
+| `Chargeback.Type` | `Chargeback` or `Retrieval` |
+| `Chargeback.Status` | current status (new suite only) |
+| `Chargeback.ChargebackStatusCategory` | Regular, cancelled, Duplicate, RDR-Refund, Soft_CB |
+| `Chargeback.Amount` / `.Currency`, `.ReportedAmount` / `.ReportedCurrency`, `.ISOCurrency` | the amounts |
+| `Chargeback.ChargebackReason` | reason code per scheme rules, as one string — `"10.4 - Other Fraud-Card Absent Environment"` |
+| `Chargeback.ReasonMessage` | the issuer's description |
+| `Chargeback.ChargebackReasonCategory` | e.g. `Fraud` |
+| `Chargeback.DisputeDueDate` | due date to respond to the case |
+| `Chargeback.DisputeId` / `.DisputeEventId` | internal dispute and event ids ("relevant mainly to merchants using the Disputes Merchants API") |
+| `Chargeback.DisputeUnifiedStatusCode` | the unified code, correlated with `Chargeback.Status` |
+| `TransactionDetails.TransactionId`, `.TransactionDate`, `.ClientUniqueId`, `.AcquirerName`, `.MaskedCardNumber`, `.Arn` | the original transaction |
+| `EventId`, `EventDate`, `EventType`, `ClientId`, `ClientName`, `EventDateUTC`, `EventCorrelationId`, `ProcessingEntityType`, `ProcessingEntityId` | the envelope |
+
+Note the envelope: **no `merchantId` / `merchantSiteId`**, and `EventCorrelationId` present. Note also
+what the field list does not contain: a card brand.
+
+**Checksum.** The docs: "Concatenate into a string all of the parameter values in the JSON payload of
+the DMN in the exact order that they are sent. Add `merchantSecretKey` to the beginning of that string.
+Encrypt the entire string with SHA-256 … Compare the result to the checksum in the header of the DMN."
+The payment-DMN page scopes its own scheme to payment and pre-deposit DMNs, and the event-DMN page says
+its checksum "is only relevant for event DMNs" — so the Chargeback DMN is the **header** scheme, over
+concatenated *values*, where our implemented JSON branch hashes `secret + rawBody`
+(`ChecksumVerifier.php:83-94`).
+
+**Also absent from 1.0:** any chargeback status or reason vocabulary of its own (the only 1.0 `Reason` /
+`ReasonCode` is a gateway *failure* reason, `N/A` for non-regular transactions), and any documented
+deprecation of 1.0 chargeback handling — the 1.0 reference is still maintained release to release, with
+chargeback-adjacent changes landing in the Control Panel Event DMNs and REST 2.0 sections instead. Two
+platforms are named in prose — "Nuvei's legacy chargeback platform" (Chargebacks Report) and "Nuvei's
+new dispute suite" (Case Management, Disputes Reports) — with no mapping to API versions.
+
+**UNCONFIRMED — do not build on these:**
+
+1. Whether this event DMN is deliverable to a merchant integrated only over classic 1.0. The docs scope
+   event DMNs by Control Panel configuration, never by API version — but the field set
+   (`DisputeUnifiedStatusCode`, `DisputeId` / `DisputeEventId`) is REST-2.0-shaped. **Ask Nuvei.**
+2. Whether the event-DMN `merchantSecretKey` is the same secret 1.0 request checksums use.
+3. Whether the value-concatenation really differs from the raw body for these payloads. This is what a
+   captured fixture settles, and it is the one fact F4-notification rests on. **Implemented as the
+   value-concatenation** (2026-09-14), with two readings of those words that a captured payload also
+   settles: nested objects are walked into in document order, and the values are read *after* JSON
+   decoding, so an amount sent as an unquoted number loses its original spelling (`25.00` → `25`) and
+   may fail to verify. Both live in one private method, so a captured payload swaps the input of the
+   comparison rather than the branch that makes it.
+4. Which of the page's two Chargeback examples is current: its own "authenticating the DMN" example is
+   an older shape (`StatusCategory`, and no `DisputeId` / `DisputeEventId` / `DisputeUnifiedStatusCode`).
+5. ~~A source for the card brand `DisputeSnapshot` requires.~~ **Answered for Nuvei (2026-09-14):**
+   `Chargeback.ChargebackReason`'s namespace, read through `ReasonCodeNetwork`. The brand stays
+   **mandatory** — a case with no network is unanswerable rather than incomplete, since the evidence
+   requirements are keyed on the `(brand, code)` pair — and a code in no list of ours is refused, which
+   is a failed delivery one table entry from working. The derivation is **not** general: ConnexPay's CMS
+   payload and Stripe's dispute object each state a brand as a field of their own, so neither derives
+   one from a reason code and neither should.
+6. Which transaction the DMN names — the settled one (what the reference row holds after a capture) or
+   the opening one (`metadata['opening_transaction_reference']`, `NuveiTransactionOutcome:260-263`).
+   Both readings live in the row by design; a captured payload decides which a case names. *The handler
+   as built asks our own UUID first and the transaction id second, which sidesteps this for the common
+   case; the question is still open for the case where the UUID no longer resolves.*
+7. The `DisputeUnifiedStatusCode` values themselves. The table is seeded from the codes this reference
+   names plus the three wildcard families it prints (`INQ*`, `IPA-M-*`, `MPA-I-*`), and anything else is
+   refused rather than extrapolated into. Whether that list is complete is unverified, and so is the
+   correlation the reference asserts with `Chargeback.Status` — it names the correlation without
+   printing the table.
+8. `Chargeback.Amount`'s units. Read as **major** units and converted to minor (`"25.00"` → 2500),
+   because the documented examples state amounts as decimal strings. A minor-unit reading would be a
+   hundredfold error in the disputed amount, which is the figure the evidence model and the thresholds
+   are computed from.
+9. The completeness of each network's published reason-code list, which the brand derivation rests on.
+   A code the network issues but `ReasonCodeMapper::TABLE` does not carry is refused, so the derivation
+   is only as good as the table — a failed delivery until the entry is added, and never a case filed
+   against another network's requirements.
 
 ## ConnexPay (CMS API)
 
@@ -711,8 +1875,9 @@ Verified against public documentation on 2026-08-07.
 Read-only. Basic auth, with **credentials separate from the regular CRM user** — and separate again
 from the Purchases API bearer token used by `ConnexPayPurchasesClient`.
 
-**Key fields:** `FamilyId`, `CaseNumber`, `CaseType`, `ReasonCode`, `CardBrand`, `ResolutionTo`,
-`DueDate`, `OrderNumber`, `Arn`, `NetPosition`, `WinLoss`, `HasResponse`, `HasImage`,
+**Key fields:** `SaleGuid` — the provider's guid for the sale the case is against, and the first
+matching key F5 tries — then `FamilyId`, `CaseNumber`, `CaseType`, `ReasonCode`, `CardBrand`,
+`ResolutionTo`, `DueDate`, `OrderNumber`, `Arn`, `NetPosition`, `WinLoss`, `HasResponse`, `HasImage`,
 `IsSurrendered`, `ImageFileUrl`.
 
 **`ResolutionTo`:** `M` — merchant must respond; `B` — bank must respond; `S` — resolved as split
@@ -722,12 +1887,12 @@ from the Purchases API bearer token used by `ConnexPayPurchasesClient`.
 `Common\ValueObject\CardBrand` case; map it to a typed refusal, not to a guess.
 
 **`CaseType` → `DisputeStage`** (the four-value stage does not cover the cycle position, so the
-cycle rides in the `DisputeEvent`, not in the stage):
+cycle rides in the event's `providerCode`, not in the stage):
 
 | `CaseType` | Meaning | Stage | Note |
 |---|---|---|---|
 | 1 | First Chargeback | `CHARGEBACK` | opens the family |
-| 2 | Second Chargeback | `CHARGEBACK` | second cycle; new `DisputeEvent`, same family |
+| 2 | Second Chargeback | `CHARGEBACK` | second cycle; a second `DisputeStageChanged` carrying its own `providerCode`, same family |
 | 3 | First Reversal | `CHARGEBACK` | issuer reverses; may resolve the family in our favour |
 | 4 | Second Reversal | `CHARGEBACK` | as above, second cycle |
 | 9 | Visa Pre-Arb | `PRE_ARBITRATION` | |
