@@ -25,7 +25,6 @@ use Techork\PaymentService\Common\ValueObject\CreditCard;
 use Techork\PaymentService\Common\ValueObject\HostedPayment;
 use Techork\PaymentService\Common\ValueObject\PaymentMethod;
 use Techork\PaymentService\Common\ValueObject\Token;
-use Techork\PaymentService\Gateway\Contract\GatewayCredential;
 use Techork\PaymentService\Gateway\Exception\UnsupportedInstrument;
 
 /**
@@ -103,7 +102,15 @@ final class Purchase implements PaymentInstrumentVisitor
     public function visitHostedPayment(HostedPayment $hosted): array
     {
         $money = $this->command->amount;
-        $credentials = $this->decryptCredentials($this->infrastructure->credential);
+
+        // No decryption here, and that is not an omission. `Gateway::credentials` is cast
+        // `encrypted:json`, so Laravel decrypts the column on attribute access and
+        // `getCredentials()` hands back plaintext. Decrypting it again is not a no-op: the
+        // Laravel encrypter behind `DecryptInterface` throws `DecryptException: The payload is
+        // invalid` on anything it did not encrypt itself, which is every value on this path —
+        // the driver never reached the wire at all. Card data is the only thing on a Paynet
+        // request that is still ciphertext, and this operation carries none.
+        $credentials = $this->infrastructure->credential->getCredentials();
 
         $externalId = $this->resolveExternalId();
         $now = new DateTimeImmutable;
@@ -300,13 +307,5 @@ final class Purchase implements PaymentInstrumentVisitor
         }
 
         return $token;
-    }
-
-    /**
-     * @return array<string, string>
-     */
-    private function decryptCredentials(GatewayCredential $gateway): array
-    {
-        return array_map($this->infrastructure->decrypter->decrypt(...), $gateway->getCredentials());
     }
 }

@@ -67,11 +67,16 @@ function paynetSandboxInfrastructure(): GatewayInfrastructure
                 ];
             }
         },
+        // Not an identity decrypter: the credentials above are already plaintext, because
+        // `Gateway::credentials` is cast `encrypted:json` and Laravel decrypts the column on
+        // attribute access, so the driver must never run the decrypter over them. Production's
+        // decrypter throws on anything it did not encrypt itself, and one that returned its
+        // argument instead would let a re-added second decryption pass here unnoticed.
         new readonly class implements Techork\PaymentService\Common\Contract\DecryptInterface
         {
             public function decrypt(string $data): string
             {
-                return $data;
+                throw new RuntimeException('The payload is invalid.');
             }
         },
         Mockery::mock(GatewayInstrumentRepository::class, ['find' => null]),

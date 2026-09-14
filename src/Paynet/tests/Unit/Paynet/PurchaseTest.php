@@ -48,23 +48,43 @@ function makePaynetCredential(): GatewayCredential
         public function getCredentials(): array
         {
             return [
-                'url' => 'enc:https://paynet.example',
-                'redirect_url' => 'enc:https://portal.paynet.example',
-                'merchant_user' => 'enc:user',
-                'merchant_user_password' => 'enc:pass',
-                'merchant_code' => 'enc:975860',
+                'url' => 'https://paynet.example',
+                'redirect_url' => 'https://portal.paynet.example',
+                'merchant_user' => 'user',
+                'merchant_user_password' => 'pass',
+                'merchant_code' => '975860',
             ];
         }
     };
 }
 
+/**
+ * The decrypter a Paynet driver is really handed in production, reduced to the one property that
+ * matters here: it throws on anything it did not encrypt itself.
+ *
+ * `Gateway::credentials` is cast `encrypted:json`, so Laravel decrypts that column on attribute
+ * access and `getCredentials()` returns plaintext. A driver that decrypts those values a second
+ * time therefore throws `DecryptException: The payload is invalid` on every payment — which is
+ * why this fixture throws instead of returning its argument.
+ *
+ * It replaced one that stripped an invented `enc:` prefix off values the fixture had prefixed
+ * itself, and that shape is exactly what hid the defect: the second decryption was a no-op
+ * against values that were never ciphertext to begin with, so the suite stayed green over a
+ * deterministic break. `$calls` records what it was asked to decrypt, so a test can also assert
+ * that it was never asked at all.
+ */
 function makePaynetDecrypter(): DecryptInterface
 {
-    return new readonly class implements DecryptInterface
+    return new class implements DecryptInterface
     {
-        public function decrypt(string $value): string
+        /** @var list<string> */
+        public array $calls = [];
+
+        public function decrypt(string $data): string
         {
-            return str_starts_with($value, 'enc:') ? substr($value, 4) : $value;
+            $this->calls[] = $data;
+
+            throw new RuntimeException('The payload is invalid.');
         }
     };
 }
@@ -153,6 +173,24 @@ it('returns RedirectChallenge with Paynet form fields on successful Send', funct
         ->and($challenge->formFields['Signature'])->toBe('sig-abc')
         ->and($challenge->formFields['LinkUrlSucces'])->toBe('https://merchant.example/return')
         ->and($challenge->formFields['LinkUrlCancel'])->toBe('https://merchant.example/return');
+});
+
+it('hands credentials on as the cast delivered them, without decrypting them again', function () {
+    $decrypter = makePaynetDecrypter();
+
+    $payload = makePaynetPurchase(makeMockClient([]), ['decrypter' => $decrypter])->payload();
+
+    // `Gateway::credentials` is cast `encrypted:json`, so `getCredentials()` is plaintext by the
+    // time a driver sees it and this payload has to carry it verbatim. The second assertion is
+    // the one that pins the behaviour: a real decrypter rejects plaintext outright, so the
+    // decrypter must not be reached at all — not reached and tolerated.
+    expect($payload['credentials'])->toBe([
+        'url' => 'https://paynet.example',
+        'redirect_url' => 'https://portal.paynet.example',
+        'merchant_user' => 'user',
+        'merchant_user_password' => 'pass',
+        'merchant_code' => '975860',
+    ])->and($decrypter->calls)->toBe([]);
 });
 
 it('returns failed response with error message on non-2xx from Send', function () {
