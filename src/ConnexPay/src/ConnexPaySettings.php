@@ -62,6 +62,12 @@ final readonly class ConnexPaySettings
      * calls the "Accounting Currency". Comes from the `account_currency`
      * credential; empty means USD.
      *
+     * Every path returns a code from {@see ACQUIRING_CURRENCIES} or the `USD`
+     * default, so the result is never empty — which is what
+     * `Money\Currency::__construct` requires of its argument.
+     *
+     * @return non-empty-string
+     *
      * @throws InvalidArgumentException when configured to a currency ConnexPay
      *                                  does not acquire in — a misconfiguration
      *                                  must fail here, not silently disable the

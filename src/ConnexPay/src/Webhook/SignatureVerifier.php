@@ -10,10 +10,19 @@ use Techork\PaymentService\Gateway\Webhook\Contract\InboundWebhook;
 use Techork\PaymentService\Gateway\Webhook\Contract\SignatureVerifier as SignatureVerifierContract;
 
 /**
- * ConnexPay webhook authentication. The publicly documented mechanism is
- * **HTTP Basic Auth** ({@see https://docs.connexpay.com/docs/client-vcc-decisioning})
- * — ConnexPay sends our Bridge-configured username/password in the
- * `Authorization: Basic ...` header on each delivery.
+ * ConnexPay webhook authentication: **HTTP Basic Auth**, comparing the
+ * `Authorization: Basic ...` header against the credential pair.
+ *
+ * The citation this was written from —
+ * {@see https://docs.connexpay.com/docs/client-vcc-decisioning} — is the **VCC
+ * decisioning** webhook, which is a different product from the sale/purchase
+ * event stream: its body is flat (`cardGuid`/`transactionId`) and it expects an
+ * `approved`/`reasonCode` response. The flat body is why the sale-event parser
+ * was written flat too; see {@see EventParser} for that repair. The Basic Auth
+ * pair is kept because it is what the dashboard's webhook destination is
+ * configured with, but it has never been checked against an observed delivery,
+ * and ConnexPay's published sale-event material does not state the mechanism —
+ * so treat this as unverified rather than as documented.
  *
  * Reads the same `username`/`password` credentials as the Sales API
  * adapter. The merchant configures the same pair in the ConnexPay

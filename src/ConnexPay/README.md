@@ -84,8 +84,11 @@ grant is the exception: an authentication failure surfaces as a
 `purchase()` with a
 `Techork\PaymentService\Common\ValueObject\HostedPayment` instrument asks
 ConnexPay for a hosted-page token instead of charging card data, and returns a
-`RedirectChallenge` pointing at ConnexPay's own page. The buyer pays there; the
-outcome arrives on the ordinary `sale.card.auth.*` webhook.
+`RedirectChallenge` pointing at ConnexPay's own page. The buyer pays there and
+the outcome arrives on `sale.card.auth.approved` — the only delivery that can
+resolve the intent, which stays at `RequiresAction` until it lands. Nothing else
+confirms the challenge: the request that opened the page answered with a token,
+so there was no outcome to apply inline.
 
 The request shape is **not** what the public reference implies, and was
 established by probing the sandbox (pinned by a case in
@@ -176,17 +179,50 @@ capture. A capture above the authorized amount throws
 `ConnexPayWebhookSubscriber` (wired via composer `extra.laravel.webhook`)
 registers kind `ConnexPay`:
 
-- `SignatureVerifier` — ConnexPay authenticates deliveries with
-  [HTTP Basic Auth](https://docs.connexpay.com/docs/client-vcc-decisioning)
-  using the same `username`/`password` credential pair; empty credentials
-  fail closed, comparison is constant-time.
-- `EventParser` — reads the `eventType` discriminator and `guid`
-  (unique per transaction, doubles as the idempotency key).
+- `SignatureVerifier` — HTTP Basic Auth against the same `username`/`password`
+  credential pair; empty credentials fail closed, comparison is constant-time.
+  The citation this was written from
+  ([client-vcc-decisioning](https://docs.connexpay.com/docs/client-vcc-decisioning))
+  is the **VCC decisioning** webhook — a different product, with a flat body —
+  so the mechanism is kept but is unverified against an observed delivery.
+- `EventParser` — unwraps the delivery envelope and reads the `eventType`
+  discriminator and the sale `guid` (unique per transaction, doubles as the
+  idempotency key).
+
+**Wire shape.** ConnexPay documents a delivery as a JSON **array** of events,
+with `eventType`/`eventTime`/`dataVersion`/`id`/`subject` at the element level
+and the transaction fields (`guid`, `amount`, `orderNumber`,
+`processorMessage`) nested under `data`
+([sale events](https://docs.connexpay.com/docs/webhook-samples-for-sales-events),
+[sale message](https://docs.connexpay.com/docs/sale-message)). The parser
+unwraps the first element and flattens `data` into it, so the handlers keep
+reading flat fields and the wire shape lives in exactly one place. It also
+still accepts a flat body unchanged — that is what rows already stored in
+`webhook_calls` carry. Reading the array body flat was not a near miss: both
+`eventType` and `guid` came out `''`, `''` passes the idempotency gate (it
+guards only against null), the first delivery was stored with
+`external_id = ''`, and the unique index on `(name, external_id)` then rejected
+every delivery after it as a duplicate. A body carrying more than one event is
+represented by its first element only, since one stored call dispatches one
+handler.
 
 | Event | Handler | Effect |
 | --- | --- | --- |
+| `sale.card.auth.approved` | `SaleApprovedHandler` | Records the success, which confirms a parked challenge — this is what resolves a hosted payment |
 | `sale.card.auth.declined` | `SaleDeclinedHandler` | Records a gateway failure (dashboard-initiated declines) |
 | `sale.card.auth.voided` | `SaleVoidedHandler` | Cancels the PaymentIntent (dashboard-initiated voids) |
+
+`SaleApprovedHandler` takes its amount from the payload and its **currency from
+the credential** (`accountCurrency`, read through
+`ConnexPaySettings::acquiringCurrency()`): the sale message carries no currency
+field any more than the API does, and the account's acquiring currency is the
+only thing the amount can be in. A payload whose amount is missing or unusable
+is retried rather than skipped — a skip would leave a paid intent parked, which
+is the whole failure this handler exists to close.
+
+`purchase.card.auth.settled` stays unregistered. It is the virtual-card
+issuance side of the account rather than a payment-intent signal, and it is
+where the processor fee used to be read from — see below.
 
 Processor fees are **not** recorded live for ConnexPay. Webhook payloads do
 not carry the fee, and the only place it is exposed — `Search/Sales` —
