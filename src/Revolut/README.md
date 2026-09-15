@@ -18,7 +18,7 @@ key; there are two exchanges:
 
 | Grant | When | Performed by |
 | --- | --- | --- |
-| `authorization_code` | Once, at setup — mints the long-lived **refresh token** | `RevolutAuthenticator::exchangeAuthorizationCode()` (via the bootstrap script below) |
+| `authorization_code` | Once, at setup — mints the long-lived **refresh token** | `RevolutAuthenticator::exchangeAuthorizationCode()` (see below) |
 | `refresh_token` | Every process — mints a 40-minute **access token** | `RevolutClient` automatically, before the first API call |
 
 ### Stored credentials
@@ -47,15 +47,17 @@ The gateway is configured (`RevolutGateway::initialize()`) with:
    `client id`. The redirect URI's domain is your `issuer`.
 3. **Enable API access** for the app. The browser is redirected to your
    redirect URI with a short-lived `?code=...` (valid ~2 minutes).
-4. Immediately exchange that code for the refresh token:
-   ```bash
-   php bin/revolut-obtain-refresh-token.php \
-       --client-id=<client_id> \
-       --issuer=<redirect-url-domain> \
-       --private-key=privatekey.pem \
-       --code=<authorization_code>
+4. Immediately exchange that code for the refresh token — the code lives only
+   ~2 minutes, so call it straight from a one-off script or `php -a`:
+   ```php
+   $tokens = (new RevolutAuthenticator(
+       clientId: '<client_id>',
+       privateKey: file_get_contents('privatekey.pem'),
+       issuer: '<redirect-url-domain>',
+       http: new GuzzleHttp\Client(['base_uri' => 'https://b2b.revolut.com/']),
+   ))->exchangeAuthorizationCode('<authorization_code>');
    ```
-5. Store the printed `refresh_token` as the gateway's `refreshToken` credential,
+5. Store `$tokens['refresh_token']` as the gateway's `refreshToken` credential,
    alongside `clientId`, `privateKey` and `issuer`.
 
 After that the runtime never needs the portal again — `RevolutClient` refreshes
