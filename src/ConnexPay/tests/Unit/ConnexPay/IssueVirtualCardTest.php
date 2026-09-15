@@ -19,7 +19,7 @@ function cpIssue(array $overrides = [], ?ConnexPayHttpClientInterface $client = 
 {
     return new IssueVirtualCard(
         cpSettings(['merchantGuid' => '5e2a814b-accc-4473-8d02-44b807200336']),
-        new IssueCardCommand(
+        IssueCardCommand::saleFunded(
             gatewayId: GatewayId::generate(),
             transactionReference: 'sale-guid',
             amountLimit: $overrides['money'] ?? new Money(5000, new Currency('USD')),

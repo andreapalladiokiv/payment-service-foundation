@@ -6,6 +6,8 @@ use GuzzleHttp\Exception\TransferException;
 use Money\Currency;
 use Money\Money;
 use Techork\PaymentService\Gateway\Command\IssueCardCommand;
+use Techork\PaymentService\Gateway\ValueObject\BalanceFunded;
+use Techork\PaymentService\Gateway\ValueObject\CardLimitWindow;
 use Techork\PaymentService\Gateway\ValueObject\CardSpendCategory;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 use Techork\PaymentService\Revolut\CardSettings;
@@ -38,7 +40,7 @@ function revolutIssuing(?RevolutHttpClientInterface $client = null, array $setti
  */
 function revolutIssueCommand(array $params = []): IssueCardCommand
 {
-    return new IssueCardCommand(
+    return IssueCardCommand::saleFunded(
         gatewayId: GatewayId::generate(),
         transactionReference: 'sale-guid',
         amountLimit: $params['money'] ?? new Money(20022, new Currency('GBP')),
@@ -166,3 +168,65 @@ it('reports a failed result when card creation fails', function () {
     expect($result->success)->toBeFalse()
         ->and($result->message)->toContain('quota exceeded');
 });
+
+// ──────────────────────────────────────────────
+//  funding model
+// ──────────────────────────────────────────────
+
+/**
+ * The asymmetry the funding model exists to remove: Revolut funds cards from a business account
+ * and reads a sale reference zero times, yet every card command used to carry one as a
+ * non-nullable field. A balance-funded command has no such field to ignore.
+ */
+it('issues from a balance with no payment named', function () {
+    $command = IssueCardCommand::balanceFunded(
+        gatewayId: GatewayId::generate(),
+        amountLimit: new Money(20022, new Currency('GBP')),
+        spendCategory: CardSpendCategory::TravelAir,
+        clientUniqueId: 'card-1',
+    );
+
+    expect($command->funding)->toBeInstanceOf(BalanceFunded::class)
+        ->and(revolutIssuing()->payload($command))
+        // The card's own id, since there is no payment id to borrow; Revolut spends it as the
+        // request's idempotency key, so a retried issuance answers with the same card.
+        ->toHaveKey('request_id', 'card-1')
+        ->toHaveKey('virtual', true);
+});
+
+it('lets a card override the configured spend-limit period without changing the fallback', function () {
+    $windowed = IssueCardCommand::balanceFunded(
+        gatewayId: GatewayId::generate(),
+        amountLimit: new Money(20022, new Currency('GBP')),
+        spendCategory: CardSpendCategory::TravelAir,
+        limitWindow: CardLimitWindow::Month,
+    );
+
+    expect(revolutIssuing(settings: ['spendLimitPeriod' => 'single'])->payload($windowed)['spending_limits'])
+        ->toBe(['month' => ['amount' => 200.22, 'currency' => 'GBP']])
+        // A card naming no window still gets the deployment's period, which is what keeps
+        // already-issued cards from being silently re-periodised.
+        ->and(revolutIssuing(settings: ['spendLimitPeriod' => 'single'])->payload(revolutIssueCommand())['spending_limits'])
+        ->toBe(['single' => ['amount' => 200.22, 'currency' => 'GBP']]);
+});
+
+/**
+ * Revolut spells "never refills" `all_time` and the domain spells it `lifetime`, following
+ * ConnexPay — naming a shared concept after whichever vendor was integrated first is how a
+ * vocabulary becomes one vendor's dictionary.
+ */
+it('translates the shared window vocabulary into Revolut periods', function (CardLimitWindow $window, string $expected) {
+    $command = IssueCardCommand::balanceFunded(
+        gatewayId: GatewayId::generate(),
+        amountLimit: new Money(20022, new Currency('GBP')),
+        spendCategory: CardSpendCategory::TravelAir,
+        limitWindow: $window,
+    );
+
+    expect(array_key_first(revolutIssuing()->payload($command)['spending_limits']))->toBe($expected);
+})->with([
+    [CardLimitWindow::Day, 'day'],
+    [CardLimitWindow::Week, 'week'],
+    [CardLimitWindow::Month, 'month'],
+    [CardLimitWindow::Lifetime, 'all_time'],
+]);

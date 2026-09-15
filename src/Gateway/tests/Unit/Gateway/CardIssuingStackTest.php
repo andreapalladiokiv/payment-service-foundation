@@ -24,7 +24,7 @@ use Techork\PaymentService\Gateway\ValueObject\GatewayId;
  */
 function issueCommand(): IssueCardCommand
 {
-    return new IssueCardCommand(
+    return IssueCardCommand::saleFunded(
         gatewayId: GatewayId::generate(),
         transactionReference: 'sale-guid',
         amountLimit: new Money(5000, new Currency('USD')),

@@ -8,6 +8,7 @@ use Money\Money;
 use Techork\PaymentService\ConnexPay\ConnexPayHttpClientInterface;
 use Techork\PaymentService\ConnexPay\UpdateVirtualCard;
 use Techork\PaymentService\Gateway\Command\UpdateCardCommand;
+use Techork\PaymentService\Gateway\ValueObject\CardLimitWindow;
 use Techork\PaymentService\Gateway\ValueObject\CardSpendCategory;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 
@@ -75,4 +76,42 @@ it('returns a failed result on a transport error', function () {
 
     expect($result->success)->toBeFalse()
         ->and($result->message)->toBe('Network error');
+});
+
+// ──────────────────────────────────────────────
+//  lodged
+// ──────────────────────────────────────────────
+
+/**
+ * `LimitWindow` exists in the lodged update schema and in no other, which is what makes the window
+ * a sound discriminator for this one endpoint pair: sending it to the ordinary endpoint would drop
+ * it silently, and a spend control silently dropped is the one outcome an update must not have.
+ */
+it('routes to the lodged endpoint when a limit window is named', function () {
+    $client = cpHttpClient();
+    $client->shouldReceive('put')
+        ->once()
+        ->with('/api/v1/IssueCard/LodgedCard/card-guid-xyz', [
+            'AmountLimit' => 25.0,
+            'PurchaseType' => '06',
+            'LimitWindow' => 'MONTH',
+        ])
+        ->andReturn([]);
+
+    $command = new UpdateCardCommand(
+        GatewayId::generate(),
+        'card-guid-xyz',
+        new Money(2500, new Currency('USD')),
+        CardSpendCategory::TravelGeneric,
+        CardLimitWindow::Month,
+    );
+
+    expect(new UpdateVirtualCard(cpSettings(), $command, $client)->update())
+        ->success->toBeTrue()
+        ->cardGuid->toBe('card-guid-xyz');
+});
+
+it('keeps the ordinary endpoint and omits the window when none is named', function () {
+    expect(cpUpdateCard()->path())->toBe('/api/v1/IssueCard/card-guid-xyz')
+        ->and(cpUpdateCard()->payload())->not->toHaveKey('LimitWindow');
 });

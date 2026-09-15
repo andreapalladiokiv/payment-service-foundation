@@ -29,7 +29,10 @@ final readonly class UpdateVirtualCard
     public function payload(UpdateCardCommand $command): array
     {
         $body = [
-            'spending_limits' => $this->buildSpendingLimits($command->amountLimit, $this->settings->spendLimitPeriod),
+            'spending_limits' => $this->buildSpendingLimits(
+                $command->amountLimit,
+                $this->resolveSpendLimitPeriod($command->limitWindow, $this->settings->spendLimitPeriod),
+            ),
         ];
 
         // Unconditional: the command carries a {@see CardSpendCategory}, so the mapper always

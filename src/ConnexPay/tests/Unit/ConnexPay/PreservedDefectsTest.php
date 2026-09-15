@@ -5,10 +5,13 @@ declare(strict_types=1);
 use Money\Currency;
 use Money\Money;
 use Techork\PaymentService\ConnexPay\ConnexPayGateway;
+use Techork\PaymentService\ConnexPay\IncomingTransactionCode;
 use Techork\PaymentService\Gateway\Command\IssueCardCommand;
 use Techork\PaymentService\Gateway\Command\UpdateCardCommand;
+use Techork\PaymentService\Gateway\Contract\GatewayCustomerRepository;
 use Techork\PaymentService\Gateway\ValueObject\CardSpendCategory;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
+use Techork\PaymentService\Gateway\ValueObject\GatewayInfrastructure;
 
 /**
  * Behaviour the conversion deliberately did NOT change, pinned so that changing it later has to be
@@ -28,11 +31,11 @@ use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 function cardCurrencyGateway(): ConnexPayGateway
 {
     $gateway = new ConnexPayGateway;
-    $gateway->configure(new Techork\PaymentService\Gateway\ValueObject\GatewayInfrastructure(
+    $gateway->configure(new GatewayInfrastructure(
         cpCredential(),
         cpDecrypter(),
         cpInstruments(null),
-        Mockery::mock(Techork\PaymentService\Gateway\Contract\GatewayCustomerRepository::class, ['find' => null]),
+        Mockery::mock(GatewayCustomerRepository::class, ['find' => null]),
         ['username' => 'u', 'password' => 'p', 'merchantGuid' => 'm-1', 'account_currency' => 'GBP'],
     ));
     $gateway->setHttpClient(cpHttpClient());
@@ -41,12 +44,12 @@ function cardCurrencyGateway(): ConnexPayGateway
 }
 
 it('still measures a card limit against USD on a GBP account', function () {
-    cardCurrencyGateway()->issueVirtualCard(new IssueCardCommand(
+    cardCurrencyGateway()->issueVirtualCard(IssueCardCommand::saleFunded(
         gatewayId: GatewayId::generate(),
         transactionReference: 'sale-guid',
         amountLimit: new Money(5000, new Currency('GBP')),
         spendCategory: CardSpendCategory::TravelAir,
-        incomingTransactionCode: 'ICT-1',
+        hint: new IncomingTransactionCode('ICT-1'),
     ));
 })->throws(InvalidArgumentException::class, 'provisioned in USD but the amount is GBP');
 

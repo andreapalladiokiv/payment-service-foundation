@@ -14,6 +14,12 @@ use Techork\PaymentService\Gateway\Contract\GatewayResult;
  * Answers with a bare {@see GatewayResult}: there is no card left to describe, only whether it
  * is gone. The card guid is the reference, because the endpoint names nothing else — the body it
  * answers with carries a termination date and no identity.
+ *
+ * One endpoint for both funding models, and the evidence for that is indirect rather than stated:
+ * the vendor's description says "Physical or Virtual Card" and never says "lodged", but its guide
+ * defines a lodged card as a virtual card used more than once, and the termination response
+ * carries an `isLodged` flag — a field with no meaning unless lodged cards come back through here.
+ * Worth knowing which kind of fact this is before a lodged merchant exists to confirm it on.
  */
 final class TerminateCard
 {

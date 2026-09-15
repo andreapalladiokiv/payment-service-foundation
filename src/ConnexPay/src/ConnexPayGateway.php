@@ -30,6 +30,7 @@ use Techork\PaymentService\Gateway\Contract\VirtualCardResult;
 use Techork\PaymentService\Gateway\Exception\UnsupportedOperation;
 use Techork\PaymentService\Gateway\Role\ReadsDisputeCases;
 use Techork\PaymentService\Gateway\ValueObject\GatewayInfrastructure;
+use Techork\PaymentService\Gateway\ValueObject\SaleFunded;
 
 /**
  * ConnexPay, as two APIs behind one driver: the sales API acquires payments and the Purchases
@@ -237,7 +238,7 @@ final class ConnexPayGateway implements Gateway, ReadsDisputeCases
      *
      * ConnexPay HAS a customer object. `/api/v1/verify` creates one out of what it is handed and
      * returns it as `card.customer.guid`, which is what
-     * {@see \Techork\PaymentService\Gateway\Contract\RegistrationResult::$customerReference}
+     * {@see RegistrationResult::$customerReference}
      * carries back. What it has no route for is creating one from an identity alone: the v1
      * surface is `/verify`, `/token`, `/sales`, `/authonlys`, `/void` and `/returns`, and every
      * one of those that can make a customer takes a card. So the customer here comes into
@@ -339,17 +340,33 @@ final class ConnexPayGateway implements Gateway, ReadsDisputeCases
         return new VoidTransaction($this->settings, $command, $this->client)->cancel();
     }
 
+    /**
+     * ConnexPay issues both funding models, on two endpoints that do not overlap.
+     *
+     * The command says which, so nothing here infers it. A sale-funded card must name the sale it
+     * draws on and `/api/v1/IssueCard` declares the field; a lodged card draws on the merchant's
+     * balance and `/api/v1/IssueCard/LodgedCard` has no such field to name it with. Substituting
+     * one endpoint for the other is not a degradation, it is a 400.
+     */
     #[Override]
     public function issueVirtualCard(IssueCardCommand $command): VirtualCardResult
     {
+        $funding = $command->funding;
+
+        if (! $funding instanceof SaleFunded) {
+            return new IssueLodgedCard($this->cardSettings(), $command, $this->purchasesClient)->issue();
+        }
+
         // Prefer the code the caller carried in — persisted with the sale or capture response —
         // over asking Search/Sales, which is the fallback rather than the source of truth. It is
-        // resolved here rather than inside the operation because it comes off the OTHER API.
-        $incomingTransactionCode = $command->incomingTransactionCode;
+        // unwrapped here rather than inside the operation because this is ConnexPay's own hint on
+        // an otherwise opaque slot, and because the fallback talks to the OTHER API.
+        $hint = $funding->hint;
+        $incomingTransactionCode = $hint instanceof IncomingTransactionCode ? $hint->value : null;
 
         if ($incomingTransactionCode === null || $incomingTransactionCode === '') {
             $incomingTransactionCode = $this->resolveIncomingTransactionCode(
-                $command->transactionReference,
+                $funding->transactionReference,
                 $command->clientUniqueId,
             );
         }

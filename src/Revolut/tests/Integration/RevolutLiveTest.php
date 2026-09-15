@@ -10,6 +10,7 @@ use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 use Techork\PaymentService\Revolut\CardSettings;
 use Techork\PaymentService\Revolut\IssueVirtualCard;
 use Techork\PaymentService\Revolut\RevolutClient;
+use Techork\PaymentService\Revolut\RevolutHttpClientInterface;
 
 /**
  * Live integration coverage for Revolut card issuing.
@@ -18,7 +19,7 @@ use Techork\PaymentService\Revolut\RevolutClient;
  * and sensitive-card-data exist only in Production, which issues a real card
  * against a real account and therefore cannot run unattended in CI.
  *
- * The unit suite (mocked {@see \Techork\PaymentService\Revolut\RevolutHttpClientInterface})
+ * The unit suite (mocked {@see RevolutHttpClientInterface})
  * exercises the request/response mapping exhaustively. This test documents
  * the constraint and provides a Production-gated smoke check: set
  *
@@ -38,7 +39,7 @@ const REVOLUT_LIVE_SKIP = 'Revolut has no virtual-card Sandbox; set REVOLUT_CLIE
 
 function revolutLiveConfigured(): bool
 {
-    return array_all(['REVOLUT_CLIENT_ID', 'REVOLUT_PRIVATE_KEY', 'REVOLUT_REFRESH_TOKEN', 'REVOLUT_ISSUER'], fn($var) => (getenv($var) ?: '') !== '');
+    return array_all(['REVOLUT_CLIENT_ID', 'REVOLUT_PRIVATE_KEY', 'REVOLUT_REFRESH_TOKEN', 'REVOLUT_ISSUER'], fn ($var) => (getenv($var) ?: '') !== '');
 }
 
 it('issues a virtual card against the live Revolut API', function () {
@@ -53,7 +54,7 @@ it('issues a virtual card against the live Revolut API', function () {
     $result = new IssueVirtualCard(
         $client,
         new CardSettings(fetchSensitiveDetails: false),
-    )->issue(new IssueCardCommand(
+    )->issue(IssueCardCommand::saleFunded(
         gatewayId: GatewayId::generate(),
         transactionReference: 'live-smoke',
         amountLimit: new Money(100, new Currency('GBP')),

@@ -7,7 +7,6 @@ namespace Techork\PaymentService\Revolut;
 use DateMalformedStringException;
 use DateTimeImmutable;
 use GuzzleHttp\Exception\GuzzleException;
-use Money\Money;
 use Ramsey\Uuid\Uuid;
 use Techork\PaymentService\Gateway\Command\IssueCardCommand;
 use Techork\PaymentService\Gateway\Contract\VirtualCardResult;
@@ -48,9 +47,15 @@ final readonly class IssueVirtualCard
     public function payload(IssueCardCommand $command): array
     {
         $body = [
+            // Revolut spends this as the request's idempotency key. On a balance card it is the
+            // card's own id — there is no payment to borrow one from — so a retried issuance
+            // answers with the card the first attempt created rather than a second one.
             'request_id' => $command->clientUniqueId ?: Uuid::uuid4()->toString(),
             'virtual' => true,
-            'spending_limits' => $this->buildSpendingLimits($command->amountLimit, $this->settings->spendLimitPeriod),
+            'spending_limits' => $this->buildSpendingLimits(
+                $command->amountLimit,
+                $this->resolveSpendLimitPeriod($command->limitWindow, $this->settings->spendLimitPeriod),
+            ),
         ];
 
         // Auto-issued virtual cards (no holder, no contacts) require the card product; Revolut
@@ -64,13 +69,7 @@ final readonly class IssueVirtualCard
         // the parameter bag and had to cope with it being absent or unparseable.
         $body['categories'] = MerchantCategoryMapper::fromCategory($command->spendCategory);
 
-        // The account allow-list is optional; only well-formed UUIDs are forwarded so a stale or
-        // malformed credential cannot trip Revolut's validation. An empty result omits `accounts`
-        // and the card is issued on the business default account.
-        $accounts = array_values(array_filter(
-            $this->settings->accountIds ?? [],
-            static fn (mixed $id): bool => is_string($id) && Uuid::isValid($id),
-        ));
+        $accounts = $this->accounts();
         if ($accounts !== []) {
             $body['accounts'] = $accounts;
         }
@@ -108,6 +107,29 @@ final readonly class IssueVirtualCard
             expirationDate: RevolutExpiry::normalize($card['expiry'] ?? null),
             status: $card['state'] ?? null,
         );
+    }
+
+    /**
+     * Which of the business's accounts the card may draw on — a deployment fact, and it stays one.
+     *
+     * A per-card funding account was considered and left out: it is Revolut's concept rather than
+     * a property of balance funding (ConnexPay's lodged card has no account id at all, it has a
+     * limit window and MID lists), and nothing in the v1 card API asks for a sub-account, so the
+     * field would have arrived null on every call. The allow-list below already answers the
+     * question for every card this gateway issues.
+     *
+     * Only well-formed UUIDs are forwarded, so a stale or malformed credential cannot trip
+     * Revolut's validation. An empty result omits `accounts` and the card is issued on the
+     * business default account.
+     *
+     * @return list<string>
+     */
+    private function accounts(): array
+    {
+        return array_values(array_filter(
+            $this->settings->accountIds ?? [],
+            static fn (mixed $id): bool => is_string($id) && Uuid::isValid($id),
+        ));
     }
 
     /**

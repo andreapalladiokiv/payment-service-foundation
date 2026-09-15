@@ -2,33 +2,33 @@
 
 declare(strict_types=1);
 
+use Money\Currency;
+use Money\Money;
+use Techork\PaymentService\Common\Contract\PaymentInstrument;
+use Techork\PaymentService\Common\ValueObject\CustomerId;
+use Techork\PaymentService\Gateway\Command\CancelCommand;
+use Techork\PaymentService\Gateway\Command\CaptureCommand;
+use Techork\PaymentService\Gateway\Command\IssueCardCommand;
+use Techork\PaymentService\Gateway\Command\PlacementCommand;
+use Techork\PaymentService\Gateway\Command\RefundCommand;
+use Techork\PaymentService\Gateway\Command\RegisterCustomerCommand;
+use Techork\PaymentService\Gateway\Command\TerminateCardCommand;
+use Techork\PaymentService\Gateway\Command\UpdateCardCommand;
+use Techork\PaymentService\Gateway\Command\VaultCommand;
 use Techork\PaymentService\Gateway\Exception\UnsupportedByGateway;
 use Techork\PaymentService\Gateway\Exception\UnsupportedOperation;
+use Techork\PaymentService\Gateway\ValueObject\CardSpendCategory;
+use Techork\PaymentService\Gateway\ValueObject\GatewayId;
 use Techork\PaymentService\Paynet\PaynetGateway;
 use Techork\PaymentService\Paynet\Purchase;
 use Techork\PaymentService\Paynet\UnsupportedPaynetOperation;
-use Money\Currency;
-use Money\Money;
-use Techork\PaymentService\Gateway\Command\CaptureCommand;
-use Techork\PaymentService\Gateway\ValueObject\GatewayId;
-use Techork\PaymentService\Gateway\Command\CancelCommand;
-use Techork\PaymentService\Gateway\Command\RefundCommand;
-use Techork\PaymentService\Common\ValueObject\CustomerId;
-use Techork\PaymentService\Common\Contract\PaymentInstrument;
-use Techork\PaymentService\Gateway\Command\PlacementCommand;
-use Techork\PaymentService\Gateway\Command\IssueCardCommand;
-use Techork\PaymentService\Gateway\Command\TerminateCardCommand;
-use Techork\PaymentService\Gateway\Command\UpdateCardCommand;
-use Techork\PaymentService\Gateway\Command\RegisterCustomerCommand;
-use Techork\PaymentService\Gateway\Command\VaultCommand;
-use Techork\PaymentService\Gateway\ValueObject\CardSpendCategory;
 
 /**
  * Capture takes a typed command now, so the datasets below cannot call it bare. The helper keeps
  * the refusal sets intact — what they pin is the refusal, not the signature — and shrinks as the
  * remaining operations move onto roles of their own.
  */
-function paynetInvoke(Techork\PaymentService\Paynet\PaynetGateway $gateway, string $operation): mixed
+function paynetInvoke(PaynetGateway $gateway, string $operation): mixed
 {
     return match ($operation) {
         'authorize' => $gateway->authorize(new PlacementCommand(
@@ -55,7 +55,7 @@ function paynetInvoke(Techork\PaymentService\Paynet\PaynetGateway $gateway, stri
             gatewayId: GatewayId::generate(),
             customer: paynetSuiteCustomer(firstName: 'Ada', lastName: 'Lovelace'),
         )),
-        'issueVirtualCard' => $gateway->issueVirtualCard(new IssueCardCommand(
+        'issueVirtualCard' => $gateway->issueVirtualCard(IssueCardCommand::saleFunded(
             gatewayId: GatewayId::generate(),
             transactionReference: 'sale-guid',
             amountLimit: new Money(100, new Currency('USD')),

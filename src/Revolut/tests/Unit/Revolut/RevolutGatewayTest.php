@@ -4,21 +4,22 @@ declare(strict_types=1);
 
 use Money\Currency;
 use Money\Money;
-use Techork\PaymentService\Gateway\Exception\UnsupportedByGateway;
-use Techork\PaymentService\Revolut\Exception\UnsupportedOperationException;
-use Techork\PaymentService\Gateway\Command\CaptureCommand;
-use Techork\PaymentService\Gateway\ValueObject\GatewayId;
-use Techork\PaymentService\Gateway\Command\CancelCommand;
-use Techork\PaymentService\Gateway\Command\RefundCommand;
-use Techork\PaymentService\Common\ValueObject\CustomerId;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
-use Techork\PaymentService\Gateway\Command\PlacementCommand;
+use Techork\PaymentService\Common\ValueObject\CustomerId;
+use Techork\PaymentService\Gateway\Command\CancelCommand;
+use Techork\PaymentService\Gateway\Command\CaptureCommand;
 use Techork\PaymentService\Gateway\Command\IssueCardCommand;
+use Techork\PaymentService\Gateway\Command\PlacementCommand;
+use Techork\PaymentService\Gateway\Command\RefundCommand;
+use Techork\PaymentService\Gateway\Command\RegisterCustomerCommand;
 use Techork\PaymentService\Gateway\Command\TerminateCardCommand;
 use Techork\PaymentService\Gateway\Command\UpdateCardCommand;
-use Techork\PaymentService\Gateway\Command\RegisterCustomerCommand;
 use Techork\PaymentService\Gateway\Command\VaultCommand;
+use Techork\PaymentService\Gateway\Exception\UnsupportedByGateway;
 use Techork\PaymentService\Gateway\ValueObject\CardSpendCategory;
+use Techork\PaymentService\Gateway\ValueObject\GatewayId;
+use Techork\PaymentService\Revolut\Exception\UnsupportedOperationException;
+use Techork\PaymentService\Revolut\RevolutGateway;
 use Techork\PaymentService\Revolut\RevolutHttpClientInterface;
 
 /**
@@ -26,7 +27,7 @@ use Techork\PaymentService\Revolut\RevolutHttpClientInterface;
  * the refusal sets intact — what they pin is the refusal, not the signature — and shrinks as the
  * remaining operations move onto roles of their own.
  */
-function revolutInvoke(Techork\PaymentService\Revolut\RevolutGateway $gateway, string $operation): mixed
+function revolutInvoke(RevolutGateway $gateway, string $operation): mixed
 {
     return match ($operation) {
         'capture' => $gateway->capture(new CaptureCommand(
@@ -53,7 +54,7 @@ function revolutInvoke(Techork\PaymentService\Revolut\RevolutGateway $gateway, s
             gatewayId: GatewayId::generate(),
             customer: revolutSuiteCustomer(firstName: 'Ada', lastName: 'Lovelace'),
         )),
-        'issueVirtualCard' => $gateway->issueVirtualCard(new IssueCardCommand(
+        'issueVirtualCard' => $gateway->issueVirtualCard(IssueCardCommand::saleFunded(
             gatewayId: GatewayId::generate(),
             transactionReference: 'sale-guid',
             amountLimit: new Money(100, new Currency('USD')),
@@ -118,7 +119,7 @@ function revolutCardPayload(array $params, string $operation, array $options = [
     $gateway = makeRevolutGateway($client, $params);
 
     $operation === 'issue'
-        ? $gateway->issueVirtualCard(new IssueCardCommand(
+        ? $gateway->issueVirtualCard(IssueCardCommand::saleFunded(
             gatewayId: GatewayId::generate(),
             transactionReference: $options['transactionReference'] ?? 'sale-guid',
             amountLimit: $options['money'] ?? new Money(1000, new Currency('USD')),
