@@ -16,17 +16,4 @@ final readonly class CancelCommand
         public string $transactionReference,
         public ?string $clientUniqueId = null,
     ) {}
-
-
-    /**
-     * @return array<string, mixed>
-     */
-    public function toLogContext(): array
-    {
-        return [
-            'gatewayId' => $this->gatewayId->toString(),
-            'transactionReference' => $this->transactionReference,
-            'clientUniqueId' => $this->clientUniqueId,
-        ];
-    }
 }

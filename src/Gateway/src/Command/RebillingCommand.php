@@ -51,26 +51,6 @@ final readonly class RebillingCommand
         public ?Customer $customer = null,
     ) {}
 
-
-    /**
-     * @return array<string, mixed>
-     */
-    public function toLogContext(): array
-    {
-        return [
-            'gatewayId' => $this->gatewayId->toString(),
-            'amount' => $this->amount,
-            'instrument' => $this->instrument->toPayload(),
-            'clientUniqueId' => $this->clientUniqueId,
-            'threeDS' => $this->threeDS?->toLogContext(),
-            'statementDescription' => $this->statementDescription,
-            'description' => $this->description,
-            'initiation' => $this->initiation->value,
-            'genesisReference' => $this->genesisReference,
-            'customer' => $this->customer?->toArray(),
-        ];
-    }
-
     /**
      * The series payment seen as an ordinary placement, for providers that express the position
      * through the initiation alone and have no anchor field to fill.

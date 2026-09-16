@@ -28,13 +28,4 @@ final readonly class BalanceFunded implements CardFunding
     {
         return CardFundingModel::Balance;
     }
-
-    /**
-     * @return array<string, mixed>
-     */
-    #[Override]
-    public function toLogContext(): array
-    {
-        return ['fundingModel' => $this->model()->value];
-    }
 }

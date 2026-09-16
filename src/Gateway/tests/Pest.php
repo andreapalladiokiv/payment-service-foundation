@@ -2,6 +2,12 @@
 
 declare(strict_types=1);
 
+use Techork\PaymentService\Common\ValueObject\CardBrand;
+use Techork\PaymentService\Common\ValueObject\CreditCard;
+use Techork\PaymentService\Common\ValueObject\CreditCard\Cvc;
+use Techork\PaymentService\Common\ValueObject\CreditCard\Expiration;
+use Techork\PaymentService\Common\ValueObject\CreditCard\Holder;
+use Techork\PaymentService\Common\ValueObject\CreditCard\Number;
 use Techork\PaymentService\Common\ValueObject\CustomerId;
 use Techork\PaymentService\Common\ValueObject\Customer;
 use Techork\PaymentService\Common\ValueObject\BillingAddress;
@@ -9,6 +15,27 @@ use Techork\PaymentService\Common\ValueObject\Country;
 use Techork\PaymentService\Common\ValueObject\CustomerIdentity;
 use Techork\PaymentService\Common\ValueObject\Email;
 use Techork\PaymentService\Common\ValueObject\PhoneNumber;
+
+/**
+ * A card, real rather than doubled, for the tests where the decorator has to read one.
+ *
+ * The decorator projects an instrument through {@see \Techork\PaymentService\Common\ValueObject\
+ * CreditCard\CardSummaryExtractor}, which dispatches on the concrete type by calling `accept()`.
+ * A Mockery mock is the wrong stand-in now: Mockery refuses an unstubbed call, and stubbing it
+ * would assert that the visitor was called rather than what it found.
+ */
+function gatewaySuiteCard(
+    string $first6 = '411111',
+    string $last4 = '1111',
+    string $holder = 'Ada Lovelace',
+): CreditCard {
+    return new CreditCard(
+        number: new Number($first6, $last4, CardBrand::Visa),
+        expiration: new Expiration(new DateTimeImmutable('2030-12-01')),
+        holder: new Holder($holder),
+        cvc: new Cvc,
+    );
+}
 
 /**
  * A customer id for this suite's tests.

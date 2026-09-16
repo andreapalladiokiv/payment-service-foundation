@@ -36,19 +36,4 @@ final readonly class RefundCommand
         public ?PaymentInstrument $retryInstrument = null,
         public ?Customer $customer = null,
     ) {}
-
-    /**
-     * @return array<string, mixed>
-     */
-    public function toLogContext(): array
-    {
-        return [
-            'gatewayId' => $this->gatewayId->toString(),
-            'transactionReference' => $this->transactionReference,
-            'amount' => $this->amount,
-            'clientUniqueId' => $this->clientUniqueId,
-            'retryInstrument' => $this->retryInstrument?->toPayload(),
-            'customer' => $this->customer?->toArray(),
-        ];
-    }
 }

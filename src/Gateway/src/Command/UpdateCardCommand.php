@@ -36,20 +36,4 @@ final readonly class UpdateCardCommand
         public CardSpendCategory $spendCategory,
         public ?CardLimitWindow $limitWindow = null,
     ) {}
-
-    /**
-     * @return array<string, mixed>
-     */
-    public function toLogContext(): array
-    {
-        return [
-            'gatewayId' => $this->gatewayId->toString(),
-            'cardGuid' => $this->cardGuid,
-            'amountLimit' => $this->amountLimit,
-            // `->value`, not the enum. The router logged the object here and its `->value` on the
-            // neighbouring operation, which is the kind of drift a derived context cannot have.
-            'spendCategory' => $this->spendCategory->value,
-            'limitWindow' => $this->limitWindow?->value,
-        ];
-    }
 }

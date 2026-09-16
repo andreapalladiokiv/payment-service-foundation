@@ -80,26 +80,13 @@ final readonly class DisputeEvidenceItem
      * text fields, while a file's bytes do not travel as text at all — they are uploaded and the
      * field carries the id. Counting base64 as text would refuse a PDF far below any limit; a
      * character count here is a count of the text a network reads.
+     *
+     * This count is also the only thing derived from the content that may leave the object: the
+     * content itself is a customer's correspondence, a signed delivery note, or a page of base64,
+     * and a log is not where any of those belongs.
      */
     public function textCharacters(): int
     {
         return $this->isFile() ? 0 : mb_strlen($this->content);
-    }
-
-    /**
-     * What a log line may say about this item.
-     *
-     * The content is deliberately absent and never logged: it is a customer's correspondence, a
-     * signed delivery note, or a page of base64, and a log is not where any of those belongs.
-     *
-     * @return array<string, mixed>
-     */
-    public function toLogContext(): array
-    {
-        return [
-            'type' => $this->type,
-            'mediaType' => $this->mediaType,
-            'characters' => $this->textCharacters(),
-        ];
     }
 }

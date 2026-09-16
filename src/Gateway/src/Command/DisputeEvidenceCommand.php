@@ -102,32 +102,17 @@ final readonly class DisputeEvidenceCommand
      *
      * @return list<string>
      */
+    /**
+     * The kinds of evidence being submitted — what an operator needs to recognise the call.
+     *
+     * Nothing here returns the evidence itself: it is a customer's correspondence and a signed
+     * delivery note, and neither belongs in a log or in a summary. That is why this method exists
+     * as the readable answer rather than as a convenience.
+     *
+     * @return array<int, string>
+     */
     public function types(): array
     {
         return array_map(static fn (DisputeEvidenceItem $item): string => $item->type, $this->evidence);
-    }
-
-    /**
-     * What a log line may say about this call.
-     *
-     * The items go in as their own log context — the fact, the media type and a character count —
-     * because evidence is a customer's correspondence and a signed delivery note, and neither
-     * belongs in a log. `types()` is what an operator needs to recognise the submission; the bytes
-     * are not.
-     *
-     * @return array<string, mixed>
-     */
-    public function toLogContext(): array
-    {
-        return [
-            'gatewayId' => $this->gatewayId->toString(),
-            'disputeReference' => $this->disputeReference,
-            'evidence' => array_map(
-                static fn (DisputeEvidenceItem $item): array => $item->toLogContext(),
-                $this->evidence,
-            ),
-            'submit' => $this->submit,
-            'clientUniqueId' => $this->clientUniqueId,
-        ];
     }
 }

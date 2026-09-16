@@ -68,24 +68,4 @@ readonly class GatewayResult
     {
         return new self($this->success, $this->reference, $this->message, $this->metadata, $convertedAmount);
     }
-
-    /**
-     * What a log line should say about this answer.
-     *
-     * Lives on the result rather than at each call site because the call sites got it wrong:
-     * twenty-six hand-written arrays in the gateway stack
-     * restated these fields per operation and drifted from each other. Subclasses override to
-     * add their own signals — a challenge, AVS checks — so a richer result cannot be logged as
-     * if it were a bare one.
-     *
-     * @return array<string, mixed>
-     */
-    public function toLogContext(): array
-    {
-        return [
-            'success' => $this->success,
-            'reference' => $this->reference,
-            'message' => $this->message,
-        ];
-    }
 }

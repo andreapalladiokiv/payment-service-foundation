@@ -31,6 +31,15 @@ final readonly class ThreeDSResult implements ChallengeResult
         return $visitor->visitThreeDS($this);
     }
 
+    /**
+     * The WIRE form, and it carries the authentication value in the clear.
+     *
+     * That is correct here and nowhere else: this shape is what goes to the acquirer with the
+     * payment and what is stored for replay. The CAVV / UCAF is a one-time bearer credential —
+     * whoever holds it can claim the liability shift it proves — so a log line must never be built
+     * from this array as it stands. The log-safe form is assembled where the log line is written,
+     * in {@see \Techork\PaymentService\Gateway\Decorator\LoggingGateway}, with the value truncated.
+     */
     public function toPayload(): array
     {
         return [
@@ -41,24 +50,6 @@ final readonly class ThreeDSResult implements ChallengeResult
             'acs_transaction_id' => $this->acsTransactionId,
             'version' => $this->version?->value,
         ];
-    }
-
-    /**
-     * The log-safe projection the gateway stack's {@see toLogContext()} methods use. The
-     * authentication value (CAVV / UCAF) is a one-time bearer credential that proves the
-     * cardholder authenticated — it goes to the acquirer with the payment, and a log line that
-     * carried it would hand whoever reads the log the ability to claim a liability shift they
-     * did not earn. Everything else in a result is correlation data and is logged as-is.
-     */
-    public function toLogContext(): array
-    {
-        $payload = $this->toPayload();
-
-        if (is_string($payload['authentication_value'])) {
-            $payload['authentication_value'] = '…'.substr($payload['authentication_value'], -4);
-        }
-
-        return $payload;
     }
 
     public static function fromPayload(array $payload): self

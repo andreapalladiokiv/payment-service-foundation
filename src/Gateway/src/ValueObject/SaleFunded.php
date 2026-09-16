@@ -43,20 +43,4 @@ final readonly class SaleFunded implements CardFunding
     {
         return CardFundingModel::Sale;
     }
-
-    /**
-     * The hint is named by type and never unwrapped: whatever is inside it belongs to one gateway,
-     * and a log line shared by all of them is the wrong place to spell it out.
-     *
-     * @return array<string, mixed>
-     */
-    #[Override]
-    public function toLogContext(): array
-    {
-        return [
-            'fundingModel' => $this->model()->value,
-            'transactionReference' => $this->transactionReference,
-            'fundingHint' => $this->hint === null ? null : $this->hint::class,
-        ];
-    }
 }

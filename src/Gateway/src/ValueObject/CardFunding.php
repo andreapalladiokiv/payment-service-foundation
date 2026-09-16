@@ -30,9 +30,4 @@ use Techork\PaymentService\Common\Contract\Challenge;
 interface CardFunding
 {
     public function model(): CardFundingModel;
-
-    /**
-     * @return array<string, mixed>
-     */
-    public function toLogContext(): array;
 }

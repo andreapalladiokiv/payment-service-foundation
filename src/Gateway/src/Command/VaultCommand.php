@@ -52,18 +52,4 @@ final readonly class VaultCommand
         public ?string $clientUniqueId = null,
         public ?Customer $customer = null,
     ) {}
-
-
-    /**
-     * @return array<string, mixed>
-     */
-    public function toLogContext(): array
-    {
-        return [
-            'gatewayId' => $this->gatewayId->toString(),
-            'instrument' => $this->instrument->toPayload(),
-            'clientUniqueId' => $this->clientUniqueId,
-            'customer' => $this->customer?->toArray(),
-        ];
-    }
 }

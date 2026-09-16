@@ -58,23 +58,4 @@ final readonly class PlacementCommand
         public PaymentInitiation $initiation = PaymentInitiation::CardholderInitiated,
         public ?Customer $customer = null,
     ) {}
-
-
-    /**
-     * @return array<string, mixed>
-     */
-    public function toLogContext(): array
-    {
-        return [
-            'gatewayId' => $this->gatewayId->toString(),
-            'amount' => $this->amount,
-            'instrument' => $this->instrument->toPayload(),
-            'clientUniqueId' => $this->clientUniqueId,
-            'threeDS' => $this->threeDS?->toLogContext(),
-            'statementDescription' => $this->statementDescription,
-            'description' => $this->description,
-            'initiation' => $this->initiation->value,
-            'customer' => $this->customer?->toArray(),
-        ];
-    }
 }

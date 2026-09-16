@@ -15,8 +15,10 @@ use Techork\PaymentService\Gateway\Exception\UnsupportedByGateway;
 use Techork\PaymentService\Gateway\Exception\UnsupportedOperation;
 use Techork\PaymentService\Gateway\Logger\GatewayLoggerInterface;
 use Techork\PaymentService\Gateway\Role\CardIssuer;
+use Techork\PaymentService\Gateway\ValueObject\CardLimitWindow;
 use Techork\PaymentService\Gateway\ValueObject\CardSpendCategory;
 use Techork\PaymentService\Gateway\ValueObject\GatewayId;
+use Techork\PaymentService\Gateway\ValueObject\SaleFundingHint;
 
 /**
  * The issuing stack. Same shape as the acquiring one and deliberately separate: the providers
@@ -36,6 +38,31 @@ function issueCommand(): IssueCardCommand
 function updateCommand(): UpdateCardCommand
 {
     return new UpdateCardCommand(GatewayId::generate(), 'card-guid', new Money(3000, new Currency('USD')), CardSpendCategory::TravelAir);
+}
+
+/**
+ * Runs an issuance through the logging decorator and returns the lines it wrote, keyed by message.
+ *
+ * The funding assertions below are about what the decorator writes, so they go through it rather
+ * than through anything the command or the value objects could answer on their own — those have no
+ * opinion about log lines any more.
+ *
+ * @return array<string, array<string, mixed>>
+ */
+function issuedLines(IssueCardCommand $command): array
+{
+    $lines = [];
+    $logger = Mockery::mock(GatewayLoggerInterface::class);
+    $logger->shouldReceive('log')->andReturnUsing(function (string $message, array $context) use (&$lines): void {
+        $lines[$message] = $context;
+    });
+
+    $inner = Mockery::mock(CardIssuer::class);
+    $inner->shouldReceive('issueVirtualCard')->andReturn(VirtualCardResult::succeeded('card-1'));
+
+    new LoggingCardIssuer($inner, $logger, 'connexpay')->issueVirtualCard($command);
+
+    return $lines;
 }
 
 /*
@@ -99,7 +126,7 @@ it('terminates to a bare outcome, since there is no card left to describe', func
 /**
  * The card's secrets are not logged. The router's hand-written response array carried
  * `cardNumber` and `cvv`, leaving a downstream sanitiser as the only thing between a PAN and the
- * log file; a derived context cannot emit what the result does not offer.
+ * log file; the line written here names neither, and this is what notices if a later edit does.
  */
 it('logs a card operation without the number or the cvv', function () {
     $lines = [];
@@ -118,10 +145,71 @@ it('logs a card operation without the number or the cvv', function () {
     expect($lines['Gateway issueVirtualCard request'])
         ->toHaveKey('gatewayName', 'connexpay')
         ->toHaveKey('transactionReference', 'sale-guid')
-        // `->value`, where the router logged the enum on one card operation and its value on the next.
+        // `->value`, where the router logged the enum object and it rendered as {"name":…,"value":…}.
         ->toHaveKey('spendCategory', CardSpendCategory::TravelAir->value)
         ->and($lines['Gateway issueVirtualCard response'])
         ->toHaveKey('cardGuid', 'card-1')
         ->not->toHaveKey('cardNumber')
         ->not->toHaveKey('cvv');
+});
+
+/**
+ * The funding pair on the request line, which is where its asymmetry shows.
+ *
+ * A sale-funded card names the sale it draws on; a balance-funded card emits no such key at all —
+ * not a null one, so a reader has nothing to find empty. The hint is named by its CLASS and never
+ * unwrapped: whatever a gateway put inside belongs to that gateway, and this line is one every
+ * gateway writes.
+ */
+it('names the funding model, and the sale only when there is one', function () {
+    $hint = new class implements SaleFundingHint {};
+
+    $lines = issuedLines(IssueCardCommand::saleFunded(
+        gatewayId: GatewayId::generate(),
+        transactionReference: 'sale-guid',
+        amountLimit: new Money(5000, new Currency('USD')),
+        spendCategory: CardSpendCategory::TravelAir,
+        limitWindow: CardLimitWindow::Month,
+        hint: $hint,
+    ));
+
+    expect($lines['Gateway issueVirtualCard request'])
+        ->toHaveKey('fundingModel', 'sale')
+        ->toHaveKey('transactionReference', 'sale-guid')
+        ->toHaveKey('fundingHint', $hint::class)
+        ->toHaveKey('limitWindow', CardLimitWindow::Month->value)
+        ->and(json_encode($lines))->not->toContain('fundingHint":"value');
+});
+
+it('omits the transaction reference entirely on a balance-funded card', function () {
+    $lines = issuedLines(IssueCardCommand::balanceFunded(
+        gatewayId: GatewayId::generate(),
+        amountLimit: new Money(5000, new Currency('USD')),
+        spendCategory: CardSpendCategory::TravelAir,
+    ));
+
+    expect($lines['Gateway issueVirtualCard request'])
+        ->toHaveKey('fundingModel', 'balance')
+        ->not->toHaveKey('transactionReference');
+});
+
+/**
+ * The cardholder's name is embossed on the card and is the same fact {@see CustomerIdentity} marks
+ * as personal data. The command carries no `#[Pii]` attribute because it has no erasure
+ * obligation, so the rule is applied to these two fields by what they are — and a name is not
+ * needed to correlate an issuance.
+ */
+it('does not log the cardholder name', function () {
+    $lines = issuedLines(IssueCardCommand::balanceFunded(
+        gatewayId: GatewayId::generate(),
+        amountLimit: new Money(5000, new Currency('USD')),
+        spendCategory: CardSpendCategory::TravelAir,
+        firstName: 'Ada',
+        lastName: 'Lovelace',
+    ));
+
+    expect($lines['Gateway issueVirtualCard request'])
+        ->not->toHaveKey('firstName')
+        ->not->toHaveKey('lastName')
+        ->and(json_encode($lines))->not->toContain('Lovelace');
 });

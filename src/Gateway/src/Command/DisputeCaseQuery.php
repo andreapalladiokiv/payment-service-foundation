@@ -40,14 +40,4 @@ final readonly class DisputeCaseQuery
             );
     }
 
-    /**
-     * @return array<string, mixed>
-     */
-    public function toLogContext(): array
-    {
-        return [
-            'gatewayId' => $this->gatewayId->toString(),
-            'disputeReference' => $this->disputeReference,
-        ];
-    }
 }

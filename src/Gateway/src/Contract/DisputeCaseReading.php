@@ -74,18 +74,4 @@ final readonly class DisputeCaseReading
             . 'would offer an irreversible call on a case that is no longer open.',
         );
     }
-
-    /**
-     * @return array<string, mixed>
-     */
-    public function toLogContext(): array
-    {
-        return [
-            'awaitingResponse' => $this->awaitingResponse,
-            'concedable' => $this->concedable,
-            'cardBrand' => $this->cardBrand,
-            'reasonCode' => $this->reasonCode,
-            'respondBy' => $this->respondBy?->format(DATE_ATOM),
-        ];
-    }
 }

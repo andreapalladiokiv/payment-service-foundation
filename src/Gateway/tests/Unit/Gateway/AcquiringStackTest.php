@@ -9,6 +9,7 @@ use Techork\PaymentService\Gateway\Command\CaptureCommand;
 use Techork\PaymentService\Gateway\Command\RefundCommand;
 use Techork\PaymentService\Gateway\Command\RegisterCustomerCommand;
 use Techork\PaymentService\Gateway\Command\VaultCommand;
+use Techork\PaymentService\Gateway\Contract\AuthorizationResult;
 use Techork\PaymentService\Gateway\Contract\Gateway as GatewayContract;
 use Techork\PaymentService\Gateway\Contract\GatewayCredential;
 use Techork\PaymentService\Gateway\Contract\GatewayCredentialRepository;
@@ -28,6 +29,7 @@ use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ECICode;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSResult;
 use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSStatus;
+use Techork\PaymentService\Common\ValueObject\ThreeDS\ThreeDSVersion;
 use Techork\PaymentService\Gateway\Command\PlacementCommand;
 use Techork\PaymentService\Gateway\Command\RebillingCommand;
 
@@ -107,10 +109,11 @@ it('holds the series anchor on the command, and an absent one as absent', functi
 });
 
 /**
- * Log contexts ride along with every gateway call the LoggingGateway makes, so a command that
- * dumped its ThreeDSResult whole put the cryptogram — the one-time bearer credential the
- * liability shift is claimed with — into every request log. The projection on the value object
- * is what keeps the tail only; this pins the two commands that carry a 3DS result.
+ * Log contexts ride along with every gateway call the LoggingGateway makes, so a command carrying
+ * a ThreeDSResult put the cryptogram — the one-time bearer credential the liability shift is
+ * claimed with — into every request line. The truncation is written where the line now is, and
+ * this pins the whole nested shape rather than the one key, because the rest of it is correlation
+ * data that must survive.
  */
 it('logs the 3DS result masked, never the cryptogram in the clear', function () {
     $threeDS = new ThreeDSResult(
@@ -119,10 +122,10 @@ it('logs the 3DS result masked, never the cryptogram in the clear', function () 
         ECICode::VisaSuccessful,
         'ds-txn-123',
         'acs-txn-456',
+        ThreeDSVersion::V220,
     );
 
-    $instrument = Mockery::mock(PaymentInstrument::class);
-    $instrument->shouldReceive('toPayload')->andReturn([]);
+    $instrument = gatewaySuiteCard();
 
     $placement = new PlacementCommand(
         gatewayId: GatewayId::generate(),
@@ -139,9 +142,89 @@ it('logs the 3DS result masked, never the cryptogram in the clear', function () 
         threeDS: $threeDS,
     );
 
-    expect($placement->toLogContext()['threeDS']['authentication_value'])->toBe('…4321')
-        ->and($rebilling->toLogContext()['threeDS']['authentication_value'])->toBe('…4321')
-        ->and(json_encode($placement->toLogContext()))->not->toContain('cavv-bearer-credential-4321');
+    $lines = [];
+    $logger = Mockery::mock(GatewayLoggerInterface::class);
+    $logger->shouldReceive('log')->andReturnUsing(function (string $message, array $context) use (&$lines): void {
+        $lines[$message] = $context;
+    });
+
+    $driver = Mockery::mock(AcquiringGateway::class);
+    $driver->shouldReceive('authorize')->andReturn(new AuthorizationResult(true, 'ref-1', null));
+    $driver->shouldReceive('authorizeRebilling')->andReturn(new AuthorizationResult(true, 'ref-1', null));
+
+    $stack = new LoggingGateway($driver, $logger, 'test');
+    $stack->authorize($placement);
+    $stack->authorizeRebilling($rebilling);
+
+    expect($lines['Gateway authorize request']['threeDS'])->toBe([
+        'status' => 'Y',
+        'authentication_value' => '…4321',
+        'eci' => '05',
+        'ds_transaction_id' => 'ds-txn-123',
+        'acs_transaction_id' => 'acs-txn-456',
+        'version' => '2.2.0',
+    ])
+        ->and($lines['Gateway authorizeRebilling request']['threeDS']['authentication_value'])->toBe('…4321')
+        ->and(json_encode($lines))->not->toContain('cavv-bearer-credential-4321');
+});
+
+/**
+ * The instrument block is the PCI-safe summary and not the wire payload it used to be.
+ *
+ * `toPayload()` carried the holder, the three vault-time checks and — wrapped in a
+ * `PaymentMethod` — a whole customer nested under a key named by the instrument's own type, which
+ * is why the block is now built from {@see CardSummaryExtractor} instead of reduced from the
+ * payload. The holder is the one field of the summary marked `#[Pii]`; correlation needs a way to
+ * recognise the card, not a name.
+ */
+it('logs the card summary and never the holder', function () {
+    $lines = [];
+    $logger = Mockery::mock(GatewayLoggerInterface::class);
+    $logger->shouldReceive('log')->andReturnUsing(function (string $message, array $context) use (&$lines): void {
+        $lines[$message] = $context;
+    });
+
+    $driver = Mockery::mock(AcquiringGateway::class);
+    $driver->shouldReceive('authorize')->andReturn(new AuthorizationResult(true, 'ref-1', null));
+
+    new LoggingGateway($driver, $logger, 'test')->authorize(new PlacementCommand(
+        gatewayId: GatewayId::generate(),
+        instrument: gatewaySuiteCard(holder: 'Ada Lovelace'),
+        amount: new Money(1000, new Currency('USD')),
+    ));
+
+    expect($lines['Gateway authorize request']['instrument'])->toBe([
+        'type' => 'card',
+        'first6' => '411111',
+        'last4' => '1111',
+        'brand' => 'visa',
+        'expiration' => '1230',
+    ])
+        ->and(json_encode($lines))->not->toContain('Ada Lovelace');
+});
+
+/**
+ * An absent authentication value stays absent rather than becoming the four characters of nothing.
+ * The truncation is a conditional, and this is the branch that would go wrong silently.
+ */
+it('leaves an absent authentication value absent', function () {
+    $lines = [];
+    $logger = Mockery::mock(GatewayLoggerInterface::class);
+    $logger->shouldReceive('log')->andReturnUsing(function (string $message, array $context) use (&$lines): void {
+        $lines[$message] = $context;
+    });
+
+    $driver = Mockery::mock(AcquiringGateway::class);
+    $driver->shouldReceive('authorize')->andReturn(new AuthorizationResult(true, 'ref-1', null));
+
+    new LoggingGateway($driver, $logger, 'test')->authorize(new PlacementCommand(
+        gatewayId: GatewayId::generate(),
+        instrument: gatewaySuiteCard(),
+        amount: new Money(1000, new Currency('USD')),
+        threeDS: new ThreeDSResult(ThreeDSStatus::NotPerformed, null, null, 'ds-txn-123', 'acs-txn-456', null),
+    ));
+
+    expect($lines['Gateway authorize request']['threeDS']['authentication_value'])->toBeNull();
 });
 
 // ────────────────────────────── FailureBoundary

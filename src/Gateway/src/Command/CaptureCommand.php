@@ -19,8 +19,9 @@ use Techork\PaymentService\Gateway\ValueObject\GatewayId;
  * `ba5d78c` fixed exactly that, two calls that stopped passing their parameters and reported
  * the resulting "The money parameter is required" to merchants as a gateway refusal.
  *
- * Adding a field is now one edit here. The log context and the provider parameters are both
- * derived from this object, so neither can fall out of step with it.
+ * Adding a field is now one edit here. The provider parameters are derived from this object, so
+ * they cannot fall out of step with it; what a log line may say about the command is not this
+ * object's business, and is decided where the line is written.
  */
 final readonly class CaptureCommand
 {
@@ -44,21 +45,4 @@ final readonly class CaptureCommand
         public ?PaymentInstrument $instrument = null,
         public ?Customer $customer = null,
     ) {}
-
-
-    /**
-     * @return array<string, mixed>
-     */
-    public function toLogContext(): array
-    {
-        return [
-            'gatewayId' => $this->gatewayId->toString(),
-            'transactionReference' => $this->transactionReference,
-            'amount' => $this->amount,
-            'clientUniqueId' => $this->clientUniqueId,
-            'authorizedAmount' => $this->authorizedAmount,
-            'instrument' => $this->instrument?->toPayload(),
-            'customer' => $this->customer?->toArray(),
-        ];
-    }
 }

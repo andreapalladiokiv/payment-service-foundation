@@ -64,17 +64,4 @@ final readonly class DisputeConcessionCommand
     {
         return $this->partialAmount !== null;
     }
-
-    /**
-     * @return array<string, mixed>
-     */
-    public function toLogContext(): array
-    {
-        return [
-            'gatewayId' => $this->gatewayId->toString(),
-            'disputeReference' => $this->disputeReference,
-            'partialAmount' => $this->partialAmount,
-            'clientUniqueId' => $this->clientUniqueId,
-        ];
-    }
 }

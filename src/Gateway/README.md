@@ -53,7 +53,13 @@ what the resolve returns:
   decline.
 - `Decorator\LoggingGateway` / `LoggingCardIssuer` — logs the command and the
   result through `Logger\GatewayLoggerInterface` (default
-  `NullGatewayLogger`).
+  `NullGatewayLogger`). Each operation writes its own context there, from the
+  typed properties of the objects it already holds, and names only
+  non-sensitive facts: a customer is its id and never `Customer::toArray()`, an
+  instrument is the PCI-safe summary and never `PaymentInstrument::toPayload()`,
+  a challenge is its transaction id and never the transport payload built for
+  the cardholder's browser, and a 3DS authentication value is truncated to its
+  tail. No command, result or value object carries a logging method.
 
 Behaviors worth knowing:
 

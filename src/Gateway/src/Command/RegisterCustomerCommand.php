@@ -37,15 +37,4 @@ final readonly class RegisterCustomerCommand
         public GatewayId $gatewayId,
         public Customer $customer,
     ) {}
-
-    /**
-     * @return array<string, mixed>
-     */
-    public function toLogContext(): array
-    {
-        return [
-            'gatewayId' => $this->gatewayId->toString(),
-            'customer' => $this->customer->toArray(),
-        ];
-    }
 }

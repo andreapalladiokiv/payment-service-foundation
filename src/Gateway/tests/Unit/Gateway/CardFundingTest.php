@@ -30,19 +30,13 @@ it('names the sale on the sale case and nothing at all on the balance case', fun
         ->and(get_object_vars(new BalanceFunded))->toBe([]);
 });
 
-it('carries a gateway hint opaquely and names it only by type in the log', function () {
+it('carries a gateway hint opaquely', function () {
     $hint = new class implements SaleFundingHint {};
 
     $funding = new SaleFunded('sale-guid', $hint);
 
     expect($funding->hint)->toBe($hint)
-        ->and($funding->toLogContext())
-        ->toHaveKey('transactionReference', 'sale-guid')
-        ->toHaveKey('fundingModel', 'sale')
-        ->toHaveKey('fundingHint', $hint::class)
-        // Whatever is inside a hint belongs to one gateway; a log line every gateway writes is
-        // the wrong place to spell it out.
-        ->and(json_encode($funding->toLogContext()))->not->toContain('value');
+        ->and($funding->transactionReference)->toBe('sale-guid');
 });
 
 it('says which funding model a command was built for', function () {
@@ -60,11 +54,12 @@ it('says which funding model a command was built for', function () {
     );
 
     expect($sale->funding)->toBeInstanceOf(SaleFunded::class)
+        ->and($sale->funding->transactionReference)->toBe('sale-guid')
         ->and($balance->funding)->toBeInstanceOf(BalanceFunded::class)
-        ->and($balance->toLogContext())
-        ->toHaveKey('fundingModel', 'balance')
-        // Not merely null — absent. A balance card has no reference for a reader to find empty.
-        ->not->toHaveKey('transactionReference');
+        // Not merely null — there is nothing to read. A balance card has no reference for a reader
+        // to find empty, and the log line that must not name one is asserted where the line is
+        // written, in CardIssuingStackTest.
+        ->and(property_exists($balance->funding, 'transactionReference'))->toBeFalse();
 });
 
 /**
@@ -80,8 +75,7 @@ it('carries the limit window on the command for either funding model', function 
         limitWindow: CardLimitWindow::Month,
     );
 
-    expect($command->limitWindow)->toBe(CardLimitWindow::Month)
-        ->and($command->toLogContext())->toHaveKey('limitWindow', 'month');
+    expect($command->limitWindow)->toBe(CardLimitWindow::Month);
 });
 
 /**

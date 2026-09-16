@@ -15,16 +15,4 @@ final readonly class TerminateCardCommand
         public GatewayId $gatewayId,
         public string $cardGuid,
     ) {}
-
-
-    /**
-     * @return array<string, mixed>
-     */
-    public function toLogContext(): array
-    {
-        return [
-            'gatewayId' => $this->gatewayId->toString(),
-            'cardGuid' => $this->cardGuid,
-        ];
-    }
 }

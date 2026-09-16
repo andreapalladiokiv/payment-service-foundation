@@ -112,22 +112,4 @@ final readonly class IssueCardCommand
             clientUniqueId: $clientUniqueId,
         );
     }
-
-    /**
-     * @return array<string, mixed>
-     */
-    public function toLogContext(): array
-    {
-        return [
-            'gatewayId' => $this->gatewayId->toString(),
-            ...$this->funding->toLogContext(),
-            'amountLimit' => $this->amountLimit,
-            'spendCategory' => $this->spendCategory->value,
-            'limitWindow' => $this->limitWindow?->value,
-            'firstName' => $this->firstName,
-            'lastName' => $this->lastName,
-            'cardBrand' => $this->cardBrand?->value,
-            'clientUniqueId' => $this->clientUniqueId,
-        ];
-    }
 }
