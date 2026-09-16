@@ -28,11 +28,13 @@ use Techork\PaymentService\Firewall\Chain\ChainStrategy;
 use Techork\PaymentService\Firewall\Chain\FirstMatchWins;
 use Techork\PaymentService\Firewall\Rule\FirewallRuleSource;
 
-function firewallRequestFor(bool $withConnection = true, ?string $gatewayId = 'gw-1'): PaymentIntentFirewallRequest
+function firewallRequestFor(bool $withConnection = true, ?string $gatewayId = 'gw-1', bool $withCard = true): PaymentIntentFirewallRequest
 {
     return new PaymentIntentFirewallRequest(
         amount: Money::USD(15000),
-        card: new CardSummary('411111', '1111', CardBrand::Visa, Expiration::fromMonthAndYear(6, 2031), new Holder('A B')),
+        card: $withCard
+            ? new CardSummary('411111', '1111', CardBrand::Visa, Expiration::fromMonthAndYear(6, 2031), new Holder('A B'))
+            : null,
         customer: firewallSuiteCustomer(address: new BillingAddress('1 Main St', 'London', new Country('GB'), 'E1 6AN')),
         connection: $withConnection
             ? new ConnectionContext(new IpAddress('203.0.113.7'), 'Mozilla/5.0', 'device-1')
@@ -262,4 +264,43 @@ it('lets a step-up rule exclude unattended traffic, which is the reason the fact
 
     expect($present->requiresChallenge())->toBeTrue()
         ->and($unattended->requiresChallenge())->toBeFalse();
+});
+
+// ─────────────────────────────────────────────────────────
+//  A payment whose instrument cannot be summarised
+//
+//  A hosted payment, a bare token and a wallet all pay with something the gateway holds and we
+//  cannot describe. While the request demanded a card summary these skipped the chain entirely —
+//  which lost the rules about amount, gateway and connection along with the card ones that
+//  genuinely had nothing to match. The summary is optional now and the chain always runs.
+// ─────────────────────────────────────────────────────────
+
+it('still weighs a card-less payment on everything that is not the card', function () {
+    $decision = paymentIntentFirewall([
+        new FirewallRule(FirewallVerdict::Deny, ['payment_intent.amount' => ['min' => '10000']], id: 'big'),
+    ])->evaluate(firewallRequestFor(withCard: false));
+
+    expect($decision->isDenied())->toBeTrue()
+        ->and($decision->reason)->toBe('matched rule big');
+});
+
+it('does not match a card rule when there is no card to match it on', function () {
+    $decision = paymentIntentFirewall([
+        new FirewallRule(FirewallVerdict::Deny, ['payment_method.source.bin' => ['values' => ['411111']]], id: '1'),
+    ])->evaluate(firewallRequestFor(withCard: false));
+
+    expect($decision->isDenied())->toBeFalse();
+});
+
+it('publishes the source branch with its fields absent rather than dropping it', function () {
+    $facts = new RequestFactSupplier(firewallRequestFor(withCard: false))->facts();
+
+    expect($facts['payment_method'])->toHaveKey('source')
+        ->and($facts['payment_method']['source']['bin'])->toBeNull()
+        ->and($facts['payment_method']['source']['last4'])->toBeNull()
+        ->and($facts['payment_method']['source']['brand'])->toBeNull()
+        ->and($facts['payment_method']['source']['expiry_month'])->toBeNull()
+        ->and($facts['payment_method']['source']['expiry_year'])->toBeNull()
+        // Null rather than false: false would assert that a card nobody saw is good.
+        ->and($facts['payment_method']['source']['is_expired'])->toBeNull();
 });

@@ -18,7 +18,6 @@ use Techork\PaymentService\Common\Contract\ChallengeResult;
 use Techork\PaymentService\Common\Contract\PaymentInstrument;
 use Techork\PaymentService\Common\ValueObject\Customer;
 use Techork\PaymentService\Common\ValueObject\CreditCard\CardSummaryExtractor;
-use Techork\PaymentService\Common\ValueObject\HostedPayment;
 use Techork\PaymentService\Common\ValueObject\MerchantDescriptor;
 use Techork\PaymentService\Common\ValueObject\PaymentInitiation;
 use Techork\PaymentService\Common\ValueObject\PaymentInstrumentFactory;
@@ -234,14 +233,19 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         $command->amount()->isPositive() || throw InvalidPaymentIntent::nonPositiveAmount();
         $command->instrument()->isValid() || throw InvalidPaymentIntent::unusablePaymentSource();
 
-        // A hosted payment is a redirect to the gateway's own page, so there is
-        // no instrument on our side to authorize now and capture later. Left
-        // unchecked this reaches the port, which routes every non-Immediate
-        // capture method to `authorize()` — a path no gateway implements for
-        // hosted — and the refusal comes back looking like an acquirer decline.
-        if ($command->instrument() instanceof HostedPayment && $command->captureMethod() !== CaptureMethod::Immediate) {
-            throw InvalidPaymentIntent::hostedPaymentRequiresImmediateCapture($command->captureMethod()->value);
-        }
+        // A hosted payment used to be refused anything but immediate capture here, on the
+        // reasoning that the payment happens on the gateway's own page so there is nothing to
+        // hold now and capture later. That stopped being true: a gateway can hand the payer's
+        // browser an instrument-less payment to complete, and hold the funds under manual
+        // capture when they do. Stripe's is `Authorize::visitHostedPayment()`.
+        //
+        // The check is gone rather than narrowed because the aggregate cannot know which
+        // gateways can do it, and the gateways that cannot already say so precisely: every
+        // hosted arm they do not implement throws
+        // {@see \Techork\PaymentService\Gateway\Exception\UnsupportedInstrument::forGateway()},
+        // which names the gateway and the operation. The fear this guarded against — a refusal
+        // arriving dressed as an acquirer decline — was about a bare exception reaching the
+        // caller, and that is not what comes back.
 
         $self = new self($command->paymentIntentId());
 
@@ -250,7 +254,7 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
         $decision = $self->firewallDecision($command, $firewall);
         $evidence = $command->challengeResult();
 
-        if ($decision !== null && ! $decision->permits()) {
+        if (! $decision->permits()) {
             // A rule rejected this payment. Authentication cannot answer that — the firewall is
             // not asking who the cardholder is, it has decided the payment must not happen — so
             // holding it for a step-up would wait on evidence that could never satisfy the rule,
@@ -639,27 +643,23 @@ final class PaymentIntentAggregate implements AggregateRootWithSnapshotting
      *    every deny rule in the chain. Now the chain runs first, and evidence is something
      *    {@see ChallengePort::verify()} weighs only once a chain has asked for authentication.
      *
-     * One skip remains: a non-card instrument. It is not a policy choice but the shape of
-     * {@see PaymentIntentFirewallRequest}, which requires a card summary because the fact
-     * vocabulary is built around one — so a hosted payment or a bare token has nothing to match
-     * on, including for rules about amount or gateway that would otherwise apply. Worth removing
-     * when the request can describe an instrument it cannot summarise.
+     * And the third, which used to be here and is now gone: a non-card instrument. It was never a
+     * policy choice but the shape of {@see PaymentIntentFirewallRequest}, which required a card
+     * summary — so a hosted payment, a bare token or a wallet skipped the chain entirely, losing
+     * the rules about amount, gateway and connection along with the card ones that genuinely had
+     * nothing to match. The summary is now optional and the chain always runs; rules reading
+     * `payment_method.source.*` fail to match instead, which is what an absent input is supposed
+     * to do.
      *
-     * A missing connection is deliberately NOT a skip: the chain still runs and rules leaning on
-     * connection facts merely fail to match. Skipping because an input is absent would let a
-     * forgotten field bypass the firewall.
+     * A missing connection was already NOT a skip, for the same reason: the chain still runs and
+     * rules leaning on connection facts merely fail to match. Skipping because an input is absent
+     * would let a forgotten field bypass the firewall.
      */
-    private function firewallDecision(CreatePaymentIntentCommand $command, PaymentIntentFirewallPort $firewall): ?FirewallDecision
+    private function firewallDecision(CreatePaymentIntentCommand $command, PaymentIntentFirewallPort $firewall): FirewallDecision
     {
-        $card = CardSummaryExtractor::from($command->instrument());
-
-        if ($card === null) {
-            return null;
-        }
-
         return $firewall->evaluate(new PaymentIntentFirewallRequest(
             $command->amount(),
-            $card,
+            CardSummaryExtractor::from($command->instrument()),
             $command->customer(),
             $command->connection(),
             $command->paymentIntentId(),

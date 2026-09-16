@@ -34,12 +34,22 @@ use Techork\PaymentService\Domain\PaymentIntent\ValueObject\PaymentIntentId;
  * unasked-for on exactly the traffic nobody is watching — and a step-up cannot be carried out
  * without a cardholder. A chain that should not demand one of unattended traffic scopes its
  * rules on this rather than relying on never being asked.
+ *
+ * `card` is nullable, and that absence is the difference between "we could not describe the
+ * instrument" and "there is nothing here to inspect". A hosted payment, a bare token and a
+ * wallet all pay with something the gateway holds and we cannot summarise; while this field was
+ * required they were not screened at all, because a request that could not be built was a chain
+ * that was never run — losing every rule about amount, gateway and connection along with the
+ * card ones that genuinely had nothing to match. Rules that read `payment_method.source.*`
+ * simply do not match when it is absent, which is the same thing a missing connection already
+ * does and for the same reason: an absent input narrows what can match, it does not switch the
+ * firewall off.
  */
 final readonly class PaymentIntentFirewallRequest
 {
     public function __construct(
         public Money $amount,
-        public CardSummary $card,
+        public ?CardSummary $card,
         public Customer $customer,
         public ?ConnectionContext $connection = null,
         public ?PaymentIntentId $paymentIntentId = null,

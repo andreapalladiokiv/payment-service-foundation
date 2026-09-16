@@ -22,6 +22,13 @@ use Techork\PaymentService\Domain\PaymentIntent\Port\Request\PaymentIntentFirewa
  * A connection-less request (a merchant-initiated payment) still yields the
  * `connection` branch, with its fields null: the rules must be able to ask "was
  * there no origin?" rather than have the question silently disappear.
+ *
+ * A card-less request — a hosted payment, a bare token, a wallet — yields the
+ * `source` branch the same way, for the same reason. "We cannot see this card"
+ * is a fact a rule should be able to demand a step-up on, and it is not the same
+ * claim as a card whose BIN happens to be unknown. Note `is_expired`: null
+ * rather than false, because false would assert that a card we never saw is
+ * good.
  */
 final readonly class RequestFactSupplier implements FactSupplier
 {
@@ -35,16 +42,17 @@ final readonly class RequestFactSupplier implements FactSupplier
         $identity = $customer->identity;
         $billing = $customer->billingAddress;
         $connection = $request->connection;
+        $card = $request->card;
 
         return [
             'payment_method' => [
                 'source' => [
-                    'bin' => $request->card->bin,
-                    'last4' => $request->card->last4,
-                    'brand' => $request->card->brand->value,
-                    'expiry_month' => (int) $request->card->expiration->format('m'),
-                    'expiry_year' => (int) $request->card->expiration->format('Y'),
-                    'is_expired' => $request->card->expiration->expired(),
+                    'bin' => $card?->bin,
+                    'last4' => $card?->last4,
+                    'brand' => $card?->brand->value,
+                    'expiry_month' => $card !== null ? (int) $card->expiration->format('m') : null,
+                    'expiry_year' => $card !== null ? (int) $card->expiration->format('Y') : null,
+                    'is_expired' => $card?->expiration->expired(),
                 ],
                 // The key stays `billing_address` although four of its eight fields now come
                 // off the customer's identity rather than their address. It is published

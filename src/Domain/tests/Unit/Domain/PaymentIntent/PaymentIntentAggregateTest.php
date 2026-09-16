@@ -849,18 +849,38 @@ it('throws InvalidPaymentIntent for unusable instrument', function () {
     );
 })->throws(InvalidPaymentIntent::class, 'Payment source is not usable');
 
-it('throws InvalidPaymentIntent for a hosted payment with a deferred capture method', function (CaptureMethod $captureMethod) {
+// This used to assert the opposite — that a hosted payment could only ever be captured
+// immediately. The reasoning was that the payment happens on the gateway's own page, so there is
+// nothing to hold now and capture later. A gateway can now hand the payer's browser an
+// instrument-less payment to complete and hold the funds under manual capture when they do
+// (Stripe's `Authorize::visitHostedPayment()`), so the refusal moved to the gateways that cannot:
+// they throw `UnsupportedInstrument::forGateway()`, which names the gateway and the operation.
+it('accepts a hosted payment with a deferred capture method', function (CaptureMethod $captureMethod) {
+    /** @var PaymentIntentId $id */
     $id = $this->aggregateRootId();
 
-    PaymentIntentAggregate::create(
+    $aggregate = PaymentIntentAggregate::create(
         makeCreatePiCommand($id, $captureMethod, instrument: makeHostedPaymentForPI()),
         makePaySuccessPort(),
         StubPaymentIntentFirewall::allowing(),
     );
+    $this->persistAggregateRoot($aggregate);
+
+    expect($aggregate->status())->toBe(PaymentIntentStatus::Authorized);
+
+    then(new PaymentIntentAuthorized(
+        makeAmount(),
+        makeHostedPaymentForPI(),
+        $captureMethod,
+        makePiCustomer(),
+        [],
+        makeMerchantDescriptor(),
+        '',
+    ));
 })->with([
     CaptureMethod::Automatic,
     CaptureMethod::Manual,
-])->throws(InvalidPaymentIntent::class, 'only immediate capture is possible');
+]);
 
 it('accepts a hosted payment with immediate capture', function () {
     /** @var PaymentIntentId $id */

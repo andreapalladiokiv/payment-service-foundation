@@ -38,22 +38,6 @@ final class InvalidPaymentIntent extends DomainException implements CodedError
         );
     }
 
-    /**
-     * A hosted payment happens entirely on the gateway's own page: the buyer
-     * enters their card there and the gateway decides when the money moves. We
-     * hold no instrument to authorize now and capture later, so any capture
-     * method other than `Immediate` describes a flow we cannot perform — and
-     * every gateway in the fleet implements hosted on the charge path only.
-     */
-    public static function hostedPaymentRequiresImmediateCapture(string $captureMethod): self
-    {
-        return self::coded(
-            ErrorCode::CaptureMethodUnsupported,
-            "A hosted payment cannot use the \"$captureMethod\" capture method — the payment happens on the gateway's page, so only immediate capture is possible.",
-        );
-    }
-
-
     public static function challengeResultCarriesNoEvidence(string $reason): self
     {
         return self::coded(
