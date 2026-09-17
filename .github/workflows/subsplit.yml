@@ -1,9 +1,14 @@
 name: Subsplit
 
+# TEMPORARILY DISABLED while the monorepo moves to travelrepository/.
+# Every remote in bin/split.sh is still a personal andreapalladiokiv/* repository
+# and is pushed to with --force, so the split stays off until those targets live
+# under the corporate organisation. A manual dispatch still runs, deliberately.
+# To re-enable: uncomment the push block below and drop this notice.
 on:
-  push:
-    branches: [main]
-    tags: ['v*']
+  # push:
+  #   branches: [main]
+  #   tags: ['v*']
   workflow_dispatch:
     inputs:
       packages:
@@ -67,4 +72,6 @@ jobs:
         env:
           BRANCH: ${{ github.ref_type == 'branch' && github.ref_name || 'main' }}
           TAG:    ${{ github.ref_type == 'tag'    && github.ref_name || '' }}
+          # A dispatch is a deliberate act, so it clears the guard in bin/split.sh.
+          SPLIT_ENABLED: '1'
         run: bin/split.sh ${{ matrix.package }}

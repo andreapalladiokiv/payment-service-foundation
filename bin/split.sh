@@ -7,8 +7,19 @@
 #   DRY_RUN=1 bin/split.sh       # show what would happen
 #   BRANCH=feature/x bin/split.sh  # override branch (default: current)
 #   TAG=v1.2.3 bin/split.sh      # also push tag to each split remote
+#   SPLIT_ENABLED=1 bin/split.sh # required while the split is disabled
 
 set -euo pipefail
+
+# TEMPORARILY DISABLED while the monorepo moves to travelrepository/.
+# Every remote below is still a personal andreapalladiokiv/* repository and is
+# pushed to with --force, so a run from a corporate checkout would force the
+# corporate history into a personal repository.
+if [[ "${SPLIT_ENABLED:-0}" != "1" ]]; then
+  echo "error: split is disabled during the move to travelrepository/" >&2
+  echo "       re-run with SPLIT_ENABLED=1 to override deliberately" >&2
+  exit 1
+fi
 
 # src/<dir>  ->  remote URL
 declare -A REMOTES=(
